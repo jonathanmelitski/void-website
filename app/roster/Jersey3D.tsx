@@ -369,7 +369,7 @@ function AnimatedControls({ showBack }: { showBack: boolean }) {
         <OrbitControls
             ref={controlsRef}
             domElement={gl.domElement}
-            args={[camera, gl.domElement]}
+            camera={camera}
             autoRotate={!showBack && !isAnimating.current}
             autoRotateSpeed={4}
             enableZoom={false}

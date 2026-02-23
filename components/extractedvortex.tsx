@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { useEffect } from "react";
 
-export default function ExtractedVortex({ containerRef, canvasRef, rerenderFunction }: { containerRef: React.RefObject<HTMLDivElement>, canvasRef: React.RefObject<HTMLCanvasElement>, rerenderFunction: () => void }) {
+export default function ExtractedVortex({ containerRef, canvasRef, rerenderFunction }: { containerRef: React.RefObject<HTMLDivElement | null>, canvasRef: React.RefObject<HTMLCanvasElement | null>, rerenderFunction: () => void }) {
     useEffect(() => {
         rerenderFunction();
     }, []);
