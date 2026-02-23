@@ -4,8 +4,6 @@ import { SamplePlayers } from "@/models/SampleData";
 
 
 export default async function Roster() {
-
-
   const players: Player[] = SamplePlayers
 
   return (
