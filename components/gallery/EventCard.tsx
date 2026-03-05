@@ -10,19 +10,40 @@ interface EventCardProps {
 
 export function EventCard({ event }: EventCardProps) {
   const cover = event.photos.find(p => p.id === event.coverPhotoId) ?? event.photos[0]
+  const coverUrl = cover?.url ?? (event.coverPhotoKey
+    ? `${process.env.NEXT_PUBLIC_S3_BASE_URL}/${event.coverPhotoKey}`
+    : null)
+
   const dateLabel = new Date(event.date).toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
     day: "numeric",
   })
 
+  if (!coverUrl) {
+    return (
+      <Link href={`/gallery/${event.id}`} className="block group">
+        <div className="bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden">
+          <div className="relative aspect-[4/3] flex items-center justify-center text-white/40 text-sm">
+            No cover photo
+            <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
+              <h3 className="font-bold text-lg leading-tight">{event.title}</h3>
+              <p className="text-sm text-white/80 mt-0.5">{dateLabel}</p>
+              {event.location && <p className="text-xs text-white/60 mt-0.5">{event.location}</p>}
+            </div>
+          </div>
+        </div>
+      </Link>
+    )
+  }
+
   return (
     <Link href={`/gallery/${event.id}`} className="block group">
       <div className="bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden">
         <div className="relative aspect-[4/3] hover:scale-[1.02] transition-transform">
           <Image
-            src={cover.url}
-            alt={cover.alt}
+            src={coverUrl}
+            alt={cover?.alt ?? event.title}
             fill
             className="object-cover"
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"

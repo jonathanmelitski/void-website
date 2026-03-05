@@ -13,5 +13,6 @@ export type GalleryEvent = {
   location?: string
   description?: string
   coverPhotoId: string
+  coverPhotoKey?: string
   photos: Photo[]
 }
