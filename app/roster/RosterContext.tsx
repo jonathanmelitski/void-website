@@ -1,22 +1,36 @@
 "use client"
-import React, { createContext, useContext, useState, useMemo, useCallback } from 'react'
+import React, { createContext, useContext, useState, useMemo, useCallback, useEffect } from 'react'
 
-const MAX_ACTIVE_CONTEXTS = 12
+function useIsDesktop() {
+    const [isDesktop, setIsDesktop] = useState(false)
+    useEffect(() => {
+        const mq = window.matchMedia('(min-width: 768px)')
+        setIsDesktop(mq.matches)
+        const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches)
+        mq.addEventListener('change', handler)
+        return () => mq.removeEventListener('change', handler)
+    }, [])
+    return isDesktop
+}
 
 type RosterContextType = {
     setVisible: (index: number, isVisible: boolean) => void
     isIndexActive: (index: number) => boolean
+    isDesktop: boolean
 }
 
 const RosterContext = createContext<RosterContextType>({
     setVisible: () => { },
-    isIndexActive: () => false
+    isIndexActive: () => false,
+    isDesktop: false,
 })
 
 export const useRoster = () => useContext(RosterContext)
 
 export function RosterProvider({ children }: { children: React.ReactNode }) {
     const [visibleIndices, setVisibleIndices] = useState<Set<number>>(new Set())
+    const isDesktop = useIsDesktop()
+    const MAX_ACTIVE_CONTEXTS = isDesktop ? 12 : 4
 
     const setVisible = useCallback((index: number, isVisible: boolean) => {
         setVisibleIndices(prev => {
@@ -59,7 +73,7 @@ export function RosterProvider({ children }: { children: React.ReactNode }) {
     }, [activeRange])
 
     return (
-        <RosterContext.Provider value={{ setVisible, isIndexActive }}>
+        <RosterContext.Provider value={{ setVisible, isIndexActive, isDesktop }}>
             {children}
         </RosterContext.Provider>
     )

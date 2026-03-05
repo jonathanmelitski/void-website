@@ -23,7 +23,7 @@ type PlayerCardProps = {
 
 export default function PlayerCard({ player, index }: PlayerCardProps) {
     const [showStats, setShowStats] = useState(false);
-    const { setVisible, isIndexActive } = useRoster()
+    const { setVisible, isIndexActive, isDesktop } = useRoster()
     const cardRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -85,7 +85,7 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                         layout
                         className="h-full relative bg-gradient-to-r from-white/5 to-transparent min-w-full order-1"
                     >
-                        {shouldRender ? (
+                        {shouldRender && isDesktop ? (
                             <Jersey3D
                                 number={player.number ?? 0}
                                 text={player.jersey_name_text ?? player.last_name ?? ""}
@@ -174,7 +174,7 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                         style={{ backfaceVisibility: "hidden" }}
                     >
                         <div className="h-48 relative mb-4">
-                            {shouldRender ? (
+                            {shouldRender && !isDesktop ? (
                                 <Jersey3D
                                     number={player.number ?? 0}
                                     text={player.jersey_name_text ?? player.last_name ?? ""}
