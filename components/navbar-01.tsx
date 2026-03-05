@@ -97,6 +97,7 @@ const defaultNavigationLinks: Navbar01NavLink[] = [
   { href: '/about', label: 'About' },
   { href: '/roster', label: 'Roster' },
   { href: '/schedule', label: 'Schedule' },
+  { href: '/gallery', label: 'Gallery' },
 ];
 
 export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
