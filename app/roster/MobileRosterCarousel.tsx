@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence, useAnimate } from "framer-motion"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import type { Player } from "../../models/RosterModels"
 import Jersey3D from "./Jersey3D"
@@ -14,6 +14,7 @@ export default function MobileRosterCarousel({ players }: Props) {
     const [direction, setDirection] = useState(1)
     const drawerRef = useRef<HTMLDivElement>(null)
     const chipRefs = useRef<(HTMLButtonElement | null)[]>([])
+    const [jerseyScope, animateJersey] = useAnimate()
 
     const player = players[selectedIndex]
 
@@ -23,11 +24,21 @@ export default function MobileRosterCarousel({ players }: Props) {
         exit: (dir: number) => ({ x: dir > 0 ? -60 : 60, opacity: 0 }),
     }
 
-    const goTo = (index: number) => {
+    const goTo = async (index: number) => {
         if (index === selectedIndex) return
-        setDirection(index > selectedIndex ? 1 : -1)
+        const dir = index > selectedIndex ? 1 : -1
+        setDirection(dir)
+
+        // Slide old jersey out
+        await animateJersey(jerseyScope.current, { opacity: 0, x: dir * -60 }, { duration: 0.18, ease: "easeIn" })
+
+        // Swap player (jersey is invisible while texture redraws)
         setSelectedIndex(index)
         setShowStats(false)
+
+        // Snap to incoming side, then slide in
+        animateJersey(jerseyScope.current, { x: dir * 60 }, { duration: 0 })
+        await animateJersey(jerseyScope.current, { opacity: 1, x: 0 }, { duration: 0.22, ease: "easeOut" })
     }
 
     // Keep selected chip visible in the drawer
@@ -45,7 +56,7 @@ export default function MobileRosterCarousel({ players }: Props) {
             {/* Card */}
             <div className="flex-1 relative mx-4 mb-2 rounded-2xl overflow-hidden border border-white/10 bg-gradient-to-b from-zinc-900 to-black min-h-0">
                 {/* Jersey — single persistent WebGL context */}
-                <div className="h-[58%] relative">
+                <div ref={jerseyScope} className="h-[58%] relative">
                     <Jersey3D
                         number={player.number ?? 0}
                         text={player.jersey_name_text ?? player.last_name ?? ""}
