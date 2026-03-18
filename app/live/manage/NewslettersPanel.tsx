@@ -35,6 +35,8 @@ export function NewslettersPanel() {
   const [deleteTarget, setDeleteTarget] = useState<NewsletterRow[] | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [duplicateTarget, setDuplicateTarget] = useState<NewsletterRow | null>(null)
+  const [isDuplicating, setIsDuplicating] = useState(false)
 
   const isAdmin = user?.groups.includes("ADMIN") ?? false
 
@@ -86,6 +88,39 @@ export function NewslettersPanel() {
 
   const clearFnRef = useRef<() => void>(() => {})
 
+  async function handleDuplicate(source: NewsletterRow, newTitle: string, newSlug: string) {
+    setIsDuplicating(true)
+    try {
+      const srcRes = await fetch(`/api/newsletters/${source.id}`)
+      const src = srcRes.ok ? await srcRes.json() : source
+
+      const res = await fetch("/api/newsletters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newTitle, slug: newSlug, date: src.date }),
+      })
+      if (!res.ok) return
+      const created = await res.json()
+
+      await fetch(`/api/newsletters/${created.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: src.body ?? "" }),
+      })
+      await fetch(`/api/newsletters/${created.id}/entries`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entries: src.entries ?? [] }),
+      })
+
+      setNewsletters(prev => [{ id: created.id, title: newTitle, date: src.date, published: false }, ...prev])
+      setDuplicateTarget(null)
+      router.push(`/live/manage/newsletters/${created.id}`)
+    } finally {
+      setIsDuplicating(false)
+    }
+  }
+
   function buildColumns(openConfirm: (row: NewsletterRow) => void): ColumnDef<NewsletterRow>[] {
     return [
       { header: "Title", accessorKey: "title" },
@@ -101,24 +136,30 @@ export function NewslettersPanel() {
       {
         header: "Actions",
         cell: row => (
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => router.push(`/live/manage/newsletters/${row.id}`)}
-              className="text-white/50 hover:text-white text-sm underline underline-offset-2"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-white/[0.06] text-white/50 hover:bg-white/10 hover:text-white/80 transition-colors"
             >
               Manage
             </button>
             <button
+              onClick={() => setDuplicateTarget(row)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-white/[0.06] text-white/50 hover:bg-white/10 hover:text-white/80 transition-colors"
+            >
+              Duplicate
+            </button>
+            <button
               onClick={() => handleTogglePublished(row)}
               disabled={togglingId === row.id}
-              className="text-white/50 hover:text-white text-sm transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-white/[0.06] text-white/50 hover:bg-white/10 hover:text-white/80 transition-colors disabled:opacity-40"
             >
               {row.published ? "Unpublish" : "Publish"}
             </button>
             {isAdmin && (
               <button
                 onClick={() => openConfirm(row)}
-                className="text-red-400/60 hover:text-red-400 text-sm transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-red-500/10 text-red-400/70 hover:bg-red-500/20 hover:text-red-400 transition-colors"
               >
                 Delete
               </button>
@@ -180,6 +221,21 @@ export function NewslettersPanel() {
         isLoading={isDeleting}
         onConfirm={() => deleteTarget && handleDelete(deleteTarget, clearFnRef.current)}
       />
+
+      <Dialog open={duplicateTarget !== null} onOpenChange={open => { if (!open) setDuplicateTarget(null) }}>
+        <DialogContent className="bg-black border-white/10 text-white max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Duplicate newsletter</DialogTitle>
+          </DialogHeader>
+          {duplicateTarget && (
+            <DuplicateForm
+              defaultTitle={`Copy of ${duplicateTarget.title}`}
+              onConfirm={(title, slug) => handleDuplicate(duplicateTarget, title, slug)}
+              isLoading={isDuplicating}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -292,5 +348,53 @@ function CreateNewsletterForm({
         {isLoading ? "Creating…" : "Create newsletter"}
       </Button>
     </form>
+  )
+}
+
+function DuplicateForm({
+  defaultTitle,
+  onConfirm,
+  isLoading,
+}: {
+  defaultTitle: string
+  onConfirm: (title: string, slug: string) => void
+  isLoading: boolean
+}) {
+  const [title, setTitle] = useState(defaultTitle)
+  const [slug, setSlug] = useState(
+    defaultTitle.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")
+  )
+
+  function handleTitleChange(v: string) {
+    setTitle(v)
+    setSlug(v.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))
+  }
+
+  return (
+    <div className="flex flex-col gap-4 pt-2">
+      <div className="flex flex-col gap-1.5">
+        <Label className="text-white/70">Title</Label>
+        <Input
+          value={title}
+          onChange={e => handleTitleChange(e.target.value)}
+          className="bg-white/5 border-white/10 text-white"
+        />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label className="text-white/70">Slug</Label>
+        <Input
+          value={slug}
+          onChange={e => setSlug(e.target.value)}
+          className="bg-white/5 border-white/10 text-white font-mono text-sm"
+        />
+      </div>
+      <Button
+        onClick={() => onConfirm(title, slug)}
+        disabled={isLoading || !title || !slug}
+        className="w-fit"
+      >
+        {isLoading ? "Duplicating…" : "Duplicate"}
+      </Button>
+    </div>
   )
 }

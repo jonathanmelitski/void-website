@@ -7,12 +7,6 @@ import { SimpleEditor } from "@/components/tiptap-templates/simple/simple-editor
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import type { Editor } from "@tiptap/react"
 import type { NewsletterItem, NewsletterEntry } from "@/lib/aws/newsletters"
 import { PROSE_CSS } from "@/lib/newsletter-prose-css"
@@ -81,8 +75,6 @@ export default function ManageNewsletterPage() {
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
   const [isAddingEntry, setIsAddingEntry] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [showDuplicate, setShowDuplicate] = useState(false)
-  const [isDuplicating, setIsDuplicating] = useState(false)
   const [entrySaveStatus, setEntrySaveStatus] = useState<Record<string, "idle" | "pending" | "saving" | "saved">>({})
   const bodyEditorRef = useRef<Editor | null>(null)
   const bodyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -233,35 +225,6 @@ export default function ManageNewsletterPage() {
     await saveMeta({ coverPhotoKey: key })
   }
 
-  async function handleDuplicate(newTitle: string, newSlug: string) {
-    if (!newsletter) return
-    setIsDuplicating(true)
-    try {
-      const res = await fetch("/api/newsletters", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: newTitle, slug: newSlug, date: newsletter.date }),
-      })
-      if (!res.ok) return
-      const created = await res.json()
-      // Copy body and entries
-      await fetch(`/api/newsletters/${created.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: newsletter.body ?? "" }),
-      })
-      await fetch(`/api/newsletters/${created.id}/entries`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entries: newsletter.entries ?? [] }),
-      })
-      router.push(`/live/manage/newsletters/${created.id}`)
-    } finally {
-      setIsDuplicating(false)
-      setShowDuplicate(false)
-    }
-  }
-
   async function moveEntry(index: number, direction: -1 | 1) {
     if (!newsletter) return
     const entries = [...newsletter.entries]
@@ -348,12 +311,6 @@ export default function ManageNewsletterPage() {
         </a>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setShowDuplicate(true)}
-            className="text-xs text-white/30 hover:text-white/60 transition-colors"
-          >
-            Duplicate
-          </button>
-          <button
             onClick={() => setShowSettings(s => !s)}
             className={`text-xs transition-colors ${showSettings ? "text-white/60" : "text-white/30 hover:text-white/60"}`}
           >
@@ -407,20 +364,6 @@ export default function ManageNewsletterPage() {
           </div>
         </div>
       )}
-
-      {/* Duplicate dialog */}
-      <Dialog open={showDuplicate} onOpenChange={setShowDuplicate}>
-        <DialogContent className="bg-black border-white/10 text-white max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Duplicate newsletter</DialogTitle>
-          </DialogHeader>
-          <DuplicateForm
-            defaultTitle={`Copy of ${newsletter.title}`}
-            onConfirm={handleDuplicate}
-            isLoading={isDuplicating}
-          />
-        </DialogContent>
-      </Dialog>
 
       {/* Tab selector */}
       <div className="flex justify-center border-b border-white/10">
@@ -652,50 +595,3 @@ export default function ManageNewsletterPage() {
   )
 }
 
-function DuplicateForm({
-  defaultTitle,
-  onConfirm,
-  isLoading,
-}: {
-  defaultTitle: string
-  onConfirm: (title: string, slug: string) => void
-  isLoading: boolean
-}) {
-  const [title, setTitle] = useState(defaultTitle)
-  const [slug, setSlug] = useState(
-    defaultTitle.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")
-  )
-
-  function handleTitleChange(v: string) {
-    setTitle(v)
-    setSlug(v.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))
-  }
-
-  return (
-    <div className="flex flex-col gap-4 pt-2">
-      <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Title</Label>
-        <Input
-          value={title}
-          onChange={e => handleTitleChange(e.target.value)}
-          className="bg-white/5 border-white/10 text-white"
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Slug</Label>
-        <Input
-          value={slug}
-          onChange={e => setSlug(e.target.value)}
-          className="bg-white/5 border-white/10 text-white font-mono text-sm"
-        />
-      </div>
-      <Button
-        onClick={() => onConfirm(title, slug)}
-        disabled={isLoading || !title || !slug}
-        className="w-fit"
-      >
-        {isLoading ? "Duplicating…" : "Duplicate"}
-      </Button>
-    </div>
-  )
-}

@@ -12,8 +12,21 @@
   --tt-toolbar-border-color: rgba(255, 255, 255, 0.10);
 }
 
+// The editor is always rendered in a dark context. Override dropdown portal vars
+// at :root level since Radix portals render outside the .dark wrapper div.
+:root {
+  --tt-dropdown-menu-bg-color: var(--tt-gray-dark-50);
+  --tt-dropdown-menu-text-color: var(--tt-gray-dark-a-600);
+  --tt-dropdown-menu-label-color: var(--tt-gray-dark-a-800);
+}
+
 .tiptap.ProseMirror {
   font-family: "DM Sans", sans-serif;
+  // Match the line-height from PROSE_CSS so all paragraphs (including the first)
+  // render identically to the public page. paragraph-node.scss only applies
+  // line-height to p:not(:first-child), leaving the first paragraph at the
+  // browser default (~1.2). Setting it here via inheritance fixes the mismatch.
+  line-height: 1.6;
 }
 
 .simple-editor-wrapper {
