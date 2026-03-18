@@ -1,15 +1,16 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/use-auth"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { UserPanel } from "./UserPanel"
 import { EventsPanel } from "./EventsPanel"
 import { AdminPanel } from "./AdminPanel"
+import { NewslettersPanel } from "./NewslettersPanel"
 
-type Tab = "photos" | "events" | "users"
+type Tab = "photos" | "events" | "users" | "newsletters"
 
 function getHighestRole(groups: string[]) {
   if (groups.includes("ADMIN")) return "ADMIN"
@@ -26,7 +27,11 @@ const ROLE_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
 export default function ManagePage() {
   const { user, isLoading, signOut } = useAuth()
   const router = useRouter()
-  const [activeTab, setActiveTab] = useState<Tab>("photos")
+  const searchParams = useSearchParams()
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    const t = searchParams.get("tab")
+    return (["photos", "events", "newsletters", "users"].includes(t ?? "") ? t : "photos") as Tab
+  })
 
   useEffect(() => {
     if (!isLoading && !user) router.replace("/live/login")
@@ -47,6 +52,7 @@ export default function ManagePage() {
   const tabs: { id: Tab; label: string }[] = [
     { id: "photos", label: "Photos" },
     ...(isCoachOrAdmin ? [{ id: "events" as Tab, label: "Events" }] : []),
+    ...(isCoachOrAdmin ? [{ id: "newsletters" as Tab, label: "Newsletters" }] : []),
     ...(isAdmin ? [{ id: "users" as Tab, label: "Users" }] : []),
   ]
 
@@ -80,7 +86,10 @@ export default function ManagePage() {
         {tabs.map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => {
+              setActiveTab(tab.id)
+              router.replace(`/live/manage?tab=${tab.id}`, { scroll: false })
+            }}
             className={[
               "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
               activeTab === tab.id
@@ -96,6 +105,7 @@ export default function ManagePage() {
       <div>
         {activeTab === "photos" && <UserPanel />}
         {activeTab === "events" && isCoachOrAdmin && <EventsPanel />}
+        {activeTab === "newsletters" && isCoachOrAdmin && <NewslettersPanel />}
         {activeTab === "users" && isAdmin && <AdminPanel />}
       </div>
     </div>

@@ -41,7 +41,7 @@ export function UserPanel() {
   }
 
   return (
-    <div className="flex flex-col gap-5 max-w-md text-left">
+    <div className="flex flex-col gap-5 text-left">
       <div className="flex flex-col gap-1.5">
         <Label className="text-white/70">Event</Label>
         <select

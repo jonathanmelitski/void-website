@@ -79,7 +79,7 @@ export function EventsPanel() {
   const clearFnRef = useRef<(() => void)>(() => {})
 
   return (
-    <div className="flex flex-col gap-4 text-left max-w-2xl">
+    <div className="flex flex-col gap-4 text-left">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Events</h2>
         <Dialog open={open} onOpenChange={setOpen}>

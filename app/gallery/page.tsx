@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation"
 import type { Metadata } from "next"
 import type { EventItem } from "@/lib/aws/dynamo"
 import { GalleryView } from "./GalleryView"
@@ -18,6 +19,7 @@ async function getEvents(): Promise<EventItem[]> {
 }
 
 export default async function GalleryPage() {
+  notFound()
   const events = await getEvents()
 
   const galleryEvents = events.map(event => ({

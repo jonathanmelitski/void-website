@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "picsum.photos" },
+      { protocol: "https", hostname: "void-ultimate.s3.us-east-2.amazonaws.com" },
       ...(s3BaseUrl
         ? [{ protocol: "https" as const, hostname: new URL(s3BaseUrl).hostname, pathname: "/events/**" }]
         : []),

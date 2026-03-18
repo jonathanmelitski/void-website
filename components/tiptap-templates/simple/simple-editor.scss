@@ -1,0 +1,47 @@
+@use "../../styles/variables" as *;
+@use "../../styles/keyframe-animations" as *;
+
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap");
+
+// Toolbar height var — scoped to the wrapper so it doesn't pollute the rest of the page
+.simple-editor-wrapper {
+  --tt-toolbar-height: 44px;
+  --tt-theme-text: var(--tt-gray-dark-900); // always dark
+  // Match the bg-white/5 border-white/10 style of Input fields
+  --tt-toolbar-bg-color: rgba(255, 255, 255, 0.05);
+  --tt-toolbar-border-color: rgba(255, 255, 255, 0.10);
+}
+
+.tiptap.ProseMirror {
+  font-family: "DM Sans", sans-serif;
+}
+
+.simple-editor-wrapper {
+  width: 100%;
+  height: auto;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.simple-editor-content {
+  max-width: 100%;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.simple-editor-content .tiptap.ProseMirror.simple-editor {
+  flex: 1;
+  min-height: 300px;
+  padding: 1.5rem 2rem 2rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+@media screen and (max-width: 480px) {
+  .simple-editor-content .tiptap.ProseMirror.simple-editor {
+    padding: 1rem 1.25rem 1.5rem;
+  }
+}

@@ -95,7 +95,7 @@ export function AdminPanel() {
   if (error) return <p className="text-sm text-red-400">{error}</p>
 
   return (
-    <div className="flex flex-col gap-4 text-left max-w-2xl">
+    <div className="flex flex-col gap-4 text-left">
       <DataTable
         columns={columns}
         data={users}
