@@ -6,9 +6,10 @@ import type { GalleryEvent } from "@/models/GalleryModels"
 
 interface EventCardProps {
   event: GalleryEvent
+  href?: string
 }
 
-export function EventCard({ event }: EventCardProps) {
+export function EventCard({ event, href }: EventCardProps) {
   const cover = event.photos.find(p => p.id === event.coverPhotoId) ?? event.photos[0]
   const coverUrl = cover?.url ?? (event.coverPhotoKey
     ? `${process.env.NEXT_PUBLIC_S3_BASE_URL}/${event.coverPhotoKey}`
@@ -22,7 +23,7 @@ export function EventCard({ event }: EventCardProps) {
 
   if (!coverUrl) {
     return (
-      <Link href={`/gallery/${event.id}`} className="block group">
+      <Link href={href ?? `/gallery/${event.id}`} className="block group">
         <div className="bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden">
           <div className="relative aspect-[4/3] flex items-center justify-center text-white/40 text-sm">
             No cover photo
@@ -38,7 +39,7 @@ export function EventCard({ event }: EventCardProps) {
   }
 
   return (
-    <Link href={`/gallery/${event.id}`} className="block group">
+    <Link href={href ?? `/gallery/${event.id}`} className="block group">
       <div className="bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden">
         <div className="relative aspect-[4/3] hover:scale-[1.02] transition-transform">
           <Image

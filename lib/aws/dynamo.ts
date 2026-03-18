@@ -1,5 +1,5 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
-import { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb"
+import { DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb"
 
 const client = new DynamoDBClient({
   region: process.env.AWS_REGION!,
@@ -38,4 +38,8 @@ export async function getEvent(id: string): Promise<EventItem | null> {
 
 export async function createEvent(item: EventItem): Promise<void> {
   await dynamo.send(new PutCommand({ TableName: TABLE(), Item: item }))
+}
+
+export async function deleteEvent(id: string): Promise<void> {
+  await dynamo.send(new DeleteCommand({ TableName: TABLE(), Key: { id } }))
 }

@@ -29,7 +29,7 @@ export default function LoginPage() {
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? "Login failed"); return }
       await refreshAuth()
-      router.push("/live/dashboard")
+      router.push("/live")
     } catch {
       setError("An unexpected error occurred")
     } finally {

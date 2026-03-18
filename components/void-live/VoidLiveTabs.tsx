@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/use-auth"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { UserPanel } from "@/app/live/dashboard/UserPanel"
-import { CoachPanel } from "@/app/live/dashboard/CoachPanel"
+import { EventsPanel } from "@/app/live/dashboard/EventsPanel"
 import { AdminPanel } from "@/app/live/dashboard/AdminPanel"
 
 type Tab = "photos" | "events" | "users"
@@ -79,7 +79,7 @@ export function VoidLiveTabs({ onClose }: VoidLiveTabsProps) {
       {/* Content */}
       <div className="px-6 py-4 text-white">
         {activeTab === "photos" && <UserPanel />}
-        {activeTab === "events" && isCoachOrAdmin && <CoachPanel />}
+        {activeTab === "events" && isCoachOrAdmin && <EventsPanel />}
         {activeTab === "users" && isAdmin && <AdminPanel />}
       </div>
     </div>

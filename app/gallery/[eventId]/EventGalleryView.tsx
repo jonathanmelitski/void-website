@@ -14,7 +14,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { UserPanel } from "@/app/live/dashboard/UserPanel"
+import { UserPanel } from "@/app/live/manage/UserPanel"
 
 interface EventGalleryViewProps {
   event: GalleryEvent

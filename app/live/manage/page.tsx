@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/use-auth"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { UserPanel } from "./UserPanel"
-import { CoachPanel } from "./CoachPanel"
+import { EventsPanel } from "./EventsPanel"
 import { AdminPanel } from "./AdminPanel"
 
 type Tab = "photos" | "events" | "users"
@@ -23,7 +23,7 @@ const ROLE_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
   USER: "outline",
 }
 
-export default function DashboardPage() {
+export default function ManagePage() {
   const { user, isLoading, signOut } = useAuth()
   const router = useRouter()
   const [activeTab, setActiveTab] = useState<Tab>("photos")
@@ -52,10 +52,15 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col p-8 lg:px-16 gap-8 text-left">
-      {/* Page header */}
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-4xl font-black">Void Live</h1>
+          <button
+            onClick={() => router.push("/live")}
+            className="text-white/40 hover:text-white/70 text-sm mb-2 flex items-center gap-1 transition-colors"
+          >
+            ← Back
+          </button>
+          <h1 className="text-4xl font-black">Manage</h1>
           <p className="text-white/50 mt-1 text-sm">{user.email}</p>
         </div>
         <div className="flex items-center gap-3">
@@ -71,7 +76,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Tab bar */}
       <div className="flex items-center gap-1 border-b border-white/10 -mb-4">
         {tabs.map(tab => (
           <button
@@ -89,10 +93,9 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Tab content */}
       <div>
         {activeTab === "photos" && <UserPanel />}
-        {activeTab === "events" && isCoachOrAdmin && <CoachPanel />}
+        {activeTab === "events" && isCoachOrAdmin && <EventsPanel />}
         {activeTab === "users" && isAdmin && <AdminPanel />}
       </div>
     </div>
