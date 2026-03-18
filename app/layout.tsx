@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import "./globals.css"
 import { Vortex } from "@/components/vortex";
 import { ThemeProvider } from "@/components/void-live-theme-provider";
+import { AuthProvider } from "@/lib/auth-context";
 
 export const metadata: Metadata = {
   title: "Void Ultimate",
@@ -17,6 +18,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
+        <AuthProvider>
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"
@@ -43,6 +45,7 @@ export default function RootLayout({
             </Vortex>
           </div>
         </ThemeProvider>
+        </AuthProvider>
       </body>
     </html>
   );
