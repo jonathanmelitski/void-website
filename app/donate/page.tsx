@@ -10,7 +10,7 @@ export const metadata: Metadata = {
     siteName: "Void Ultimate",
     images: [
       {
-        url: "/public/void-team.png",
+        url: "https://voidultimate.com/void-team.png",
         width: 1000,
         height: 665,
         alt: "Void Ultimate Team Photo",
