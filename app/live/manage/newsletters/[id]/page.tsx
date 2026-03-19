@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { Editor } from "@tiptap/react"
-import type { NewsletterItem, NewsletterEntry } from "@/lib/aws/newsletters"
+import type { NewsletterItem } from "@/lib/aws/newsletters"
 import { PROSE_CSS } from "@/lib/newsletter-prose-css"
 
 function NewsletterPreview({ newsletter }: { newsletter: NewsletterItem }) {
@@ -69,18 +69,27 @@ export default function ManageNewsletterPage() {
   const [error, setError] = useState("")
   const [isToggling, setIsToggling] = useState(false)
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
-  const [bodySaveStatus, setBodySaveStatus] = useState<"idle" | "pending" | "saving" | "saved">("idle")
+  const [bodySaveStatus, setBodySaveStatus] = useState<"idle" | "pending" | "saving" | "saved" | "error">("idle")
+  const [metaSaveStatus, setMetaSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [tab, setTab] = useState<"edit" | "preview">("edit")
   const [animPhase, setAnimPhase] = useState<"idle" | "out" | "in">("idle")
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
   const [isAddingEntry, setIsAddingEntry] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [entrySaveStatus, setEntrySaveStatus] = useState<Record<string, "idle" | "pending" | "saving" | "saved">>({})
+  const [entrySaveStatus, setEntrySaveStatus] = useState<Record<string, "idle" | "pending" | "saving" | "saved" | "error">>({})
+  const [isFlushing, setIsFlushing] = useState(false)
+  const newsletterRef = useRef<NewsletterItem | null>(null)
   const bodyEditorRef = useRef<Editor | null>(null)
   const bodyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const bodyPendingHtml = useRef<string | null>(null)
   const entryEditorRefs = useRef<Record<string, Editor | null>>({})
   const entryDebounceRefs = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const entryPendingBodies = useRef<Record<string, string>>({})
+  const metaDebounceRefs = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const metaPendingFields = useRef<Record<string, string>>({})
+  const entryFieldDebounceRefs = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const entryFieldPendingValues = useRef<Record<string, string>>({})
+  const inFlightSaves = useRef<Set<Promise<void>>>(new Set())
 
   const isAdmin = user?.groups.includes("ADMIN") ?? false
   const isCoachOrAdmin = user?.groups.includes("COACH") || user?.groups.includes("ADMIN")
@@ -109,6 +118,35 @@ export default function ManageNewsletterPage() {
     if (id) loadNewsletter()
   }, [id])
 
+  // Keep a ref in sync with state so save functions can read current entries
+  // without depending on stale closures or React's async updater timing.
+  useEffect(() => {
+    newsletterRef.current = newsletter
+  }, [newsletter])
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const hasPending =
+        bodyPendingHtml.current !== null ||
+        Object.keys(entryPendingBodies.current).length > 0 ||
+        Object.keys(metaPendingFields.current).length > 0 ||
+        Object.keys(entryFieldPendingValues.current).length > 0 ||
+        inFlightSaves.current.size > 0
+      if (hasPending) {
+        e.preventDefault()
+        e.returnValue = ""
+      }
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload)
+  }, [])
+
+  async function handleBack() {
+    setIsFlushing(true)
+    await flushAllPendingSaves()
+    router.push("/live/manage?tab=newsletters")
+  }
+
   async function handleTogglePublished() {
     if (!newsletter) return
     setIsToggling(true)
@@ -125,40 +163,57 @@ export default function ManageNewsletterPage() {
     }
   }
 
-  async function saveBody(html: string) {
+  function saveBody(html: string): Promise<void> {
+    bodyPendingHtml.current = null
     setBodySaveStatus("saving")
-    await fetch(`/api/newsletters/${id}`, {
+    const p: Promise<void> = fetch(`/api/newsletters/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ body: html }),
+    }).then(() => {
+      setBodySaveStatus("saved")
+      setTimeout(() => setBodySaveStatus(prev => prev === "saved" ? "idle" : prev), 2000)
+    }).catch(() => {
+      bodyPendingHtml.current = html  // restore so guards can catch it
+      setBodySaveStatus("error")
     })
-    setBodySaveStatus("saved")
+    inFlightSaves.current.add(p)
+    p.finally(() => inFlightSaves.current.delete(p))
+    return p
   }
 
   function handleBodyChange(html: string) {
+    bodyPendingHtml.current = html
     setBodySaveStatus("pending")
     if (bodyDebounceRef.current) clearTimeout(bodyDebounceRef.current)
-    bodyDebounceRef.current = setTimeout(() => saveBody(html), 3000)
+    bodyDebounceRef.current = setTimeout(() => saveBody(html), 1000)
   }
 
-  async function saveEntry(entryId: string, fields: { title?: string; date?: string; body?: string }) {
+  function saveEntry(entryId: string, fields: { title?: string; date?: string; body?: string }): Promise<void> {
+    const current = newsletterRef.current
+    if (!current) return Promise.resolve()
+    const updated = current.entries.map(e => e.id === entryId ? { ...e, ...fields } : e)
+    setNewsletter(prev => prev ? { ...prev, entries: updated } : prev)
     setEntrySaveStatus(prev => ({ ...prev, [entryId]: "saving" }))
-    // Use null as a sentinel so we can distinguish "state updater never ran" from
-    // "computed an intentionally empty list" — avoids accidentally wiping entries.
-    let updated: NewsletterEntry[] | null = null
-    setNewsletter(prev => {
-      if (!prev) return prev
-      updated = (prev.entries ?? []).map(e => e.id === entryId ? { ...e, ...fields } : e)
-      return { ...prev, entries: updated }
-    })
-    await new Promise(r => setTimeout(r, 0))
-    if (updated === null) return // newsletter was null when updater ran — bail out
-    await fetch(`/api/newsletters/${id}/entries`, {
+    const p: Promise<void> = fetch(`/api/newsletters/${id}/entries`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ entries: updated }),
+    }).then(() => {
+      setEntrySaveStatus(prev => ({ ...prev, [entryId]: "saved" }))
+      setTimeout(() => setEntrySaveStatus(prev =>
+        prev[entryId] === "saved" ? { ...prev, [entryId]: "idle" } : prev
+      ), 2000)
+    }).catch(() => {
+      // Restore pending state so guards can warn/retry
+      if (fields.body !== undefined) entryPendingBodies.current[entryId] = fields.body
+      if (fields.title !== undefined) entryFieldPendingValues.current[`${entryId}-title`] = fields.title
+      if (fields.date !== undefined) entryFieldPendingValues.current[`${entryId}-date`] = fields.date
+      setEntrySaveStatus(prev => ({ ...prev, [entryId]: "error" }))
     })
-    setEntrySaveStatus(prev => ({ ...prev, [entryId]: "saved" }))
+    inFlightSaves.current.add(p)
+    p.finally(() => inFlightSaves.current.delete(p))
+    return p
   }
 
   function handleEntryBodyChange(entryId: string, html: string) {
@@ -168,7 +223,7 @@ export default function ManageNewsletterPage() {
     entryDebounceRefs.current[entryId] = setTimeout(() => {
       delete entryPendingBodies.current[entryId]
       saveEntry(entryId, { body: html })
-    }, 3000)
+    }, 1000)
   }
 
   async function handleAddEntry() {
@@ -189,12 +244,68 @@ export default function ManageNewsletterPage() {
     }
   }
 
-  function flushPendingEntrySaves() {
+  function handleMetaChange(field: "title" | "slug" | "date", value: string) {
+    setNewsletter(prev => prev ? { ...prev, [field]: value } : prev)
+    metaPendingFields.current[field] = value
+    if (metaDebounceRefs.current[field]) clearTimeout(metaDebounceRefs.current[field])
+    metaDebounceRefs.current[field] = setTimeout(() => {
+      delete metaPendingFields.current[field]
+      saveMeta({ [field]: value })
+    }, 1000)
+  }
+
+  function handleEntryFieldChange(entryId: string, field: "title" | "date", value: string) {
+    setNewsletter(prev => prev ? {
+      ...prev,
+      entries: prev.entries.map(e => e.id === entryId ? { ...e, [field]: value } : e),
+    } : prev)
+    const key = `${entryId}-${field}`
+    entryFieldPendingValues.current[key] = value
+    if (entryFieldDebounceRefs.current[key]) clearTimeout(entryFieldDebounceRefs.current[key])
+    entryFieldDebounceRefs.current[key] = setTimeout(() => {
+      delete entryFieldPendingValues.current[key]
+      saveEntry(entryId, { [field]: value })
+    }, 1000)
+  }
+
+  async function flushAllPendingSaves() {
+    const newSaves: Promise<void>[] = []
+
+    if (bodyPendingHtml.current !== null) {
+      if (bodyDebounceRef.current) clearTimeout(bodyDebounceRef.current)
+      newSaves.push(saveBody(bodyPendingHtml.current))
+    }
+
+    // Collect per-entry changes and merge by entryId to avoid concurrent clobber (fix C)
+    const entryChanges: Record<string, { body?: string; title?: string; date?: string }> = {}
     for (const [entryId, html] of Object.entries(entryPendingBodies.current)) {
       clearTimeout(entryDebounceRefs.current[entryId])
       delete entryPendingBodies.current[entryId]
-      saveEntry(entryId, { body: html })
+      entryChanges[entryId] = { ...entryChanges[entryId], body: html }
     }
+    for (const [key, value] of Object.entries(entryFieldPendingValues.current)) {
+      const sep = key.lastIndexOf("-")
+      const entryId = key.slice(0, sep)
+      const field = key.slice(sep + 1) as "title" | "date"
+      clearTimeout(entryFieldDebounceRefs.current[key])
+      delete entryFieldPendingValues.current[key]
+      entryChanges[entryId] = { ...entryChanges[entryId], [field]: value }
+    }
+    for (const [entryId, fields] of Object.entries(entryChanges)) {
+      newSaves.push(saveEntry(entryId, fields))
+    }
+
+    if (Object.keys(metaPendingFields.current).length > 0) {
+      const fields = { ...metaPendingFields.current }
+      for (const key of Object.keys(fields)) {
+        if (metaDebounceRefs.current[key]) clearTimeout(metaDebounceRefs.current[key])
+      }
+      metaPendingFields.current = {}
+      newSaves.push(saveMeta(fields))
+    }
+
+    // Await both newly triggered saves AND any already in-flight saves
+    await Promise.allSettled([...inFlightSaves.current, ...newSaves])
   }
 
   async function handleDeleteEntry(entryId: string) {
@@ -211,13 +322,24 @@ export default function ManageNewsletterPage() {
     }
   }
 
-  async function saveMeta(fields: { title?: string; slug?: string; date?: string; coverPhotoKey?: string }) {
-    await fetch(`/api/newsletters/${id}`, {
+  function saveMeta(fields: { title?: string; slug?: string; date?: string; coverPhotoKey?: string }): Promise<void> {
+    setMetaSaveStatus("saving")
+    const p: Promise<void> = fetch(`/api/newsletters/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),
+    }).then(() => {
+      setNewsletter(prev => prev ? { ...prev, ...fields } : prev)
+      setMetaSaveStatus("saved")
+      setTimeout(() => setMetaSaveStatus(prev => prev === "saved" ? "idle" : prev), 2000)
+    }).catch(() => {
+      // Restore pending state so guards can warn/retry
+      Object.assign(metaPendingFields.current, fields)
+      setMetaSaveStatus("error")
     })
-    setNewsletter(prev => prev ? { ...prev, ...fields } : prev)
+    inFlightSaves.current.add(p)
+    p.finally(() => inFlightSaves.current.delete(p))
+    return p
   }
 
   async function handleCoverUpload(file: File) {
@@ -271,12 +393,33 @@ export default function ManageNewsletterPage() {
 
       {/* Page header */}
       <div className="flex flex-col items-center gap-3">
-        <button
-          onClick={() => router.push("/live/manage?tab=newsletters")}
-          className="text-white/40 hover:text-white/70 text-sm self-start flex items-center gap-1 transition-colors"
-        >
-          ← Back
-        </button>
+        <div className="self-start flex items-center gap-3">
+          <button
+            onClick={handleBack}
+            disabled={isFlushing}
+            className="text-white/40 hover:text-white/70 text-sm flex items-center gap-1 transition-colors disabled:opacity-50"
+          >
+            {isFlushing ? "Saving…" : "← Back"}
+          </button>
+          {/* Global save status */}
+          {(() => {
+            const all = [bodySaveStatus, metaSaveStatus, ...Object.values(entrySaveStatus)]
+            const hasError = all.some(s => s === "error")
+            const hasActivity = all.some(s => s === "saving" || s === "pending")
+            const hasSaved = !hasError && !hasActivity && all.some(s => s === "saved")
+            if (hasError) return (
+              <button
+                onClick={() => flushAllPendingSaves()}
+                className="text-xs text-red-400 hover:text-red-300 transition-colors"
+              >
+                Save failed — Retry
+              </button>
+            )
+            if (hasActivity) return <span className="text-xs text-white/30">Saving…</span>
+            if (hasSaved) return <span className="text-xs text-white/30">Saved ✓</span>
+            return null
+          })()}
+        </div>
         <h1 className="text-3xl font-black">{newsletter.title}</h1>
         <p className="text-white/50 text-sm -mt-2">{dateLabel}</p>
 
@@ -334,16 +477,16 @@ export default function ManageNewsletterPage() {
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs text-white/50">Title</Label>
               <Input
-                defaultValue={newsletter.title}
-                onBlur={e => e.target.value && saveMeta({ title: e.target.value })}
+                value={newsletter.title}
+                onChange={e => handleMetaChange("title", e.target.value)}
                 className="bg-white/5 border-white/10 text-white h-8 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs text-white/50">Slug</Label>
               <Input
-                defaultValue={newsletter.slug}
-                onBlur={e => e.target.value && saveMeta({ slug: e.target.value })}
+                value={newsletter.slug}
+                onChange={e => handleMetaChange("slug", e.target.value)}
                 className="bg-white/5 border-white/10 text-white h-8 text-sm font-mono"
               />
             </div>
@@ -351,8 +494,8 @@ export default function ManageNewsletterPage() {
               <Label className="text-xs text-white/50">Date</Label>
               <Input
                 type="date"
-                defaultValue={newsletter.date}
-                onBlur={e => e.target.value && saveMeta({ date: e.target.value })}
+                value={newsletter.date}
+                onChange={e => handleMetaChange("date", e.target.value)}
                 className="bg-white/5 border-white/10 text-white h-8 text-sm"
               />
             </div>
@@ -381,12 +524,15 @@ export default function ManageNewsletterPage() {
               if (t === tab || animPhase !== "idle") return
               if (t === "preview") {
                 const html = bodyEditorRef.current?.getHTML() ?? ""
-                setNewsletter(prev => prev ? { ...prev, body: html } : prev)
-                if (bodySaveStatus === "pending") {
-                  if (bodyDebounceRef.current) clearTimeout(bodyDebounceRef.current)
-                  saveBody(html)
-                }
-                flushPendingEntrySaves()
+                const pendingEntryBodies = { ...entryPendingBodies.current }
+                setNewsletter(prev => {
+                  if (!prev) return prev
+                  const entries = prev.entries.map(e =>
+                    pendingEntryBodies[e.id] !== undefined ? { ...e, body: pendingEntryBodies[e.id] } : e
+                  )
+                  return { ...prev, body: html, entries }
+                })
+                flushAllPendingSaves()
               }
               setAnimPhase("out")
               setTimeout(() => {
@@ -433,17 +579,9 @@ export default function ManageNewsletterPage() {
 
           {/* Global body */}
           <div className="flex flex-col gap-3">
-            <div className="flex items-center">
-              <div className="w-16 shrink-0" />
-              <div className="flex-1 text-center">
-                <h2 className="text-base font-semibold">Newsletter body</h2>
-                <p className="text-white/40 text-xs mt-0.5">Displayed before entries on the public page.</p>
-              </div>
-              <span className="text-xs text-white/30 w-16 text-right shrink-0">
-                {bodySaveStatus === "pending" && "Unsaved…"}
-                {bodySaveStatus === "saving" && "Saving…"}
-                {bodySaveStatus === "saved" && "Saved"}
-              </span>
+            <div className="text-center">
+              <h2 className="text-base font-semibold">Newsletter body</h2>
+              <p className="text-white/40 text-xs mt-0.5">Displayed before entries on the public page.</p>
             </div>
             <SimpleEditor
               initialContent={newsletter.body ?? ""}
@@ -497,7 +635,27 @@ export default function ManageNewsletterPage() {
 
                         {/* Edit toggle */}
                         <button
-                          onClick={() => setEditingEntryId(isExpanded ? null : entry.id)}
+                          onClick={() => {
+                            if (isExpanded) {
+                              // Merge all pending fields into one saveEntry call to avoid clobber
+                              const fields: { body?: string; title?: string; date?: string } = {}
+                              if (entryPendingBodies.current[entry.id]) {
+                                clearTimeout(entryDebounceRefs.current[entry.id])
+                                fields.body = entryPendingBodies.current[entry.id]
+                                delete entryPendingBodies.current[entry.id]
+                              }
+                              for (const field of ["title", "date"] as const) {
+                                const key = `${entry.id}-${field}`
+                                if (entryFieldPendingValues.current[key]) {
+                                  clearTimeout(entryFieldDebounceRefs.current[key])
+                                  fields[field] = entryFieldPendingValues.current[key]
+                                  delete entryFieldPendingValues.current[key]
+                                }
+                              }
+                              if (Object.keys(fields).length > 0) saveEntry(entry.id, fields)
+                            }
+                            setEditingEntryId(isExpanded ? null : entry.id)
+                          }}
                           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors shrink-0 ${
                             isExpanded
                               ? "bg-white/15 text-white"
@@ -543,29 +701,22 @@ export default function ManageNewsletterPage() {
                           <div className="flex flex-col gap-1.5">
                             <label className="text-xs text-white/50">Title</label>
                             <input
-                              defaultValue={entry.title}
-                              onBlur={e => saveEntry(entry.id, { title: e.target.value })}
+                              value={entry.title}
+                              onChange={e => handleEntryFieldChange(entry.id, "title", e.target.value)}
                               className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm text-white placeholder:text-white/20 outline-none focus:border-white/30"
                             />
                           </div>
                           <div className="flex flex-col gap-1.5">
                             <label className="text-xs text-white/50">Date <span className="text-white/25">(optional)</span></label>
                             <input
-                              defaultValue={entry.date ?? ""}
-                              onBlur={e => saveEntry(entry.id, { date: e.target.value || undefined })}
+                              value={entry.date ?? ""}
+                              onChange={e => handleEntryFieldChange(entry.id, "date", e.target.value)}
                               placeholder="March 2026"
                               className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm text-white placeholder:text-white/20 outline-none focus:border-white/30"
                             />
                           </div>
                           <div className="flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between">
-                              <label className="text-xs text-white/50">Body</label>
-                              <span className="text-xs text-white/30">
-                                {entrySaveStatus[entry.id] === "pending" && "Unsaved…"}
-                                {entrySaveStatus[entry.id] === "saving" && "Saving…"}
-                                {entrySaveStatus[entry.id] === "saved" && "Saved"}
-                              </span>
-                            </div>
+                            <label className="text-xs text-white/50">Body</label>
                             <SimpleEditor
                               initialContent={entry.body}
                               onEditorReady={editor => { entryEditorRefs.current[entry.id] = editor }}
