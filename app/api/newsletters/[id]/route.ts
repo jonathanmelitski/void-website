@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server"
-import { revalidatePath } from "next/cache"
 import { verifyToken } from "@/lib/aws/cognito"
 import {
   getNewsletter,
@@ -54,7 +53,6 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const newPublished = !newsletter.published
   await setNewsletterPublished(id, newPublished)
-  revalidatePath("/news", "layout")
   return NextResponse.json({ ...newsletter, published: newPublished })
 }
 
@@ -78,7 +76,6 @@ export async function PUT(request: NextRequest, { params }: Params) {
   if (typeof coverPhotoKey === "string") meta.coverPhotoKey = coverPhotoKey
   if (Object.keys(meta).length > 0) await updateNewsletterMeta(id, meta)
 
-  revalidatePath("/news", "layout")
   return NextResponse.json({ success: true })
 }
 
@@ -89,6 +86,5 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   if (!caller.groups.includes("ADMIN")) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   await deleteNewsletter(id)
-  revalidatePath("/news", "layout")
   return NextResponse.json({ success: true })
 }

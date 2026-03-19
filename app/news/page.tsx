@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import { listNewsletters } from "@/lib/aws/newsletters"
 import { NewsletterCard } from "@/components/newsletters/NewsletterCard"
 
-export const revalidate = 3600
+export const dynamic = "force-dynamic"
 
 export const metadata: Metadata = {
   title: "News | Void Ultimate",

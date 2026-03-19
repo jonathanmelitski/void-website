@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server"
-import { revalidatePath } from "next/cache"
 import { verifyToken } from "@/lib/aws/cognito"
 import { getNewsletter, removeNewsletterEntry } from "@/lib/aws/newsletters"
 
@@ -34,6 +33,5 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   }
 
   await removeNewsletterEntry(id, entryId)
-  revalidatePath("/news", "layout")
   return NextResponse.json({ success: true })
 }

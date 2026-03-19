@@ -1,24 +1,13 @@
 import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 import Image from "next/image"
-import { listNewsletters, getNewsletterBySlug } from "@/lib/aws/newsletters"
+import { getNewsletterBySlug } from "@/lib/aws/newsletters"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
 import { PROSE_CSS } from "@/lib/newsletter-prose-css"
 
-export const revalidate = 3600
+export const dynamic = "force-dynamic"
 
 type Props = { params: Promise<{ slug: string }> }
-
-export async function generateStaticParams() {
-  try {
-    const newsletters = await listNewsletters()
-    return newsletters
-      .filter(n => n.published)
-      .map(n => ({ slug: n.slug }))
-  } catch {
-    return []
-  }
-}
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server"
-import { revalidatePath } from "next/cache"
 import { verifyToken } from "@/lib/aws/cognito"
 import { appendNewsletterEntry, updateNewsletterEntries, getNewsletter } from "@/lib/aws/newsletters"
 import { randomUUID } from "crypto"
@@ -41,7 +40,6 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   await appendNewsletterEntry(id, entry)
   const newsletter = await getNewsletter(id)
-  revalidatePath("/news", "layout")
   return NextResponse.json(newsletter, { status: 201 })
 }
 
@@ -62,6 +60,5 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   const { entries } = await request.json()
   await updateNewsletterEntries(id, entries)
-  revalidatePath("/news", "layout")
   return NextResponse.json({ success: true })
 }
