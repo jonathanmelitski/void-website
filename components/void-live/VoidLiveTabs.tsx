@@ -4,9 +4,9 @@ import { useState } from "react"
 import { useAuth } from "@/lib/use-auth"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { UserPanel } from "@/app/live/dashboard/UserPanel"
-import { EventsPanel } from "@/app/live/dashboard/EventsPanel"
-import { AdminPanel } from "@/app/live/dashboard/AdminPanel"
+import { UserPanel } from "@/app/live/manage/UserPanel"
+import { EventsPanel } from "@/app/live/manage/EventsPanel"
+import { AdminPanel } from "@/app/live/manage/AdminPanel"
 
 type Tab = "photos" | "events" | "users"
 

@@ -138,7 +138,7 @@ export default function ManageNewsletterPage() {
 
   async function saveEntry(entryId: string, fields: { title?: string; date?: string; body?: string }) {
     setEntrySaveStatus(prev => ({ ...prev, [entryId]: "saving" }))
-    let updated: typeof newsletter.entries = []
+    let updated: NewsletterEntry[] = []
     setNewsletter(prev => {
       if (!prev) return prev
       updated = prev.entries.map(e => e.id === entryId ? { ...e, ...fields } : e)

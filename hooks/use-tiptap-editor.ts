@@ -5,9 +5,10 @@ import { useCurrentEditor, useEditorState } from "@tiptap/react"
 import { useEffect, useState } from "react"
 
 function getActivePageEditor(editor: Editor): Editor | null {
-  const storage = editor.storage.pages
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const storage = (editor.storage as any).pages
   if (!storage || !("activeEditor" in storage)) return null
-  return storage.activeEditor ?? null
+  return (storage.activeEditor as Editor | null) ?? null
 }
 
 export function useTiptapEditor(providedEditor?: Editor | null): {
