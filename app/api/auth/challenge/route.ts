@@ -1,43 +1,35 @@
 import { NextRequest, NextResponse } from "next/server"
 import {
-  InitiateAuthCommand,
-  AuthFlowType,
+  RespondToAuthChallengeCommand,
+  ChallengeNameType,
 } from "@aws-sdk/client-cognito-identity-provider"
 import { cognitoClient } from "@/lib/aws/cognito"
 import { secretHash } from "@/lib/aws/cognito-secret"
 
 export async function POST(request: NextRequest) {
-  const { email, password } = await request.json()
+  const { email, session, newPassword } = await request.json()
 
-  if (!email || !password) {
-    return NextResponse.json({ error: "Email and password are required" }, { status: 400 })
+  if (!email || !session || !newPassword) {
+    return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
   }
 
   try {
     const result = await cognitoClient.send(
-      new InitiateAuthCommand({
-        AuthFlow: AuthFlowType.USER_PASSWORD_AUTH,
+      new RespondToAuthChallengeCommand({
         ClientId: process.env.COGNITO_CLIENT_ID!,
-        AuthParameters: {
+        ChallengeName: ChallengeNameType.NEW_PASSWORD_REQUIRED,
+        Session: session,
+        ChallengeResponses: {
           USERNAME: email,
-          PASSWORD: password,
+          NEW_PASSWORD: newPassword,
           SECRET_HASH: secretHash(email),
         },
       })
     )
 
-    // Admin-created users must set a new password on first sign-in.
-    if (result.ChallengeName === "NEW_PASSWORD_REQUIRED") {
-      return NextResponse.json({
-        challenge: "NEW_PASSWORD_REQUIRED",
-        session: result.Session,
-        email,
-      })
-    }
-
     const tokens = result.AuthenticationResult
     if (!tokens?.AccessToken || !tokens?.RefreshToken) {
-      return NextResponse.json({ error: "Authentication failed" }, { status: 401 })
+      return NextResponse.json({ error: "Failed to set password" }, { status: 401 })
     }
 
     const response = NextResponse.json({ ok: true })
@@ -60,7 +52,7 @@ export async function POST(request: NextRequest) {
 
     return response
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Login failed"
+    const message = err instanceof Error ? err.message : "Failed to set password"
     return NextResponse.json({ error: message }, { status: 401 })
   }
 }
