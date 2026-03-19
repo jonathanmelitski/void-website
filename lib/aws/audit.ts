@@ -19,8 +19,9 @@ export type AuditAction =
   | "UNPUBLISH"
   | "ENTRY_ADD"
   | "ENTRY_REMOVE"
+  | "SEND"
 
-export type AuditEntityType = "EVENT" | "NEWSLETTER" | "NEWSLETTER_ENTRY" | "PHOTO"
+export type AuditEntityType = "EVENT" | "NEWSLETTER" | "NEWSLETTER_ENTRY" | "PHOTO" | "SEND"
 
 export type AuditLogEntry = {
   id: string

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import type { SendRecord } from "@/lib/aws/sends"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
 
@@ -20,6 +21,7 @@ function timeAgo(iso: string) {
 }
 
 export function MarketingPanel() {
+  const router = useRouter()
   const [lists, setLists] = useState<ContactList[]>([])
   const [sends, setSends] = useState<SendRecord[]>([])
   const [newsletters, setNewsletters] = useState<NewsletterItem[]>([])
@@ -45,11 +47,19 @@ export function MarketingPanel() {
   const [replyTo, setReplyTo] = useState(DEFAULT_REPLY_TO)
   const [fromName, setFromName] = useState(DEFAULT_FROM_NAME)
   const [includeWebLink, setIncludeWebLink] = useState(true)
+  const [trackingEnabled, setTrackingEnabled] = useState(true)
   const [testEmail, setTestEmail] = useState("")
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState("")
   const [testResult, setTestResult] = useState("")
   const [confirmSend, setConfirmSend] = useState(false)
+
+  const [testSendId, setTestSendId] = useState<string | null>(null)
+
+  // Delete send
+  const [deleteSendTarget, setDeleteSendTarget] = useState<SendRecord | null>(null)
+  const [deletingSend, setDeletingSend] = useState(false)
+  const [deleteSendError, setDeleteSendError] = useState("")
 
   useEffect(() => {
     Promise.all([
@@ -141,11 +151,14 @@ export function MarketingPanel() {
     setReplyTo(DEFAULT_REPLY_TO)
     setFromName(DEFAULT_FROM_NAME)
     setIncludeWebLink(true)
+    setTrackingEnabled(true)
     setTestEmail("")
     setSendResult("")
     setTestResult("")
     setConfirmSend(false)
+    setTestSendId(null)
   }
+
 
   function buildSendPayload(mode: "list" | "test", extra: Record<string, string>) {
     return {
@@ -155,6 +168,7 @@ export function MarketingPanel() {
       replyTo: replyTo.trim() || undefined,
       fromName: fromName.trim() || undefined,
       includeWebLink,
+      trackingEnabled,
       ...extra,
     }
   }
@@ -179,9 +193,11 @@ export function MarketingPanel() {
           newsletterId: selectedNewsletterId,
           newsletterTitle: newsletter?.title ?? selectedNewsletterId,
           listName: sendDialog,
+          sendMode: "list",
           sentAt: new Date().toISOString(),
           sentBy: "you",
           recipientCount: data.sent,
+          trackingEnabled,
         }, ...prev])
       } else {
         setSendResult(`Error: ${data.error ?? "Send failed"}`)
@@ -195,6 +211,7 @@ export function MarketingPanel() {
     if (!sendDialog || !selectedNewsletterId || !testEmail.trim()) return
     setSending(true)
     setTestResult("")
+    setTestSendId(null)
     try {
       const res = await fetch("/api/marketing/send", {
         method: "POST",
@@ -202,10 +219,34 @@ export function MarketingPanel() {
         body: JSON.stringify(buildSendPayload("test", { email: testEmail.trim() })),
       })
       const data = await res.json()
-      if (res.ok) setTestResult(`Test sent to ${testEmail.trim()}`)
-      else setTestResult(`Error: ${data.error ?? "Send failed"}`)
+      if (res.ok) {
+        setTestResult(`Test sent to ${testEmail.trim()}`)
+        if (data.sendId && trackingEnabled) setTestSendId(data.sendId)
+      } else {
+        setTestResult(`Error: ${data.error ?? "Send failed"}`)
+      }
     } finally {
       setSending(false)
+    }
+  }
+
+  async function confirmDeleteSend() {
+    if (!deleteSendTarget) return
+    setDeletingSend(true)
+    setDeleteSendError("")
+    try {
+      const res = await fetch(`/api/marketing/sends/${deleteSendTarget.id}`, { method: "DELETE" })
+      if (res.ok) {
+        setSends(prev => prev.filter(s => s.id !== deleteSendTarget.id))
+        setDeleteSendTarget(null)
+      } else {
+        const data = await res.json()
+        setDeleteSendError(data.error ?? "Delete failed")
+      }
+    } catch {
+      setDeleteSendError("Network error")
+    } finally {
+      setDeletingSend(false)
     }
   }
 
@@ -317,19 +358,43 @@ export function MarketingPanel() {
                   <th className="text-left pb-2 pr-4 font-medium">List</th>
                   <th className="text-left pb-2 pr-4 font-medium">Sent</th>
                   <th className="text-left pb-2 pr-4 font-medium">By</th>
-                  <th className="text-left pb-2 font-medium">Recipients</th>
+                  <th className="text-left pb-2 pr-4 font-medium">Recipients</th>
+                  <th className="text-left pb-2 font-medium"></th>
                 </tr>
               </thead>
               <tbody>
                 {sends.map(s => (
                   <tr key={s.id} className="border-b border-white/5 hover:bg-white/[0.02]">
                     <td className="py-2.5 pr-4 text-white/80 max-w-[200px] truncate">{s.newsletterTitle}</td>
-                    <td className="py-2.5 pr-4 text-white/60">{s.listName}</td>
+                    <td className="py-2.5 pr-4 text-white/60">
+                      <span>{s.listName}</span>
+                      {s.sendMode === "test" && (
+                        <span className="ml-1.5 text-[10px] bg-yellow-400/10 text-yellow-400 border border-yellow-400/30 px-1.5 py-0.5 rounded-full">test</span>
+                      )}
+                    </td>
                     <td className="py-2.5 pr-4 text-white/40 whitespace-nowrap">
                       <span title={s.sentAt}>{timeAgo(s.sentAt)}</span>
                     </td>
                     <td className="py-2.5 pr-4 text-white/60">{s.sentBy}</td>
-                    <td className="py-2.5 text-white/60">{s.recipientCount}</td>
+                    <td className="py-2.5 pr-4 text-white/60">{s.recipientCount}</td>
+                    <td className="py-2.5">
+                      <div className="flex items-center gap-2">
+                        {s.trackingEnabled && (
+                          <button
+                            onClick={() => router.push(`/live/manage/sends/${s.id}`)}
+                            className="text-xs text-white/50 hover:text-white bg-white/5 hover:bg-white/10 px-2 py-1 rounded transition-colors"
+                          >
+                            Stats
+                          </button>
+                        )}
+                        <button
+                          onClick={() => { setDeleteSendTarget(s); setDeleteSendError("") }}
+                          className="text-xs text-red-400/50 hover:text-red-400 bg-red-400/5 hover:bg-red-400/10 px-2 py-1 rounded transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -489,7 +554,7 @@ export function MarketingPanel() {
               </div>
             </div>
 
-            {/* Web link */}
+            {/* Web link + tracking checkboxes */}
             <div className="flex flex-col gap-1.5">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -505,6 +570,15 @@ export function MarketingPanel() {
                   Warning: this newsletter is unpublished — the web link will return a 404.
                 </p>
               )}
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={trackingEnabled}
+                  onChange={e => setTrackingEnabled(e.target.checked)}
+                  className="accent-white w-3.5 h-3.5"
+                />
+                <span className="text-sm text-white/70">Enable open &amp; click tracking</span>
+              </label>
             </div>
 
             {/* Test send */}
@@ -527,9 +601,19 @@ export function MarketingPanel() {
                 </button>
               </div>
               {testResult && (
-                <p className={`text-xs ${testResult.startsWith("Error") ? "text-red-400" : "text-green-400/80"}`}>
-                  {testResult}
-                </p>
+                <div className="flex items-center gap-3">
+                  <p className={`text-xs ${testResult.startsWith("Error") ? "text-red-400" : "text-green-400/80"}`}>
+                    {testResult}
+                  </p>
+                  {testSendId && (
+                    <button
+                      onClick={() => router.push(`/live/manage/sends/${testSendId}`)}
+                      className="text-xs text-white/40 hover:text-white underline transition-colors"
+                    >
+                      View stats →
+                    </button>
+                  )}
+                </div>
               )}
             </div>
 
@@ -547,6 +631,40 @@ export function MarketingPanel() {
                   {sendResult}
                 </p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete send confirmation dialog */}
+      {deleteSendTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
+          <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-6 max-w-sm w-full mx-4 flex flex-col gap-4">
+            <h3 className="font-semibold text-red-400">Delete send?</h3>
+            <div className="text-sm text-white/60 flex flex-col gap-1">
+              <p><span className="text-white/30">Newsletter:</span> {deleteSendTarget.newsletterTitle}</p>
+              <p><span className="text-white/30">List:</span> {deleteSendTarget.listName}</p>
+              <p><span className="text-white/30">Recipients:</span> {deleteSendTarget.recipientCount}</p>
+            </div>
+            <p className="text-xs text-red-400/70 bg-red-400/10 rounded-lg px-3 py-2">
+              This will permanently delete the send record and all associated tracking events. This cannot be undone.
+            </p>
+            {deleteSendError && <p className="text-red-400 text-xs">{deleteSendError}</p>}
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setDeleteSendTarget(null)}
+                disabled={deletingSend}
+                className="px-4 py-2 text-sm text-white/50 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteSend}
+                disabled={deletingSend}
+                className="px-4 py-2 text-sm bg-red-500/80 hover:bg-red-500 text-white font-medium rounded-lg transition-colors disabled:opacity-50"
+              >
+                {deletingSend ? "Deleting…" : "Delete"}
+              </button>
             </div>
           </div>
         </div>

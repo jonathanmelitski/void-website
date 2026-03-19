@@ -1,6 +1,29 @@
 import { PROSE_CSS, PROSE_CSS_LIGHT_OVERRIDES } from "@/lib/newsletter-prose-css"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
 
+export function injectTracking(
+  html: string,
+  messageId: string,
+  sendId: string
+): { html: string; links: string[] } {
+  const base = process.env.NEXT_PUBLIC_BASE_URL ?? "https://voidultimate.com"
+  const links: string[] = []
+
+  // Rewrite href="http..." links (skip unsubscribe placeholder)
+  const rewritten = html.replace(/href="(https?:\/\/[^"]+)"/g, (_match, url: string) => {
+    if (url.includes("amazonSESUnsubscribeUrl")) return `href="${url}"`
+    links.push(url)
+    const encoded = encodeURIComponent(url)
+    return `href="${base}/api/t/click?m=${messageId}&s=${sendId}&url=${encoded}"`
+  })
+
+  // Append tracking pixel before </body>
+  const pixel = `<img src="${base}/api/t/open?m=${messageId}&s=${sendId}" width="1" height="1" alt="" style="display:block;border:0;width:1px;height:1px;" />`
+  const withPixel = rewritten.replace("</body>", `${pixel}\n</body>`)
+
+  return { html: withPixel, links }
+}
+
 const THEMES = {
   dark: {
     pageBg:       "#0a0a0a",

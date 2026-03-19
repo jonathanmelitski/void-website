@@ -93,6 +93,13 @@ export async function PUT(request: NextRequest, { params }: Params) {
   if (typeof coverPhotoKey === "string") meta.coverPhotoKey = coverPhotoKey
   if (Object.keys(meta).length > 0) await updateNewsletterMeta(id, meta)
 
+  const newState: Record<string, unknown> = {
+    ...newsletter,
+    ...(typeof payload.body === "string" ? { body: payload.body } : {}),
+    ...("emailBody" in payload ? { emailBody: payload.emailBody } : {}),
+    ...meta,
+  }
+
   void logAudit({
     actorUsername: caller.username,
     action: "UPDATE",
@@ -100,6 +107,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     entityId: id,
     entityLabel: newsletter?.title ?? id,
     previousState: newsletter as Record<string, unknown> ?? undefined,
+    newState,
     reversible: !!newsletter,
   })
 
