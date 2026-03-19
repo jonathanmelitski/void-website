@@ -39,6 +39,7 @@ export default function SendStatsPage() {
   const [stats, setStats] = useState<StatsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [statsError, setStatsError] = useState("")
 
   const isAdmin = user?.groups.includes("ADMIN") ?? false
 
@@ -54,12 +55,16 @@ export default function SendStatsPage() {
     if (!id) return
     Promise.all([
       fetch(`/api/marketing/sends/${id}`).then(r => r.ok ? r.json() : null),
-      fetch(`/api/marketing/sends/${id}/stats`).then(r => r.ok ? r.json() : null),
-    ]).then(([sendData, statsData]) => {
+      fetch(`/api/marketing/sends/${id}/stats`).then(r => r.json().then(d => ({ ok: r.ok, status: r.status, data: d }))),
+    ]).then(([sendData, statsResult]) => {
       if (!sendData) { setError("Send not found"); return }
       setSend(sendData)
-      setStats(statsData)
-    }).catch(() => setError("Failed to load")).finally(() => setLoading(false))
+      if (statsResult.ok) {
+        setStats(statsResult.data)
+      } else {
+        setStatsError(`Stats error ${statsResult.status}: ${statsResult.data?.error ?? "unknown"}`)
+      }
+    }).catch(e => setError(`Failed to load: ${e?.message ?? e}`)).finally(() => setLoading(false))
   }, [id])
 
   if (authLoading || loading) {
@@ -122,6 +127,8 @@ export default function SendStatsPage() {
 
       {!send.trackingEnabled ? (
         <p className="text-white/40 text-sm">Tracking was not enabled for this send.</p>
+      ) : statsError ? (
+        <p className="text-red-400 text-sm font-mono">{statsError}</p>
       ) : !stats ? (
         <p className="text-white/40 text-sm">Stats unavailable.</p>
       ) : (
