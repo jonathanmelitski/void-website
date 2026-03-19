@@ -14,11 +14,11 @@ export function injectTracking(
     if (url.includes("amazonSESUnsubscribeUrl")) return `href="${url}"`
     links.push(url)
     const encoded = encodeURIComponent(url)
-    return `href="${base}/api/t/click?m=${messageId}&s=${sendId}&url=${encoded}"`
+    return `href="${base}/t/click?m=${messageId}&s=${sendId}&url=${encoded}"`
   })
 
   // Append tracking pixel before </body>
-  const pixel = `<img src="${base}/api/t/open?m=${messageId}&s=${sendId}" width="1" height="1" alt="" style="display:block;border:0;width:1px;height:1px;" />`
+  const pixel = `<img src="${base}/t/open?m=${messageId}&s=${sendId}" width="1" height="1" alt="" style="display:block;border:0;width:1px;height:1px;" />`
   const withPixel = rewritten.replace("</body>", `${pixel}\n</body>`)
 
   return { html: withPixel, links }
