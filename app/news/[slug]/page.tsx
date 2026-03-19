@@ -16,7 +16,6 @@ export async function generateStaticParams() {
       .filter(n => n.published)
       .map(n => ({ slug: n.slug }))
   } catch {
-    // env vars not available at build time — pages render on-demand at runtime
     return []
   }
 }

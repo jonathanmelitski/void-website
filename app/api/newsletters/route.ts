@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { revalidatePath } from "next/cache"
 import { verifyToken } from "@/lib/aws/cognito"
 import {
   listNewsletters,
@@ -82,5 +83,6 @@ export async function POST(request: NextRequest) {
   }
 
   await createNewsletter(item)
+  revalidatePath("/news", "layout")
   return NextResponse.json(item, { status: 201 })
 }
