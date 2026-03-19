@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog"
 import { DataTable, ColumnDef } from "@/components/ui/data-table"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { NEWSLETTER_TEMPLATE, parseNewsletterTemplate } from "@/lib/newsletter-template"
 
 type NewsletterRow = {
   id: string
@@ -37,6 +38,9 @@ export function NewslettersPanel() {
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [duplicateTarget, setDuplicateTarget] = useState<NewsletterRow | null>(null)
   const [isDuplicating, setIsDuplicating] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
+  const [importError, setImportError] = useState("")
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   const isAdmin = user?.groups.includes("ADMIN") ?? false
 
@@ -121,6 +125,80 @@ export function NewslettersPanel() {
     }
   }
 
+  function handleDownloadTemplate() {
+    const blob = new Blob([NEWSLETTER_TEMPLATE], { type: "text/markdown" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "newsletter-template.md"
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    // reset so the same file can be re-selected after an error
+    e.target.value = ""
+    setImportError("")
+    setIsImporting(true)
+    try {
+      const text = await file.text()
+      const parsed = parseNewsletterTemplate(text)
+
+      // 1. Create newsletter
+      const res = await fetch("/api/newsletters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: parsed.title,
+          date: parsed.date,
+          slug: parsed.title.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""),
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json()
+        setImportError(d.error ?? "Failed to create newsletter")
+        return
+      }
+      const created = await res.json()
+
+      // 2. Set body
+      await fetch(`/api/newsletters/${created.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: parsed.body }),
+      })
+
+      // 3. Set entries
+      if (parsed.entries.length > 0) {
+        const entries = parsed.entries.map(e => ({
+          id: crypto.randomUUID(),
+          title: e.title,
+          body: e.body,
+          date: e.date ?? "",
+          authorUsername: "template-import",
+          createdAt: new Date().toISOString(),
+        }))
+        await fetch(`/api/newsletters/${created.id}/entries`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entries }),
+        })
+      }
+
+      setNewsletters(prev => [
+        { id: created.id, title: parsed.title, date: parsed.date, published: false },
+        ...prev,
+      ])
+      router.push(`/live/manage/newsletters/${created.id}`)
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Failed to import template")
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
   function buildColumns(openConfirm: (row: NewsletterRow) => void): ColumnDef<NewsletterRow>[] {
     return [
       { header: "Title", accessorKey: "title" },
@@ -174,20 +252,47 @@ export function NewslettersPanel() {
     <div className="flex flex-col gap-4 text-left">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Newsletters</h2>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm">New Newsletter</Button>
-          </DialogTrigger>
-          <DialogContent className="bg-black border-white/10 text-white max-w-md">
-            <DialogHeader>
-              <DialogTitle>Create Newsletter</DialogTitle>
-            </DialogHeader>
-            <CreateNewsletterForm onCreated={onNewsletterCreated} />
-          </DialogContent>
-        </Dialog>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleDownloadTemplate}
+            className="text-white/50 hover:text-white/80"
+          >
+            Download Template
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => importInputRef.current?.click()}
+            disabled={isImporting}
+            className="text-white/50 hover:text-white/80"
+          >
+            {isImporting ? "Importing…" : "From Template"}
+          </Button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".md,text/markdown,text/plain"
+            className="hidden"
+            onChange={handleImportFile}
+          />
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm">New Newsletter</Button>
+            </DialogTrigger>
+            <DialogContent className="bg-black border-white/10 text-white max-w-md">
+              <DialogHeader>
+                <DialogTitle>Create Newsletter</DialogTitle>
+              </DialogHeader>
+              <CreateNewsletterForm onCreated={onNewsletterCreated} />
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
+      {importError && <p className="text-sm text-red-400">{importError}</p>}
 
       <DataTable
         columns={buildColumns(row => setDeleteTarget([row]))}

@@ -10,8 +10,9 @@ import { EventsPanel } from "./EventsPanel"
 import { AdminPanel } from "./AdminPanel"
 import { NewslettersPanel } from "./NewslettersPanel"
 import { AuditPanel } from "./AuditPanel"
+import { MarketingPanel } from "./MarketingPanel"
 
-type Tab = "photos" | "events" | "users" | "newsletters" | "audit"
+type Tab = "photos" | "events" | "users" | "newsletters" | "audit" | "marketing"
 
 function getHighestRole(groups: string[]) {
   if (groups.includes("ADMIN")) return "ADMIN"
@@ -39,7 +40,7 @@ function ManagePageInner() {
   const searchParams = useSearchParams()
   const [activeTab, setActiveTab] = useState<Tab>(() => {
     const t = searchParams.get("tab")
-    return (["photos", "events", "newsletters", "users", "audit"].includes(t ?? "") ? t : "photos") as Tab
+    return (["photos", "events", "newsletters", "users", "audit", "marketing"].includes(t ?? "") ? t : "photos") as Tab
   })
 
   useEffect(() => {
@@ -64,6 +65,7 @@ function ManagePageInner() {
     ...(isCoachOrAdmin ? [{ id: "newsletters" as Tab, label: "Newsletters" }] : []),
     ...(isAdmin ? [{ id: "users" as Tab, label: "Users" }] : []),
     ...(isAdmin ? [{ id: "audit" as Tab, label: "Audit" }] : []),
+    ...(isAdmin ? [{ id: "marketing" as Tab, label: "Marketing" }] : []),
   ]
 
   return (
@@ -118,6 +120,7 @@ function ManagePageInner() {
         {activeTab === "newsletters" && isCoachOrAdmin && <NewslettersPanel />}
         {activeTab === "users" && isAdmin && <AdminPanel />}
         {activeTab === "audit" && isAdmin && <AuditPanel />}
+        {activeTab === "marketing" && isAdmin && <MarketingPanel />}
       </div>
     </div>
   )

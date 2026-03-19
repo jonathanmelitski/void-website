@@ -5,6 +5,7 @@ import {
   getNewsletterBySlug,
   setNewsletterPublished,
   updateNewsletterBody,
+  updateNewsletterEmailBody,
   updateNewsletterMeta,
   deleteNewsletter,
 } from "@/lib/aws/newsletters"
@@ -78,6 +79,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   if (typeof payload.body === "string") {
     await updateNewsletterBody(id, payload.body)
+  }
+
+  if ("emailBody" in payload) {
+    await updateNewsletterEmailBody(id, payload.emailBody ?? null)
   }
 
   const { title, slug, date, coverPhotoKey } = payload

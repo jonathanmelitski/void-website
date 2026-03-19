@@ -23,7 +23,8 @@ export type NewsletterItem = {
   id: string
   slug: string
   title: string
-  body?: string // HTML shown before entries
+  body?: string // HTML shown before entries on website
+  emailBody?: string // HTML override for email header; absent = use body
   date: string // ISO date, used for sorting
   coverPhotoKey?: string
   published: boolean
@@ -86,6 +87,27 @@ export async function updateNewsletterBody(id: string, body: string): Promise<vo
       ExpressionAttributeValues: { ":body": body },
     })
   )
+}
+
+export async function updateNewsletterEmailBody(id: string, emailBody: string | null): Promise<void> {
+  if (!emailBody) {
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE(),
+        Key: { id },
+        UpdateExpression: "REMOVE emailBody",
+      })
+    )
+  } else {
+    await dynamo.send(
+      new UpdateCommand({
+        TableName: TABLE(),
+        Key: { id },
+        UpdateExpression: "SET emailBody = :emailBody",
+        ExpressionAttributeValues: { ":emailBody": emailBody },
+      })
+    )
+  }
 }
 
 export async function updateNewsletterMeta(

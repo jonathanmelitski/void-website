@@ -70,6 +70,7 @@ export default function ManageNewsletterPage() {
   const [isToggling, setIsToggling] = useState(false)
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
   const [bodySaveStatus, setBodySaveStatus] = useState<"idle" | "pending" | "saving" | "saved" | "error">("idle")
+  const [emailBodySaveStatus, setEmailBodySaveStatus] = useState<"idle" | "pending" | "saving" | "saved" | "error">("idle")
   const [metaSaveStatus, setMetaSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [tab, setTab] = useState<"edit" | "preview">("edit")
   const [animPhase, setAnimPhase] = useState<"idle" | "out" | "in">("idle")
@@ -78,10 +79,15 @@ export default function ManageNewsletterPage() {
   const [showSettings, setShowSettings] = useState(false)
   const [entrySaveStatus, setEntrySaveStatus] = useState<Record<string, "idle" | "pending" | "saving" | "saved" | "error">>({})
   const [isFlushing, setIsFlushing] = useState(false)
+  const [useSameHeader, setUseSameHeader] = useState(true)
+  const [headerTab, setHeaderTab] = useState<"website" | "email">("website")
   const newsletterRef = useRef<NewsletterItem | null>(null)
   const bodyEditorRef = useRef<Editor | null>(null)
   const bodyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bodyPendingHtml = useRef<string | null>(null)
+  const emailBodyEditorRef = useRef<Editor | null>(null)
+  const emailBodyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const emailBodyPendingHtml = useRef<string | null>(null)
   const entryEditorRefs = useRef<Record<string, Editor | null>>({})
   const entryDebounceRefs = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const entryPendingBodies = useRef<Record<string, string>>({})
@@ -106,7 +112,9 @@ export default function ManageNewsletterPage() {
     try {
       const res = await fetch(`/api/newsletters/${id}`)
       if (!res.ok) { setError("Newsletter not found"); return }
-      setNewsletter(await res.json())
+      const data = await res.json()
+      setNewsletter(data)
+      setUseSameHeader(!data.emailBody)
     } catch {
       setError("Failed to load newsletter")
     } finally {
@@ -128,6 +136,7 @@ export default function ManageNewsletterPage() {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       const hasPending =
         bodyPendingHtml.current !== null ||
+        emailBodyPendingHtml.current !== null ||
         Object.keys(entryPendingBodies.current).length > 0 ||
         Object.keys(metaPendingFields.current).length > 0 ||
         Object.keys(entryFieldPendingValues.current).length > 0 ||
@@ -187,6 +196,33 @@ export default function ManageNewsletterPage() {
     setBodySaveStatus("pending")
     if (bodyDebounceRef.current) clearTimeout(bodyDebounceRef.current)
     bodyDebounceRef.current = setTimeout(() => saveBody(html), 1000)
+  }
+
+  function saveEmailBody(html: string | null): Promise<void> {
+    emailBodyPendingHtml.current = null
+    setEmailBodySaveStatus("saving")
+    const p: Promise<void> = fetch(`/api/newsletters/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ emailBody: html ?? "" }),
+    }).then(() => {
+      setNewsletter(prev => prev ? { ...prev, emailBody: html ?? undefined } : prev)
+      setEmailBodySaveStatus("saved")
+      setTimeout(() => setEmailBodySaveStatus(prev => prev === "saved" ? "idle" : prev), 2000)
+    }).catch(() => {
+      emailBodyPendingHtml.current = html
+      setEmailBodySaveStatus("error")
+    })
+    inFlightSaves.current.add(p)
+    p.finally(() => inFlightSaves.current.delete(p))
+    return p
+  }
+
+  function handleEmailBodyChange(html: string) {
+    emailBodyPendingHtml.current = html
+    setEmailBodySaveStatus("pending")
+    if (emailBodyDebounceRef.current) clearTimeout(emailBodyDebounceRef.current)
+    emailBodyDebounceRef.current = setTimeout(() => saveEmailBody(html), 1000)
   }
 
   function saveEntry(entryId: string, fields: { title?: string; date?: string; body?: string }): Promise<void> {
@@ -274,6 +310,11 @@ export default function ManageNewsletterPage() {
     if (bodyPendingHtml.current !== null) {
       if (bodyDebounceRef.current) clearTimeout(bodyDebounceRef.current)
       newSaves.push(saveBody(bodyPendingHtml.current))
+    }
+
+    if (emailBodyPendingHtml.current !== null) {
+      if (emailBodyDebounceRef.current) clearTimeout(emailBodyDebounceRef.current)
+      newSaves.push(saveEmailBody(emailBodyPendingHtml.current))
     }
 
     // Collect per-entry changes and merge by entryId to avoid concurrent clobber (fix C)
@@ -403,7 +444,7 @@ export default function ManageNewsletterPage() {
           </button>
           {/* Global save status */}
           {(() => {
-            const all = [bodySaveStatus, metaSaveStatus, ...Object.values(entrySaveStatus)]
+            const all = [bodySaveStatus, emailBodySaveStatus, metaSaveStatus, ...Object.values(entrySaveStatus)]
             const hasError = all.some(s => s === "error")
             const hasActivity = all.some(s => s === "saving" || s === "pending")
             const hasSaved = !hasError && !hasActivity && all.some(s => s === "saved")
@@ -577,17 +618,83 @@ export default function ManageNewsletterPage() {
       {tab === "edit" && (
         <div className="flex flex-col gap-8">
 
-          {/* Global body */}
+          {/* Newsletter header */}
           <div className="flex flex-col gap-3">
             <div className="text-center">
-              <h2 className="text-base font-semibold">Newsletter body</h2>
-              <p className="text-white/40 text-xs mt-0.5">Displayed before entries on the public page.</p>
+              <h2 className="text-base font-semibold">Newsletter header</h2>
+              <p className="text-white/40 text-xs mt-0.5">Displayed before entries.</p>
             </div>
-            <SimpleEditor
-              initialContent={newsletter.body ?? ""}
-              onEditorReady={editor => { bodyEditorRef.current = editor }}
-              onChange={handleBodyChange}
-            />
+
+            {/* Checkbox + picker stacked centered */}
+            <div className="flex flex-col items-center gap-2">
+              <label className="flex items-center gap-2 text-sm text-white/60 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={useSameHeader}
+                  onChange={e => {
+                    const same = e.target.checked
+                    setUseSameHeader(same)
+                    if (same) {
+                      if (emailBodyDebounceRef.current) clearTimeout(emailBodyDebounceRef.current)
+                      emailBodyPendingHtml.current = null
+                      saveEmailBody(null)
+                    } else {
+                      if (!newsletter.emailBody) {
+                        const currentBody = bodyEditorRef.current?.getHTML() ?? newsletter.body ?? ""
+                        handleEmailBodyChange(currentBody)
+                      }
+                      setHeaderTab("website")
+                    }
+                  }}
+                  className="w-3.5 h-3.5 rounded accent-white cursor-pointer"
+                />
+                Use same header for email/website
+              </label>
+
+              <div className={`flex items-center bg-white/[0.06] border border-white/10 rounded-full p-1 gap-1 transition-opacity duration-200 ${useSameHeader ? "opacity-30 pointer-events-none" : ""}`}>
+                <button
+                  onClick={() => {
+                    if (emailBodyDebounceRef.current) clearTimeout(emailBodyDebounceRef.current)
+                    if (emailBodyPendingHtml.current !== null) saveEmailBody(emailBodyPendingHtml.current)
+                    setHeaderTab("website")
+                  }}
+                  className={`px-4 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
+                    headerTab === "website" ? "bg-white/15 text-white" : "text-white/40"
+                  }`}
+                >
+                  Website
+                </button>
+                <button
+                  onClick={() => {
+                    if (bodyDebounceRef.current) clearTimeout(bodyDebounceRef.current)
+                    if (bodyPendingHtml.current !== null) saveBody(bodyPendingHtml.current)
+                    setHeaderTab("email")
+                  }}
+                  className={`px-4 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
+                    headerTab === "email" ? "bg-white/15 text-white" : "text-white/40"
+                  }`}
+                >
+                  Email
+                </button>
+              </div>
+            </div>
+
+            {/* Editor */}
+            {useSameHeader || headerTab === "website" ? (
+              <SimpleEditor
+                key="website-body"
+                initialContent={newsletter.body ?? ""}
+                onEditorReady={editor => { bodyEditorRef.current = editor }}
+                onChange={handleBodyChange}
+              />
+            ) : (
+              <SimpleEditor
+                key="email-body"
+                initialContent={newsletter.emailBody ?? newsletter.body ?? ""}
+                onEditorReady={editor => { emailBodyEditorRef.current = editor }}
+                onChange={handleEmailBodyChange}
+              />
+            )}
           </div>
 
           {/* Entries list */}
