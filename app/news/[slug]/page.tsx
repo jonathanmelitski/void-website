@@ -10,15 +10,21 @@ export const revalidate = 3600
 type Props = { params: Promise<{ slug: string }> }
 
 export async function generateStaticParams() {
-  const newsletters = await listNewsletters()
-  return newsletters
-    .filter(n => n.published)
-    .map(n => ({ slug: n.slug }))
+  try {
+    const newsletters = await listNewsletters()
+    return newsletters
+      .filter(n => n.published)
+      .map(n => ({ slug: n.slug }))
+  } catch {
+    // env vars not available at build time — pages render on-demand at runtime
+    return []
+  }
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params
-  const newsletter = await getNewsletterBySlug(slug)
+  let newsletter: NewsletterItem | null = null
+  try { newsletter = await getNewsletterBySlug(slug) } catch { /* build-time */ }
   if (!newsletter) return { title: "Not Found" }
   const description = "Read this newsletter from Void Ultimate"
   const coverUrl = newsletter.coverPhotoKey
@@ -37,7 +43,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function NewsletterDetailPage({ params }: Props) {
   const { slug } = await params
-  const newsletter = await getNewsletterBySlug(slug)
+  let newsletter: NewsletterItem | null = null
+  try { newsletter = await getNewsletterBySlug(slug) } catch { /* env not available */ }
   if (!newsletter || !newsletter.published) return notFound()
 
   const s3Base = process.env.NEXT_PUBLIC_S3_BASE_URL ?? ""

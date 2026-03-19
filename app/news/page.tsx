@@ -14,7 +14,8 @@ export const metadata: Metadata = {
 }
 
 export default async function NewsPage() {
-  const newsletters = (await listNewsletters()).filter(n => n.published)
+  let newsletters: Awaited<ReturnType<typeof listNewsletters>> = []
+  try { newsletters = (await listNewsletters()).filter(n => n.published) } catch { /* build-time */ }
 
   return (
     <div className="p-8 lg:px-16">
