@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { verifyToken } from "@/lib/aws/cognito"
 import { getEvent, deleteEvent } from "@/lib/aws/dynamo"
+import { logAudit } from "@/lib/aws/audit"
 
 interface Props {
   params: Promise<{ id: string }>
@@ -36,7 +37,17 @@ export async function DELETE(request: NextRequest, { params }: Props) {
 
   const { id } = await params
   try {
+    const existing = await getEvent(id)
     await deleteEvent(id)
+    void logAudit({
+      actorUsername: payload["cognito:username"] ?? payload.sub ?? "",
+      action: "DELETE",
+      entityType: "EVENT",
+      entityId: id,
+      entityLabel: existing?.title ?? id,
+      previousState: existing as Record<string, unknown> ?? undefined,
+      reversible: !!existing,
+    })
     return new NextResponse(null, { status: 204 })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to delete event"

@@ -6,6 +6,7 @@ import {
   generateSlug,
   type NewsletterItem,
 } from "@/lib/aws/newsletters"
+import { logAudit } from "@/lib/aws/audit"
 import { randomUUID } from "crypto"
 
 async function getCallerGroups(request: NextRequest): Promise<string[]> {
@@ -52,9 +53,11 @@ export async function POST(request: NextRequest) {
   if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
 
   let groups: string[]
+  let callerUsername: string
   try {
     const payload = await verifyToken(token)
     groups = payload["cognito:groups"] ?? []
+    callerUsername = payload["cognito:username"] ?? payload.sub ?? ""
   } catch {
     return NextResponse.json({ error: "Invalid token" }, { status: 401 })
   }
@@ -82,5 +85,14 @@ export async function POST(request: NextRequest) {
   }
 
   await createNewsletter(item)
+  void logAudit({
+    actorUsername: callerUsername,
+    action: "CREATE",
+    entityType: "NEWSLETTER",
+    entityId: item.id,
+    entityLabel: item.title,
+    newState: item as Record<string, unknown>,
+    reversible: true,
+  })
   return NextResponse.json(item, { status: 201 })
 }

@@ -17,6 +17,7 @@ frontend:
         - echo "COGNITO_CLIENT_SECRET=$COGNITO_CLIENT_SECRET" >> .env
         - echo "DYNAMO_EVENTS_TABLE=$DYNAMO_EVENTS_TABLE" >> .env
         - echo "DYNAMO_NEWSLETTERS_TABLE=$DYNAMO_NEWSLETTERS_TABLE" >> .env
+        - echo "DYNAMO_AUDIT_TABLE=$DYNAMO_AUDIT_TABLE" >> .env
         - echo "S3_BUCKET_NAME=$S3_BUCKET_NAME" >> .env
         - echo "NEXT_PUBLIC_S3_BASE_URL=$NEXT_PUBLIC_S3_BASE_URL" >> .env
         - echo "NEXT_PUBLIC_BASE_URL=$NEXT_PUBLIC_BASE_URL" >> .env

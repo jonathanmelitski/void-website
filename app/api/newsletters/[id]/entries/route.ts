@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { verifyToken } from "@/lib/aws/cognito"
 import { appendNewsletterEntry, updateNewsletterEntries, getNewsletter } from "@/lib/aws/newsletters"
+import { logAudit } from "@/lib/aws/audit"
 import { randomUUID } from "crypto"
 
 type Params = { params: Promise<{ id: string }> }
@@ -39,6 +40,15 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   await appendNewsletterEntry(id, entry)
+  void logAudit({
+    actorUsername: username,
+    action: "ENTRY_ADD",
+    entityType: "NEWSLETTER_ENTRY",
+    entityId: id,
+    entityLabel: entry.title,
+    newState: { entryId: entry.id, entry },
+    reversible: true,
+  })
   const newsletter = await getNewsletter(id)
   return NextResponse.json(newsletter, { status: 201 })
 }

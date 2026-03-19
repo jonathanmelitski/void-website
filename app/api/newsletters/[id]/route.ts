@@ -8,6 +8,7 @@ import {
   updateNewsletterMeta,
   deleteNewsletter,
 } from "@/lib/aws/newsletters"
+import { logAudit } from "@/lib/aws/audit"
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -53,6 +54,15 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const newPublished = !newsletter.published
   await setNewsletterPublished(id, newPublished)
+  void logAudit({
+    actorUsername: caller.username,
+    action: newPublished ? "PUBLISH" : "UNPUBLISH",
+    entityType: "NEWSLETTER",
+    entityId: id,
+    entityLabel: newsletter.title,
+    previousState: { published: newsletter.published },
+    reversible: true,
+  })
   return NextResponse.json({ ...newsletter, published: newPublished })
 }
 
@@ -61,6 +71,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
   const caller = await getCallerInfo(request)
   if (!caller) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
   if (!isCoachOrAdmin(caller.groups)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  const newsletter = await getNewsletter(id)
 
   const payload = await request.json()
 
@@ -76,6 +88,16 @@ export async function PUT(request: NextRequest, { params }: Params) {
   if (typeof coverPhotoKey === "string") meta.coverPhotoKey = coverPhotoKey
   if (Object.keys(meta).length > 0) await updateNewsletterMeta(id, meta)
 
+  void logAudit({
+    actorUsername: caller.username,
+    action: "UPDATE",
+    entityType: "NEWSLETTER",
+    entityId: id,
+    entityLabel: newsletter?.title ?? id,
+    previousState: newsletter as Record<string, unknown> ?? undefined,
+    reversible: !!newsletter,
+  })
+
   return NextResponse.json({ success: true })
 }
 
@@ -85,6 +107,16 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   if (!caller) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
   if (!caller.groups.includes("ADMIN")) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
+  const newsletter = await getNewsletter(id)
   await deleteNewsletter(id)
+  void logAudit({
+    actorUsername: caller.username,
+    action: "DELETE",
+    entityType: "NEWSLETTER",
+    entityId: id,
+    entityLabel: newsletter?.title ?? id,
+    previousState: newsletter as Record<string, unknown> ?? undefined,
+    reversible: !!newsletter,
+  })
   return NextResponse.json({ success: true })
 }

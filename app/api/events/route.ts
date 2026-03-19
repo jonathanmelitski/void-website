@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { verifyToken } from "@/lib/aws/cognito"
 import { listEvents, createEvent } from "@/lib/aws/dynamo"
+import { logAudit } from "@/lib/aws/audit"
 import { randomUUID } from "crypto"
 
 export async function GET() {
@@ -46,6 +47,15 @@ export async function POST(request: NextRequest) {
 
   try {
     await createEvent(item)
+    void logAudit({
+      actorUsername: payload["cognito:username"] ?? payload.sub ?? "",
+      action: "CREATE",
+      entityType: "EVENT",
+      entityId: item.id,
+      entityLabel: item.title,
+      newState: item as Record<string, unknown>,
+      reversible: true,
+    })
     return NextResponse.json(item, { status: 201 })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to create event"
