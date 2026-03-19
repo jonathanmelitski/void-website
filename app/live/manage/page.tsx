@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/use-auth"
 import { Badge } from "@/components/ui/badge"
@@ -25,6 +25,14 @@ const ROLE_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
 }
 
 export default function ManagePage() {
+  return (
+    <Suspense>
+      <ManagePageInner />
+    </Suspense>
+  )
+}
+
+function ManagePageInner() {
   const { user, isLoading, signOut } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()

@@ -1,6 +1,8 @@
 import type { Metadata } from "next"
-import type { NewsletterItem } from "@/lib/aws/newsletters"
+import { listNewsletters } from "@/lib/aws/newsletters"
 import { NewsletterCard } from "@/components/newsletters/NewsletterCard"
+
+export const revalidate = 3600
 
 export const metadata: Metadata = {
   title: "News | Void Ultimate",
@@ -11,19 +13,8 @@ export const metadata: Metadata = {
   },
 }
 
-async function getNewsletters(): Promise<NewsletterItem[]> {
-  try {
-    const base = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000"
-    const res = await fetch(`${base}/api/newsletters`, { cache: "no-store" })
-    if (!res.ok) return []
-    return res.json()
-  } catch {
-    return []
-  }
-}
-
 export default async function NewsPage() {
-  const newsletters = await getNewsletters()
+  const newsletters = (await listNewsletters()).filter(n => n.published)
 
   return (
     <div className="p-8 lg:px-16">

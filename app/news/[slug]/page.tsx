@@ -1,25 +1,24 @@
 import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 import Image from "next/image"
+import { listNewsletters, getNewsletterBySlug } from "@/lib/aws/newsletters"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
 import { PROSE_CSS } from "@/lib/newsletter-prose-css"
 
+export const revalidate = 3600
+
 type Props = { params: Promise<{ slug: string }> }
 
-async function getNewsletter(slug: string): Promise<NewsletterItem | null> {
-  try {
-    const base = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000"
-    const res = await fetch(`${base}/api/newsletters/slug/${slug}`, { cache: "no-store" })
-    if (!res.ok) return null
-    return res.json()
-  } catch {
-    return null
-  }
+export async function generateStaticParams() {
+  const newsletters = await listNewsletters()
+  return newsletters
+    .filter(n => n.published)
+    .map(n => ({ slug: n.slug }))
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params
-  const newsletter = await getNewsletter(slug)
+  const newsletter = await getNewsletterBySlug(slug)
   if (!newsletter) return { title: "Not Found" }
   const description = "Read this newsletter from Void Ultimate"
   const coverUrl = newsletter.coverPhotoKey
@@ -38,8 +37,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function NewsletterDetailPage({ params }: Props) {
   const { slug } = await params
-  const newsletter = await getNewsletter(slug)
-  if (!newsletter) notFound()
+  const newsletter = await getNewsletterBySlug(slug)
+  if (!newsletter || !newsletter.published) return notFound()
 
   const s3Base = process.env.NEXT_PUBLIC_S3_BASE_URL ?? ""
   const coverUrl = newsletter.coverPhotoKey ? `${s3Base}/${newsletter.coverPhotoKey}` : null

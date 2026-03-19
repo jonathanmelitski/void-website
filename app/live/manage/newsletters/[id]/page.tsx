@@ -114,7 +114,12 @@ export default function ManageNewsletterPage() {
     setIsToggling(true)
     try {
       const res = await fetch(`/api/newsletters/${id}`, { method: "PATCH" })
-      if (res.ok) setNewsletter(await res.json())
+      if (res.ok) {
+        const data = await res.json()
+        // Only update `published` — replacing the full state here would clobber
+        // any pending entry/body saves that haven't hit DynamoDB yet.
+        setNewsletter(prev => prev ? { ...prev, published: data.published } : prev)
+      }
     } finally {
       setIsToggling(false)
     }
@@ -138,14 +143,16 @@ export default function ManageNewsletterPage() {
 
   async function saveEntry(entryId: string, fields: { title?: string; date?: string; body?: string }) {
     setEntrySaveStatus(prev => ({ ...prev, [entryId]: "saving" }))
-    let updated: NewsletterEntry[] = []
+    // Use null as a sentinel so we can distinguish "state updater never ran" from
+    // "computed an intentionally empty list" — avoids accidentally wiping entries.
+    let updated: NewsletterEntry[] | null = null
     setNewsletter(prev => {
       if (!prev) return prev
-      updated = prev.entries.map(e => e.id === entryId ? { ...e, ...fields } : e)
+      updated = (prev.entries ?? []).map(e => e.id === entryId ? { ...e, ...fields } : e)
       return { ...prev, entries: updated }
     })
-    // Wait one tick for state to settle, then use latest via ref
     await new Promise(r => setTimeout(r, 0))
+    if (updated === null) return // newsletter was null when updater ran — bail out
     await fetch(`/api/newsletters/${id}/entries`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
