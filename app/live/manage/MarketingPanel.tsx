@@ -306,7 +306,7 @@ export function MarketingPanel() {
       const failedCount: number = data.failed ?? 0
       setContacts(prev => [...prev, ...toAdd.map(email => ({ email, unsubscribed: false }))])
       setBulkResult({ added: addedCount, skipped, failed: failedCount > 0 ? [`${failedCount} email(s) rejected by SES`] : [] })
-      if (added.length > 0) setBulkText("")
+      if (addedCount > 0) setBulkText("")
     } catch {
       setBulkResult({ added: 0, skipped, failed: toAdd })
     } finally {

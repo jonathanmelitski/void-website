@@ -117,16 +117,16 @@ export async function createContacts(
     await new Promise(r => setTimeout(r, 1000))
     const status = await client.send(new GetImportJobCommand({ JobId: jobId }))
     if (status.JobStatus === "COMPLETED") {
-      return { added: emails.length, failed: 0 }
+      return { added: emails.length, failed: 0, processedCount: emails.length }
     }
     if (status.JobStatus === "FAILED") {
       console.error("[ses] import job failed:", status.FailureInfo)
-      return { added: 0, failed: emails.length }
+      return { added: 0, failed: emails.length, processedCount: emails.length }
     }
   }
 
   // Timed out — job is still running
-  return { added: 0, failed: 0 }
+  return { added: 0, failed: 0, processedCount: 0 }
 }
 
 export async function deleteContact(listName: string, email: string): Promise<void> {
