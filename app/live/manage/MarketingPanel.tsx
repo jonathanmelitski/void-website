@@ -39,6 +39,10 @@ export function MarketingPanel() {
   const [contactsLoading, setContactsLoading] = useState(false)
   const [newEmail, setNewEmail] = useState("")
   const [addingContact, setAddingContact] = useState(false)
+  const [bulkMode, setBulkMode] = useState(false)
+  const [bulkText, setBulkText] = useState("")
+  const [bulkAdding, setBulkAdding] = useState(false)
+  const [bulkResult, setBulkResult] = useState<{ added: number; skipped: number; failed: string[] } | null>(null)
 
   // Send dialog
   const [sendDialog, setSendDialog] = useState<string | null>(null)
@@ -55,6 +59,145 @@ export function MarketingPanel() {
   const [confirmSend, setConfirmSend] = useState(false)
 
   const [testSendId, setTestSendId] = useState<string | null>(null)
+
+  // Send progress
+  type RecipientStatus = "pending" | "sent" | "failed"
+  const [sendProgress, setSendProgress] = useState<{
+    listName: string
+    newsletterTitle: string
+    recipients: { email: string; status: RecipientStatus }[]
+    sent: number
+    failed: number
+    total: number
+    done: boolean
+    sendId: string | null
+    trackingEnabled: boolean
+  } | null>(null)
+  // Delivery modal
+  type DeliveryRecipient = { email: string; status: "sent" | "failed" }
+  const [deliveryModal, setDeliveryModal] = useState<{
+    send: SendRecord
+    recipients: DeliveryRecipient[] | null
+    loading: boolean
+    resending: boolean
+    resendProgress: { recipients: Map<string, "pending" | "sent" | "failed">; sent: number; failed: number; total: number; done: boolean } | null
+  } | null>(null)
+
+  async function openDelivery(s: SendRecord) {
+    setDeliveryModal({ send: s, recipients: null, loading: true, resending: false, resendProgress: null })
+    try {
+      const res = await fetch(`/api/marketing/lists/${encodeURIComponent(s.listName)}/contacts`)
+      const data = await res.json()
+      if (Array.isArray(data)) {
+        const failedSet = new Set(s.failedRecipients ?? [])
+        const recipients: DeliveryRecipient[] = data
+          .filter((c: { unsubscribed: boolean }) => !c.unsubscribed)
+          .map((c: { email: string }) => ({
+            email: c.email,
+            status: (failedSet.has(c.email) ? "failed" : "sent") as "sent" | "failed",
+          }))
+          .sort((a: DeliveryRecipient, b: DeliveryRecipient) => {
+            if (a.status === b.status) return a.email.localeCompare(b.email)
+            return a.status === "failed" ? -1 : 1
+          })
+        setDeliveryModal(prev => prev ? { ...prev, recipients, loading: false } : null)
+      }
+    } catch {
+      setDeliveryModal(prev => prev ? { ...prev, loading: false } : null)
+    }
+  }
+
+  async function resendFailed() {
+    if (!deliveryModal) return
+    const { send } = deliveryModal
+    const failedEmails = (send.failedRecipients ?? [])
+    if (failedEmails.length === 0) return
+
+    setDeliveryModal(prev => prev ? {
+      ...prev,
+      resending: true,
+      resendProgress: {
+        recipients: new Map(failedEmails.map(e => [e, "pending"])),
+        sent: 0, failed: 0, total: failedEmails.length, done: false,
+      },
+    } : null)
+
+    const response = await fetch(`/api/marketing/sends/${send.id}/resend`, { method: "POST" })
+    if (!response.ok || !response.body) {
+      setDeliveryModal(prev => prev ? { ...prev, resending: false } : null)
+      return
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue
+        try {
+          const event = JSON.parse(line.slice(6))
+          if (event.type === "result") {
+            setDeliveryModal(prev => {
+              if (!prev?.resendProgress) return prev
+              const map = new Map(prev.resendProgress.recipients)
+              map.set(event.email, event.status)
+              return {
+                ...prev,
+                resendProgress: {
+                  ...prev.resendProgress,
+                  recipients: map,
+                  sent: event.status === "sent" ? prev.resendProgress.sent + 1 : prev.resendProgress.sent,
+                  failed: event.status === "failed" ? prev.resendProgress.failed + 1 : prev.resendProgress.failed,
+                },
+              }
+            })
+          } else if (event.type === "done") {
+            setDeliveryModal(prev => prev ? {
+              ...prev,
+              resending: false,
+              resendProgress: prev.resendProgress ? { ...prev.resendProgress, done: true } : null,
+              // update recipients: previously failed+now sent → mark sent
+              recipients: prev.recipients?.map(r =>
+                r.status === "failed" && prev.resendProgress?.recipients.get(r.email) === "sent"
+                  ? { ...r, status: "sent" }
+                  : r
+              ) ?? null,
+              send: { ...prev.send, failedRecipients: prev.send.failedRecipients?.filter(e => prev.resendProgress?.recipients.get(e) !== "sent") },
+            } : null)
+            setSends(prev => [{
+              id: event.sendId,
+              newsletterId: deliveryModal.send.newsletterId,
+              newsletterTitle: deliveryModal.send.newsletterTitle,
+              listName: deliveryModal.send.listName,
+              sendMode: "list",
+              sentAt: new Date().toISOString(),
+              sentBy: "you",
+              recipientCount: event.sent,
+              failedCount: event.failed,
+              trackingEnabled: deliveryModal.send.trackingEnabled,
+            }, ...prev])
+          }
+        } catch {}
+      }
+    }
+  }
+
+  // Copy subscribe link
+  const [copiedList, setCopiedList] = useState<string | null>(null)
+
+  function copySubscribeLink(listName: string) {
+    const url = `${window.location.origin}/subscribe/${encodeURIComponent(listName)}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedList(listName)
+      setTimeout(() => setCopiedList(null), 2000)
+    })
+  }
 
   // Delete send
   const [deleteSendTarget, setDeleteSendTarget] = useState<SendRecord | null>(null)
@@ -106,6 +249,9 @@ export function MarketingPanel() {
     setContactsModal(listName)
     setContacts([])
     setNewEmail("")
+    setBulkMode(false)
+    setBulkText("")
+    setBulkResult(null)
     setContactsLoading(true)
     try {
       const res = await fetch(`/api/marketing/lists/${encodeURIComponent(listName)}/contacts`)
@@ -131,6 +277,40 @@ export function MarketingPanel() {
       }
     } finally {
       setAddingContact(false)
+    }
+  }
+
+  function parseBulkEmails(text: string): string[] {
+    return [...new Set(
+      text.split(/[\n,]+/).map(s => s.trim().toLowerCase()).filter(s => s.includes("@"))
+    )]
+  }
+
+  async function bulkAdd() {
+    if (!contactsModal) return
+    const all = parseBulkEmails(bulkText)
+    if (!all.length) return
+    setBulkAdding(true)
+    setBulkResult(null)
+    const existing = new Set(contacts.map(c => c.email.toLowerCase()))
+    const toAdd = all.filter(e => !existing.has(e))
+    const skipped = all.length - toAdd.length
+    try {
+      const res = await fetch(`/api/marketing/lists/${encodeURIComponent(contactsModal)}/contacts/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emails: toAdd }),
+      })
+      const data = await res.json()
+      const addedCount: number = data.added ?? 0
+      const failedCount: number = data.failed ?? 0
+      setContacts(prev => [...prev, ...toAdd.map(email => ({ email, unsubscribed: false }))])
+      setBulkResult({ added: addedCount, skipped, failed: failedCount > 0 ? [`${failedCount} email(s) rejected by SES`] : [] })
+      if (added.length > 0) setBulkText("")
+    } catch {
+      setBulkResult({ added: 0, skipped, failed: toAdd })
+    } finally {
+      setBulkAdding(false)
     }
   }
 
@@ -175,35 +355,103 @@ export function MarketingPanel() {
 
   async function sendToList() {
     if (!sendDialog || !selectedNewsletterId) return
+    const listName = sendDialog
+    const nl = newsletters.find(n => n.id === selectedNewsletterId)
     setConfirmSend(false)
-    setSending(true)
-    setSendResult("")
-    try {
-      const res = await fetch("/api/marketing/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildSendPayload("list", { listName: sendDialog })),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        setSendResult(`Sent to ${data.sent} recipient${data.sent !== 1 ? "s" : ""}`)
-        const newsletter = newsletters.find(n => n.id === selectedNewsletterId)
-        setSends(prev => [{
-          id: Math.random().toString(),
-          newsletterId: selectedNewsletterId,
-          newsletterTitle: newsletter?.title ?? selectedNewsletterId,
-          listName: sendDialog,
-          sendMode: "list",
-          sentAt: new Date().toISOString(),
-          sentBy: "you",
-          recipientCount: data.sent,
-          trackingEnabled,
-        }, ...prev])
-      } else {
-        setSendResult(`Error: ${data.error ?? "Send failed"}`)
+    setSendDialog(null)
+
+    // Show a preparing state immediately — before contacts are fetched
+    setSendProgress({
+      listName,
+      newsletterTitle: nl?.title ?? selectedNewsletterId,
+      recipients: [],
+      sent: 0,
+      failed: 0,
+      total: 0,
+      done: false,
+      sendId: null,
+      trackingEnabled,
+    })
+
+    // Fetch contacts to pre-populate the recipient list
+    const contactsRes = await fetch(`/api/marketing/lists/${encodeURIComponent(listName)}/contacts`)
+    const contactsData = await contactsRes.json()
+    const activeEmails: string[] = Array.isArray(contactsData)
+      ? contactsData.filter((c: { email: string; unsubscribed: boolean }) => !c.unsubscribed).map((c: { email: string }) => c.email)
+      : []
+
+    setSendProgress(prev => prev ? {
+      ...prev,
+      recipients: activeEmails.map(email => ({ email, status: "pending" })),
+      total: activeEmails.length,
+    } : null)
+
+    const response = await fetch("/api/marketing/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildSendPayload("list", { listName })),
+    })
+
+    if (!response.ok || !response.body) {
+      setSendProgress(prev => prev ? { ...prev, done: true } : null)
+      return
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue
+        try {
+          const event = JSON.parse(line.slice(6))
+
+          if (event.type === "sendId") {
+            // Record exists in DB now — add a placeholder to send history immediately
+            setSendProgress(prev => prev ? { ...prev, sendId: event.sendId } : null)
+            setSends(prev => [{
+              id: event.sendId,
+              newsletterId: selectedNewsletterId,
+              newsletterTitle: nl?.title ?? selectedNewsletterId,
+              listName,
+              sendMode: "list",
+              sentAt: new Date().toISOString(),
+              sentBy: "you",
+              recipientCount: 0,
+              trackingEnabled,
+            }, ...prev])
+          } else if (event.type === "start") {
+            setSendProgress(prev => prev ? { ...prev, total: event.total } : null)
+          } else if (event.type === "result") {
+            setSendProgress(prev => {
+              if (!prev) return null
+              const recipients = prev.recipients.map(r =>
+                r.email === event.email ? { ...r, status: event.status as RecipientStatus } : r
+              )
+              return {
+                ...prev,
+                recipients,
+                sent: event.status === "sent" ? prev.sent + 1 : prev.sent,
+                failed: event.status === "failed" ? prev.failed + 1 : prev.failed,
+              }
+            })
+          } else if (event.type === "done") {
+            setSendProgress(prev => prev ? { ...prev, done: true, sendId: event.sendId } : null)
+            // Update the placeholder in send history with final counts
+            setSends(prev => prev.map(s => s.id === event.sendId
+              ? { ...s, recipientCount: event.sent, failedCount: event.failed }
+              : s
+            ))
+          }
+        } catch {}
       }
-    } finally {
-      setSending(false)
     }
   }
 
@@ -328,6 +576,12 @@ export function MarketingPanel() {
                     Send
                   </button>
                   <button
+                    onClick={() => copySubscribeLink(list.name)}
+                    className="px-3 py-1.5 text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+                  >
+                    {copiedList === list.name ? "Copied!" : "Copy link"}
+                  </button>
+                  <button
                     onClick={() => deleteList(list.name)}
                     className="px-3 py-1.5 text-xs text-red-400/60 hover:text-red-400 bg-red-400/5 hover:bg-red-400/10 rounded-lg transition-colors"
                   >
@@ -387,6 +641,18 @@ export function MarketingPanel() {
                             Stats
                           </button>
                         )}
+                        {s.sendMode !== "test" && (
+                          <button
+                            onClick={() => openDelivery(s)}
+                            className={`text-xs px-2 py-1 rounded transition-colors ${
+                              (s.failedCount ?? 0) > 0
+                                ? "text-red-400/70 hover:text-red-400 bg-red-400/5 hover:bg-red-400/10"
+                                : "text-white/50 hover:text-white bg-white/5 hover:bg-white/10"
+                            }`}
+                          >
+                            {(s.failedCount ?? 0) > 0 ? `Delivery (${s.failedCount} failed)` : "Delivery"}
+                          </button>
+                        )}
                         <button
                           onClick={() => { setDeleteSendTarget(s); setDeleteSendError("") }}
                           className="text-xs text-red-400/50 hover:text-red-400 bg-red-400/5 hover:bg-red-400/10 px-2 py-1 rounded transition-colors"
@@ -408,13 +674,35 @@ export function MarketingPanel() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-6 max-w-lg w-full mx-4 flex flex-col gap-4 max-h-[80vh]">
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold">Contacts — {contactsModal}</h3>
-              <button
-                onClick={() => setContactsModal(null)}
-                className="text-white/40 hover:text-white text-lg leading-none transition-colors"
-              >
-                ×
-              </button>
+              <h3 className="font-semibold">Contacts — {contactsModal} <span className="text-white/30 font-normal text-sm">({contacts.length})</span></h3>
+              <div className="flex items-center gap-3">
+                {contacts.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const csv = ["email,status", ...[...contacts]
+                        .sort((a, b) => a.email.localeCompare(b.email))
+                        .map(c => `${c.email},${c.unsubscribed ? "unsubscribed" : "active"}`)
+                      ].join("\n")
+                      const blob = new Blob([csv], { type: "text/csv" })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement("a")
+                      a.href = url
+                      a.download = `${contactsModal}-contacts.csv`
+                      a.click()
+                      URL.revokeObjectURL(url)
+                    }}
+                    className="text-xs text-white/40 hover:text-white/70 transition-colors"
+                  >
+                    Download CSV
+                  </button>
+                )}
+                <button
+                  onClick={() => setContactsModal(null)}
+                  className="text-white/40 hover:text-white text-lg leading-none transition-colors"
+                >
+                  ×
+                </button>
+              </div>
             </div>
 
             <div className="overflow-y-auto flex-1">
@@ -434,7 +722,7 @@ export function MarketingPanel() {
                     </tr>
                   </thead>
                   <tbody>
-                    {contacts.map(c => (
+                    {[...contacts].sort((a, b) => a.email.localeCompare(b.email)).map(c => (
                       <tr key={c.email} className="border-b border-white/5">
                         <td className="py-2.5 pr-4 text-white/80">{c.email}</td>
                         <td className="py-2.5 pr-4">
@@ -459,22 +747,69 @@ export function MarketingPanel() {
               )}
             </div>
 
-            <div className="flex gap-2 pt-2 border-t border-white/10">
-              <input
-                type="email"
-                placeholder="Add email address"
-                value={newEmail}
-                onChange={e => setNewEmail(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && addContact()}
-                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/30"
-              />
-              <button
-                onClick={addContact}
-                disabled={addingContact || !newEmail.trim()}
-                className="px-4 py-2 text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40"
-              >
-                {addingContact ? "Adding…" : "Add"}
-              </button>
+            <div className="flex flex-col gap-3 pt-2 border-t border-white/10">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-white/40 font-medium">Add contacts</span>
+                <button
+                  onClick={() => { setBulkMode(m => !m); setBulkText(""); setBulkResult(null) }}
+                  className="text-xs text-white/40 hover:text-white/70 transition-colors"
+                >
+                  {bulkMode ? "Single" : "Bulk add"}
+                </button>
+              </div>
+
+              {bulkMode ? (
+                <div className="flex flex-col gap-2">
+                  <textarea
+                    placeholder={"one@example.com\ntwo@example.com\nthree@example.com"}
+                    value={bulkText}
+                    onChange={e => { setBulkText(e.target.value); setBulkResult(null) }}
+                    rows={5}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/30 resize-none font-mono"
+                  />
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-white/30">
+                      {parseBulkEmails(bulkText).length > 0
+                        ? `${parseBulkEmails(bulkText).length} email${parseBulkEmails(bulkText).length !== 1 ? "s" : ""} detected`
+                        : "Separate by newline or comma"}
+                    </span>
+                    <button
+                      onClick={bulkAdd}
+                      disabled={bulkAdding || parseBulkEmails(bulkText).length === 0}
+                      className="px-4 py-2 text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40 shrink-0"
+                    >
+                      {bulkAdding ? "Adding…" : `Add ${parseBulkEmails(bulkText).length || ""}`}
+                    </button>
+                  </div>
+                  {bulkResult && (
+                    <div className="text-xs rounded-lg px-3 py-2 bg-white/5 flex flex-col gap-1">
+                      {bulkResult.added > 0 && <span className="text-green-400/80">{bulkResult.added} added</span>}
+                      {bulkResult.skipped > 0 && <span className="text-white/40">{bulkResult.skipped} already in list</span>}
+                      {bulkResult.failed.length > 0 && (
+                        <span className="text-red-400/80">{bulkResult.failed.length} failed: {bulkResult.failed.join(", ")}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    placeholder="Add email address"
+                    value={newEmail}
+                    onChange={e => setNewEmail(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && addContact()}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/30"
+                  />
+                  <button
+                    onClick={addContact}
+                    disabled={addingContact || !newEmail.trim()}
+                    className="px-4 py-2 text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40"
+                  >
+                    {addingContact ? "Adding…" : "Add"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -631,6 +966,175 @@ export function MarketingPanel() {
                   {sendResult}
                 </p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delivery modal */}
+      {deliveryModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
+          <div className="bg-[#111] border border-white/10 rounded-xl w-full max-w-lg mx-4 flex flex-col overflow-hidden max-h-[80vh]">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-white/10 flex items-start justify-between gap-4">
+              <div>
+                <p className="font-semibold text-sm">{deliveryModal.send.newsletterTitle}</p>
+                <p className="text-white/40 text-xs mt-0.5">{deliveryModal.send.listName} · {deliveryModal.send.recipientCount} sent</p>
+              </div>
+              <button onClick={() => setDeliveryModal(null)} className="text-white/40 hover:text-white text-lg leading-none transition-colors shrink-0">×</button>
+            </div>
+
+            {/* Summary bar */}
+            {deliveryModal.recipients && (() => {
+              const failed = deliveryModal.recipients.filter(r => r.status === "failed")
+              const sent = deliveryModal.recipients.filter(r => r.status === "sent")
+              return (
+                <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-4 text-xs">
+                    <span className="text-green-400/70">{sent.length} delivered</span>
+                    {failed.length > 0 && <span className="text-red-400/70">{failed.length} failed</span>}
+                  </div>
+                  {failed.length > 0 && !deliveryModal.resending && !deliveryModal.resendProgress?.done && (
+                    <button
+                      onClick={resendFailed}
+                      className="text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                      Resend to {failed.length} failed
+                    </button>
+                  )}
+                  {deliveryModal.resendProgress?.done && (
+                    <span className="text-xs text-green-400/70">Resend complete</span>
+                  )}
+                </div>
+              )
+            })()}
+
+            {/* Resend progress bar */}
+            {deliveryModal.resendProgress && (
+              <div className="px-5 py-2 border-b border-white/10 flex flex-col gap-1.5">
+                <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-white/40 rounded-full transition-all duration-200"
+                    style={{ width: `${deliveryModal.resendProgress.total > 0 ? ((deliveryModal.resendProgress.sent + deliveryModal.resendProgress.failed) / deliveryModal.resendProgress.total) * 100 : 0}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] text-white/30">
+                  <span>{deliveryModal.resendProgress.done ? "Done" : "Resending…"}</span>
+                  <span>
+                    <span className="text-green-400/50">{deliveryModal.resendProgress.sent} sent</span>
+                    {deliveryModal.resendProgress.failed > 0 && <span className="text-red-400/50 ml-2">{deliveryModal.resendProgress.failed} failed</span>}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Recipient list */}
+            <div className="overflow-y-auto flex-1">
+              {deliveryModal.loading ? (
+                <div className="flex items-center justify-center py-10">
+                  <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                </div>
+              ) : !deliveryModal.recipients ? (
+                <p className="text-white/30 text-sm px-5 py-6">Could not load recipient data.</p>
+              ) : deliveryModal.recipients.length === 0 ? (
+                <p className="text-white/30 text-sm px-5 py-6">No recipients found.</p>
+              ) : (
+                deliveryModal.recipients.map(r => {
+                  const resendStatus = deliveryModal.resendProgress?.recipients.get(r.email)
+                  return (
+                    <div key={r.email} className="flex items-center justify-between px-5 py-2 border-b border-white/5 last:border-0">
+                      <span className="text-xs text-white/60 font-mono">{r.email}</span>
+                      <div className="flex items-center gap-2">
+                        {resendStatus && resendStatus !== "pending" && (
+                          <span className={`text-[10px] ${resendStatus === "sent" ? "text-green-400/60" : "text-red-400/60"}`}>
+                            {resendStatus === "sent" ? "resent ✓" : "resend failed ✗"}
+                          </span>
+                        )}
+                        {resendStatus === "pending" && (
+                          <span className="text-[10px] text-white/20">resending…</span>
+                        )}
+                        <span className={`text-[10px] font-medium ${r.status === "sent" ? "text-green-400/50" : "text-red-400/70"}`}>
+                          {r.status === "sent" ? "✓" : "✗ failed"}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Send progress modal */}
+      {sendProgress && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80">
+          <div className="bg-[#111] border border-white/10 rounded-xl w-full max-w-lg mx-4 flex flex-col overflow-hidden max-h-[80vh]">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-white/10 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-sm">{sendProgress.newsletterTitle}</p>
+                  <p className="text-white/40 text-xs mt-0.5">→ {sendProgress.listName}</p>
+                </div>
+                {sendProgress.done ? (
+                  <div className="flex items-center gap-2">
+                    {sendProgress.sendId && sendProgress.trackingEnabled && (
+                      <button
+                        onClick={() => { router.push(`/live/manage/sends/${sendProgress.sendId}`); setSendProgress(null) }}
+                        className="text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors"
+                      >
+                        View stats →
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setSendProgress(null)}
+                      className="text-xs text-white/50 hover:text-white transition-colors px-2"
+                    >
+                      Close
+                    </button>
+                  </div>
+                ) : (
+                  <div className="w-4 h-4 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                )}
+              </div>
+              {/* Progress bar */}
+              <div className="flex flex-col gap-1">
+                <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-white/50 rounded-full transition-all duration-200"
+                    style={{ width: `${sendProgress.total > 0 ? ((sendProgress.sent + sendProgress.failed) / sendProgress.total) * 100 : 0}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] text-white/30">
+                  <span>
+                    {sendProgress.done ? "Done" : sendProgress.total === 0 ? "Preparing…" : "Sending…"} {sendProgress.total > 0 ? `${sendProgress.sent + sendProgress.failed}/${sendProgress.total}` : ""}
+                  </span>
+                  <span>
+                    {sendProgress.sent > 0 && <span className="text-green-400/60">{sendProgress.sent} sent</span>}
+                    {sendProgress.failed > 0 && <span className="text-red-400/60 ml-2">{sendProgress.failed} failed</span>}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Recipient list */}
+            <div className="overflow-y-auto flex-1">
+              {sendProgress.recipients.map(r => (
+                <div
+                  key={r.email}
+                  className="flex items-center justify-between px-5 py-2 border-b border-white/5 last:border-0"
+                >
+                  <span className="text-xs text-white/60 font-mono">{r.email}</span>
+                  <span className={`text-[10px] font-medium ${
+                    r.status === "sent" ? "text-green-400/70" :
+                    r.status === "failed" ? "text-red-400/70" :
+                    "text-white/20"
+                  }`}>
+                    {r.status === "sent" ? "✓ sent" : r.status === "failed" ? "✗ failed" : "·"}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
         </div>

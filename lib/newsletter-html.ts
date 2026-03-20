@@ -29,7 +29,7 @@ const THEMES = {
     pageBg:       "#0a0a0a",
     cardBg:       "#111111",
     cardBorder:   "#222222",
-    divider:      "#1e1e1e",
+    divider:      "#2e2e2e",
     footerBg:     "#0d0d0d",
     title:        "#ffffff",
     date:         "#666666",
@@ -115,8 +115,8 @@ export function buildNewsletterHtml(
       ? `<p style="margin:0 0 20px;font-size:12px;color:${t.date};">${entry.date}</p>`
       : ""
     return `
-      <div style="padding:32px 40px;border-bottom:1px solid ${t.divider};">
-        <h2 style="margin:0 0 4px;font-size:18px;font-weight:700;color:${t.proseHeading};">${entry.title}</h2>
+      <div style="padding:32px 40px;border-bottom:2px solid ${t.divider};">
+        <h2 style="margin:0 0 4px;font-size:22px;font-weight:800;color:${t.proseHeading};letter-spacing:-0.3px;">${entry.title}</h2>
         ${entryDate}
         <div class="tiptap-prose" style="color:${proseColor};">${entry.body}</div>
       </div>`
@@ -148,9 +148,9 @@ export function buildNewsletterHtml(
 
     ${bodyHtml ? `<div style="padding:32px 40px 24px;">${bodyHtml}</div>` : ""}
 
-    ${entriesHtml ? `<div style="border-top:1px solid ${t.divider};">${entriesHtml}</div>` : ""}
+    ${entriesHtml ? `<div style="border-top:2px solid ${t.divider};">${entriesHtml}</div>` : ""}
 
-    <div style="padding:24px 40px;background:${t.footerBg};border-top:1px solid ${t.divider};">
+    <div style="padding:24px 40px;background:${t.footerBg};border-top:2px solid ${t.divider};">
       <p style="margin:0;font-size:12px;color:${t.footer};text-align:center;">
         Void Ultimate &bull; ${dateLabel} &bull;
         <a href="{{amazonSESUnsubscribeUrl}}" style="color:${t.footer};">Unsubscribe</a>

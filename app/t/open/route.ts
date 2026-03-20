@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
       messageId,
       sendId,
       timestamp: new Date().toISOString(),
-    }).catch(() => {})
+    }).catch(err => console.error("[tracking/open]", err))
   }
 
   return new NextResponse(PIXEL, {

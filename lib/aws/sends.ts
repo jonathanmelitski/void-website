@@ -13,6 +13,8 @@ export type SendRecord = {
   sentAt: string
   sentBy: string
   recipientCount: number
+  failedCount?: number
+  failedRecipients?: string[]
   trackingEnabled?: boolean
   trackedLinks?: string[]
 }
@@ -27,6 +29,12 @@ export async function logSend(
   }
   await dynamo.send(new PutCommand({ TableName: TABLE(), Item: record }))
   return record
+}
+
+export async function updateSend(id: string, fields: Partial<Omit<SendRecord, "id">>): Promise<void> {
+  const existing = await getSend(id)
+  if (!existing) return
+  await dynamo.send(new PutCommand({ TableName: TABLE(), Item: { ...existing, ...fields } }))
 }
 
 export async function getSend(id: string): Promise<SendRecord | null> {

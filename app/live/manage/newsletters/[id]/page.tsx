@@ -45,10 +45,10 @@ function NewsletterPreview({ newsletter }: { newsletter: NewsletterItem }) {
       )}
 
       {(newsletter.entries ?? []).length > 0 && (
-        <div className="bg-white/[0.03] border border-white/10 rounded-2xl divide-y divide-white/10 overflow-hidden">
+        <div className="bg-white/[0.03] border border-white/10 rounded-2xl divide-y divide-white/[0.18] overflow-hidden">
           {newsletter.entries.map(entry => (
             <article key={entry.id} className="px-6 sm:px-10 py-8">
-              <h2 className="text-xl sm:text-2xl font-bold mb-1">{entry.title}</h2>
+              <h2 className="text-2xl sm:text-3xl font-black mb-1 tracking-tight">{entry.title}</h2>
               {entry.date && <p className="text-white/35 text-xs mb-6">{entry.date}</p>}
               <div className="tiptap-prose" dangerouslySetInnerHTML={{ __html: entry.body }} />
             </article>

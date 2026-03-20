@@ -1,9 +1,11 @@
 import { randomUUID } from "crypto"
 import { NextRequest, NextResponse } from "next/server"
+
+export const maxDuration = 300
 import { verifyToken } from "@/lib/aws/cognito"
 import { getNewsletter } from "@/lib/aws/newsletters"
 import { sendNewsletterToList, sendTestEmail } from "@/lib/aws/ses"
-import { logSend } from "@/lib/aws/sends"
+import { logSend, updateSend } from "@/lib/aws/sends"
 import { logAudit } from "@/lib/aws/audit"
 
 async function requireAdmin(request: NextRequest) {
@@ -44,42 +46,83 @@ export async function POST(request: NextRequest) {
     if (!listName) return NextResponse.json({ error: "listName is required" }, { status: 400 })
 
     const sendId = randomUUID()
-    const result = await sendNewsletterToList(newsletterId, newsletter, listName, opts, sendId)
+    const encoder = new TextEncoder()
 
-    const listRecord = await logSend({
+    // Pre-log the record immediately so it always exists, even if the function times out
+    await logSend({
       newsletterId,
       newsletterTitle: newsletter.title,
       listName,
       sendMode: "list",
       sentAt: new Date().toISOString(),
       sentBy: caller.username,
-      recipientCount: result.sent,
+      recipientCount: 0,
       trackingEnabled: opts.trackingEnabled,
-      trackedLinks: opts.trackingEnabled ? result.trackedLinks : undefined,
     }, sendId)
 
-    void logAudit({
-      actorUsername: caller.username,
-      action: "SEND",
-      entityType: "SEND",
-      entityId: listRecord.id,
-      entityLabel: newsletter.title,
-      newState: {
-        newsletterTitle: newsletter.title,
-        newsletterId,
-        listName,
-        recipientCount: result.sent,
-        subject: opts.subject ?? newsletter.title,
-        replyTo: opts.replyTo,
-        fromName: opts.fromName,
-        trackingEnabled: opts.trackingEnabled,
-        sendMode: "list",
-        trackedLinks: result.trackedLinks,
+    const stream = new ReadableStream({
+      async start(controller) {
+        const emit = (data: object) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
+        }
+
+        // Emit sendId immediately so the client knows the record exists
+        emit({ type: "sendId", sendId })
+
+        try {
+          const result = await sendNewsletterToList(
+            newsletterId, newsletter, listName, opts, sendId,
+            {
+              onStart: (total) => emit({ type: "start", total }),
+              onResult: (email, status) => emit({ type: "result", email, status }),
+            }
+          )
+
+          // Update the pre-logged record with final counts
+          await updateSend(sendId, {
+            recipientCount: result.sent,
+            failedCount: result.failed,
+            failedRecipients: result.failedRecipients.length > 0 ? result.failedRecipients : undefined,
+            trackedLinks: opts.trackingEnabled ? result.trackedLinks : undefined,
+          })
+
+          void logAudit({
+            actorUsername: caller.username,
+            action: "SEND",
+            entityType: "SEND",
+            entityId: sendId,
+            entityLabel: newsletter.title,
+            newState: {
+              newsletterTitle: newsletter.title,
+              newsletterId,
+              listName,
+              recipientCount: result.sent,
+              failedCount: result.failed,
+              subject: opts.subject ?? newsletter.title,
+              replyTo: opts.replyTo,
+              fromName: opts.fromName,
+              trackingEnabled: opts.trackingEnabled,
+              sendMode: "list",
+            },
+            reversible: false,
+          })
+
+          emit({ type: "done", sendId, sent: result.sent, failed: result.failed })
+        } catch (err) {
+          emit({ type: "error", message: err instanceof Error ? err.message : "Send failed" })
+        } finally {
+          controller.close()
+        }
       },
-      reversible: false,
     })
 
-    return NextResponse.json({ success: true, sent: result.sent })
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+      },
+    })
   }
 
   if (mode === "test") {
