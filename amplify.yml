@@ -21,6 +21,7 @@ frontend:
         - echo "DYNAMO_TRACKING_TABLE=$DYNAMO_TRACKING_TABLE" >> .env
         - echo "DYNAMO_SENDS_TABLE=$DYNAMO_SENDS_TABLE" >> .env
         - echo "SES_FROM_EMAIL=$SES_FROM_EMAIL" >> .env
+        - echo "SES_CONTACT_LIST_NAME=$SES_CONTACT_LIST_NAME" >> .env
         - echo "S3_BUCKET_NAME=$S3_BUCKET_NAME" >> .env
         - echo "NEXT_PUBLIC_S3_BASE_URL=$NEXT_PUBLIC_S3_BASE_URL" >> .env
         - echo "NEXT_PUBLIC_BASE_URL=$NEXT_PUBLIC_BASE_URL" >> .env

@@ -1,14 +1,15 @@
 import {
   SESv2Client,
-  ListContactListsCommand,
+  GetContactListCommand,
   CreateContactListCommand,
-  DeleteContactListCommand,
+  UpdateContactListCommand,
   ListContactsCommand,
   CreateContactCommand,
-  DeleteContactCommand,
+  UpdateContactCommand,
   SendEmailCommand,
   CreateImportJobCommand,
   GetImportJobCommand,
+  type Topic,
 } from "@aws-sdk/client-sesv2"
 import { PutObjectCommand } from "@aws-sdk/client-s3"
 import { s3 } from "@/lib/aws/s3"
@@ -24,71 +25,144 @@ const client = new SESv2Client({
   },
 })
 
-export async function listContactLists(): Promise<{ name: string; description?: string }[]> {
-  const res = await client.send(new ListContactListsCommand({}))
-  return (res.ContactLists ?? []).map(l => ({
-    name: l.ContactListName!,
-  }))
+// All "lists" are implemented as topics on this single SES contact list.
+// Set SES_CONTACT_LIST_NAME to your existing contact list name.
+const CONTACT_LIST = process.env.SES_CONTACT_LIST_NAME ?? "void-ultimate"
+
+async function getTopics(): Promise<Topic[]> {
+  try {
+    const res = await client.send(new GetContactListCommand({ ContactListName: CONTACT_LIST }))
+    return res.Topics ?? []
+  } catch (err: unknown) {
+    if ((err as { name?: string }).name === "NotFoundException") return []
+    throw err
+  }
 }
 
-export async function createContactList(name: string, description?: string): Promise<void> {
-  await client.send(
-    new CreateContactListCommand({
-      ContactListName: name,
-      Description: description,
-    })
-  )
+// ── List management (topics) ──────────────────────────────────────────────────
+
+export async function listContactLists(): Promise<{ name: string }[]> {
+  const topics = await getTopics()
+  return topics.map(t => ({ name: t.TopicName! }))
+}
+
+export async function createContactList(name: string, _description?: string): Promise<void> {
+  let topics: Topic[] = []
+  let listExists = true
+  try {
+    const res = await client.send(new GetContactListCommand({ ContactListName: CONTACT_LIST }))
+    topics = res.Topics ?? []
+  } catch (err: unknown) {
+    if ((err as { name?: string }).name === "NotFoundException") {
+      listExists = false
+    } else {
+      throw err
+    }
+  }
+
+  const newTopic: Topic = {
+    TopicName: name,
+    DisplayName: name,
+    DefaultSubscriptionStatus: "OPT_OUT",
+  }
+
+  if (!listExists) {
+    await client.send(new CreateContactListCommand({
+      ContactListName: CONTACT_LIST,
+      Topics: [newTopic],
+    }))
+  } else {
+    await client.send(new UpdateContactListCommand({
+      ContactListName: CONTACT_LIST,
+      Topics: [...topics, newTopic],
+    }))
+  }
 }
 
 export async function deleteContactList(name: string): Promise<void> {
-  await client.send(new DeleteContactListCommand({ ContactListName: name }))
+  const topics = await getTopics()
+  await client.send(new UpdateContactListCommand({
+    ContactListName: CONTACT_LIST,
+    Topics: topics.filter(t => t.TopicName !== name),
+  }))
 }
+
+// ── Contact management (per-topic) ───────────────────────────────────────────
 
 export async function listContacts(
-  listName: string
+  topicName: string
 ): Promise<{ email: string; unsubscribed: boolean }[]> {
-  const contacts: { email: string; unsubscribed: boolean }[] = []
-  let nextToken: string | undefined
+  // Verify the topic exists so callers get a proper error (e.g. subscribe → 404)
+  const topics = await getTopics()
+  if (!topics.some(t => t.TopicName === topicName)) {
+    throw new Error(`Topic not found: ${topicName}`)
+  }
 
-  do {
-    const res = await client.send(
-      new ListContactsCommand({
-        ContactListName: listName,
-        NextToken: nextToken,
-      })
-    )
-    for (const c of res.Contacts ?? []) {
-      contacts.push({
-        email: c.EmailAddress!,
-        unsubscribed: c.UnsubscribeAll ?? false,
-      })
-    }
-    nextToken = res.NextToken
-  } while (nextToken)
+  const results: { email: string; unsubscribed: boolean }[] = []
 
-  return contacts
+  for (const filteredStatus of ["OPT_IN", "OPT_OUT"] as const) {
+    let nextToken: string | undefined
+    do {
+      const res = await client.send(
+        new ListContactsCommand({
+          ContactListName: CONTACT_LIST,
+          Filter: {
+            FilteredStatus: filteredStatus,
+            TopicFilter: { TopicName: topicName, UseDefaultIfPreferenceUnavailable: false },
+          },
+          NextToken: nextToken,
+        })
+      )
+      for (const c of res.Contacts ?? []) {
+        results.push({ email: c.EmailAddress!, unsubscribed: filteredStatus === "OPT_OUT" })
+      }
+      nextToken = res.NextToken
+    } while (nextToken)
+  }
+
+  return results
 }
 
-export async function createContact(listName: string, email: string): Promise<void> {
-  await client.send(
-    new CreateContactCommand({
-      ContactListName: listName,
-      EmailAddress: email,
-    })
-  )
+export async function createContact(topicName: string, email: string): Promise<void> {
+  try {
+    await client.send(
+      new CreateContactCommand({
+        ContactListName: CONTACT_LIST,
+        EmailAddress: email,
+        TopicPreferences: [{ TopicName: topicName, SubscriptionStatus: "OPT_IN" }],
+      })
+    )
+  } catch (err: unknown) {
+    if ((err as { name?: string }).name === "AlreadyExistsException") {
+      await client.send(
+        new UpdateContactCommand({
+          ContactListName: CONTACT_LIST,
+          EmailAddress: email,
+          TopicPreferences: [{ TopicName: topicName, SubscriptionStatus: "OPT_IN" }],
+        })
+      )
+    } else {
+      throw err
+    }
+  }
+}
+
+export type BulkContactResult = {
+  added: string[]
+  failed: { email: string; reason: string }[]
+  processedCount: number
 }
 
 export async function createContacts(
-  listName: string,
+  topicName: string,
   emails: string[]
-): Promise<{ added: number; failed: number; processedCount: number }> {
+): Promise<BulkContactResult> {
   const bucket = process.env.S3_BUCKET_NAME!
   const key = `ses-imports/${randomUUID()}.csv`
 
-  // Build CSV — SES expects a header row with at least emailAddress
-  const csv = ["emailAddress", ...emails].join("\n")
+  // SES import CSV supports topic preferences via a column named topicPreferences.TOPIC_NAME
+  const csv = [`emailAddress,topicPreferences.${topicName}`, ...emails.map(e => `${e},OPT_IN`)].join("\n")
 
-  // Upload to S3 so SES can read it
   await s3.send(new PutObjectCommand({
     Bucket: bucket,
     Key: key,
@@ -96,11 +170,10 @@ export async function createContacts(
     ContentType: "text/csv",
   }))
 
-  // Create the import job
   const job = await client.send(new CreateImportJobCommand({
     ImportDestination: {
       ContactListDestination: {
-        ContactListName: listName,
+        ContactListName: CONTACT_LIST,
         ContactListImportAction: "PUT",
       },
     },
@@ -112,31 +185,75 @@ export async function createContacts(
 
   const jobId = job.JobId!
 
-  // Poll until the job completes (max ~30s)
-  for (let i = 0; i < 30; i++) {
+  // Poll until complete (max 60s)
+  let finalStatus = null
+  for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 1000))
     const status = await client.send(new GetImportJobCommand({ JobId: jobId }))
-    if (status.JobStatus === "COMPLETED") {
-      return { added: emails.length, failed: 0, processedCount: emails.length }
-    }
-    if (status.JobStatus === "FAILED") {
-      console.error("[ses] import job failed:", status.FailureInfo)
-      return { added: 0, failed: emails.length, processedCount: emails.length }
+    if (status.JobStatus === "COMPLETED" || status.JobStatus === "FAILED") {
+      finalStatus = status
+      break
     }
   }
 
-  // Timed out — job is still running
-  return { added: 0, failed: 0, processedCount: 0 }
+  if (!finalStatus) {
+    return {
+      added: [],
+      failed: emails.map(email => ({ email, reason: "Import job timed out (still running)" })),
+      processedCount: emails.length,
+    }
+  }
+
+  if (finalStatus.JobStatus === "FAILED") {
+    const reason = finalStatus.FailureInfo?.ErrorMessage ?? "Import job failed"
+    console.error("[ses] bulk import job failed:", finalStatus.FailureInfo)
+    return {
+      added: [],
+      failed: emails.map(email => ({ email, reason })),
+      processedCount: emails.length,
+    }
+  }
+
+  // Job completed — parse the failure report if any records failed
+  const failed: { email: string; reason: string }[] = []
+
+  if (finalStatus.FailureInfo?.FailedRecordsS3Url) {
+    try {
+      const res = await fetch(finalStatus.FailureInfo.FailedRecordsS3Url)
+      const text = await res.text()
+      // Format: header row, then one row per failed contact: emailAddress,reason
+      const lines = text.trim().split("\n").slice(1)
+      for (const line of lines) {
+        const comma = line.indexOf(",")
+        if (comma === -1) continue
+        const email = line.slice(0, comma).trim().replace(/^"|"$/g, "")
+        const reason = line.slice(comma + 1).trim().replace(/^"|"$/g, "") || "Rejected by SES"
+        if (email) failed.push({ email, reason })
+      }
+    } catch (err) {
+      console.error("[ses] failed to read bulk import failure report:", err)
+    }
+  }
+
+  const failedSet = new Set(failed.map(f => f.email.toLowerCase()))
+  const added = emails.filter(e => !failedSet.has(e.toLowerCase()))
+
+  return { added, failed, processedCount: emails.length }
 }
 
-export async function deleteContact(listName: string, email: string): Promise<void> {
+// OPT_OUT from the topic rather than deleting the contact globally
+// (the contact may be subscribed to other topics)
+export async function deleteContact(topicName: string, email: string): Promise<void> {
   await client.send(
-    new DeleteContactCommand({
-      ContactListName: listName,
+    new UpdateContactCommand({
+      ContactListName: CONTACT_LIST,
       EmailAddress: email,
+      TopicPreferences: [{ TopicName: topicName, SubscriptionStatus: "OPT_OUT" }],
     })
   )
 }
+
+// ── Email sending ─────────────────────────────────────────────────────────────
 
 type SendOpts = {
   subject?: string
@@ -171,7 +288,6 @@ export async function sendNewsletterToList(
   const replyTo = opts.replyTo ? [opts.replyTo] : undefined
   const from = buildFrom(opts.fromName)
 
-  // Pre-capture tracked links once (same for all recipients)
   let trackedLinks: string[] = []
   if (opts.trackingEnabled && sendId && active.length > 0) {
     trackedLinks = injectTracking(baseHtml, "probe", sendId).links
@@ -183,7 +299,6 @@ export async function sendNewsletterToList(
   let sent = 0
   const failedRecipients: string[] = []
 
-  // 10 per batch, 1s between batches → max 10/s, well under the 14/s SES limit
   const BATCH = 10
   const BATCH_DELAY_MS = 1000
   for (let i = 0; i < active.length; i += BATCH) {
@@ -193,8 +308,7 @@ export async function sendNewsletterToList(
       batch.map(async contact => {
         let html = baseHtml
         if (opts.trackingEnabled && sendId) {
-          const messageId = randomUUID()
-          html = injectTracking(baseHtml, messageId, sendId).html
+          html = injectTracking(baseHtml, randomUUID(), sendId).html
         }
         try {
           await client.send(
@@ -208,7 +322,7 @@ export async function sendNewsletterToList(
                   Body: { Html: { Data: html } },
                 },
               },
-              ListManagementOptions: { ContactListName: listName },
+              ListManagementOptions: { ContactListName: CONTACT_LIST, TopicName: listName },
             })
           )
           sent++
@@ -259,8 +373,7 @@ export async function sendToEmails(
       batch.map(async email => {
         let html = baseHtml
         if (opts.trackingEnabled && sendId) {
-          const messageId = randomUUID()
-          html = injectTracking(baseHtml, messageId, sendId).html
+          html = injectTracking(baseHtml, randomUUID(), sendId).html
         }
         try {
           await client.send(
@@ -274,7 +387,7 @@ export async function sendToEmails(
                   Body: { Html: { Data: html } },
                 },
               },
-              ListManagementOptions: { ContactListName: listName },
+              ListManagementOptions: { ContactListName: CONTACT_LIST, TopicName: listName },
             })
           )
           sent++
@@ -300,8 +413,7 @@ export async function sendTestEmail(
   let html = buildNewsletterHtml(newsletter, "light", true, opts.includeWebLink)
   let trackedLinks: string[] = []
   if (opts.trackingEnabled && sendId) {
-    const messageId = randomUUID()
-    const result = injectTracking(html, messageId, sendId)
+    const result = injectTracking(html, randomUUID(), sendId)
     html = result.html
     trackedLinks = result.links
   }

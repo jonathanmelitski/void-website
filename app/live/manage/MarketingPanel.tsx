@@ -42,7 +42,7 @@ export function MarketingPanel() {
   const [bulkMode, setBulkMode] = useState(false)
   const [bulkText, setBulkText] = useState("")
   const [bulkAdding, setBulkAdding] = useState(false)
-  const [bulkResult, setBulkResult] = useState<{ added: number; skipped: number; failed: string[] } | null>(null)
+  const [bulkResult, setBulkResult] = useState<{ added: string[]; skipped: string[]; failed: { email: string; reason: string }[] } | null>(null)
 
   // Send dialog
   const [sendDialog, setSendDialog] = useState<string | null>(null)
@@ -294,7 +294,7 @@ export function MarketingPanel() {
     setBulkResult(null)
     const existing = new Set(contacts.map(c => c.email.toLowerCase()))
     const toAdd = all.filter(e => !existing.has(e))
-    const skipped = all.length - toAdd.length
+    const skipped = all.filter(e => existing.has(e))
     try {
       const res = await fetch(`/api/marketing/lists/${encodeURIComponent(contactsModal)}/contacts/bulk`, {
         method: "POST",
@@ -302,13 +302,13 @@ export function MarketingPanel() {
         body: JSON.stringify({ emails: toAdd }),
       })
       const data = await res.json()
-      const addedCount: number = data.added ?? 0
-      const failedCount: number = data.failed ?? 0
-      setContacts(prev => [...prev, ...toAdd.map(email => ({ email, unsubscribed: false }))])
-      setBulkResult({ added: addedCount, skipped, failed: failedCount > 0 ? [`${failedCount} email(s) rejected by SES`] : [] })
-      if (addedCount > 0) setBulkText("")
-    } catch {
-      setBulkResult({ added: 0, skipped, failed: toAdd })
+      const added: string[] = Array.isArray(data.added) ? data.added : []
+      const failed: { email: string; reason: string }[] = Array.isArray(data.failed) ? data.failed : []
+      setContacts(prev => [...prev, ...added.map(email => ({ email, unsubscribed: false }))])
+      setBulkResult({ added, skipped, failed })
+      if (added.length > 0) setBulkText("")
+    } catch (err) {
+      setBulkResult({ added: [], skipped, failed: toAdd.map(email => ({ email, reason: err instanceof Error ? err.message : "Network error" })) })
     } finally {
       setBulkAdding(false)
     }
@@ -782,11 +782,35 @@ export function MarketingPanel() {
                     </button>
                   </div>
                   {bulkResult && (
-                    <div className="text-xs rounded-lg px-3 py-2 bg-white/5 flex flex-col gap-1">
-                      {bulkResult.added > 0 && <span className="text-green-400/80">{bulkResult.added} added</span>}
-                      {bulkResult.skipped > 0 && <span className="text-white/40">{bulkResult.skipped} already in list</span>}
+                    <div className="text-xs rounded-lg px-3 py-2 bg-white/5 flex flex-col gap-2">
+                      {bulkResult.added.length > 0 && (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-green-400/80 font-medium">{bulkResult.added.length} added</span>
+                          <div className="text-green-400/50 font-mono pl-1 flex flex-col gap-0.5">
+                            {bulkResult.added.map(e => <span key={e}>{e}</span>)}
+                          </div>
+                        </div>
+                      )}
+                      {bulkResult.skipped.length > 0 && (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-white/40 font-medium">{bulkResult.skipped.length} already in list</span>
+                          <div className="text-white/25 font-mono pl-1 flex flex-col gap-0.5">
+                            {bulkResult.skipped.map(e => <span key={e}>{e}</span>)}
+                          </div>
+                        </div>
+                      )}
                       {bulkResult.failed.length > 0 && (
-                        <span className="text-red-400/80">{bulkResult.failed.length} failed: {bulkResult.failed.join(", ")}</span>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-red-400/80 font-medium">{bulkResult.failed.length} failed</span>
+                          <div className="pl-1 flex flex-col gap-1">
+                            {bulkResult.failed.map(({ email, reason }) => (
+                              <div key={email} className="flex flex-col gap-0.5">
+                                <span className="text-red-400/70 font-mono">{email}</span>
+                                <span className="text-red-400/40 pl-2 break-all">{reason}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
                   )}
