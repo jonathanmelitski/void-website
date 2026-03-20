@@ -37,6 +37,7 @@ export function MarketingPanel() {
   const [contactsModal, setContactsModal] = useState<string | null>(null)
   const [contacts, setContacts] = useState<Contact[]>([])
   const [contactsLoading, setContactsLoading] = useState(false)
+  const [contactsError, setContactsError] = useState<string | null>(null)
   const [newEmail, setNewEmail] = useState("")
   const [addingContact, setAddingContact] = useState(false)
   const [bulkMode, setBulkMode] = useState(false)
@@ -61,7 +62,7 @@ export function MarketingPanel() {
   const [testSendId, setTestSendId] = useState<string | null>(null)
 
   // Send progress
-  type RecipientStatus = "pending" | "sent" | "failed"
+  type RecipientStatus = "sent" | "failed"
   const [sendProgress, setSendProgress] = useState<{
     listName: string
     newsletterTitle: string
@@ -72,6 +73,7 @@ export function MarketingPanel() {
     done: boolean
     sendId: string | null
     trackingEnabled: boolean
+    error?: string
   } | null>(null)
   // Delivery modal
   type DeliveryRecipient = { email: string; status: "sent" | "failed" }
@@ -248,6 +250,7 @@ export function MarketingPanel() {
   async function openContacts(listName: string) {
     setContactsModal(listName)
     setContacts([])
+    setContactsError(null)
     setNewEmail("")
     setBulkMode(false)
     setBulkText("")
@@ -255,6 +258,11 @@ export function MarketingPanel() {
     setContactsLoading(true)
     try {
       const res = await fetch(`/api/marketing/lists/${encodeURIComponent(listName)}/contacts`)
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setContactsError(data.error ?? `Failed to load contacts (${res.status})`)
+        return
+      }
       const data = await res.json()
       if (Array.isArray(data)) setContacts(data)
     } finally {
@@ -301,6 +309,12 @@ export function MarketingPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ emails: toAdd }),
       })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        const errorMsg = data.error ?? `Bulk add failed (${res.status})`
+        setBulkResult({ added: [], skipped, failed: toAdd.map(email => ({ email, reason: errorMsg })) })
+        return
+      }
       const data = await res.json()
       const added: string[] = Array.isArray(data.added) ? data.added : []
       const failed: { email: string; reason: string }[] = Array.isArray(data.failed) ? data.failed : []
@@ -373,19 +387,6 @@ export function MarketingPanel() {
       trackingEnabled,
     })
 
-    // Fetch contacts to pre-populate the recipient list
-    const contactsRes = await fetch(`/api/marketing/lists/${encodeURIComponent(listName)}/contacts`)
-    const contactsData = await contactsRes.json()
-    const activeEmails: string[] = Array.isArray(contactsData)
-      ? contactsData.filter((c: { email: string; unsubscribed: boolean }) => !c.unsubscribed).map((c: { email: string }) => c.email)
-      : []
-
-    setSendProgress(prev => prev ? {
-      ...prev,
-      recipients: activeEmails.map(email => ({ email, status: "pending" })),
-      total: activeEmails.length,
-    } : null)
-
     const response = await fetch("/api/marketing/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -393,7 +394,9 @@ export function MarketingPanel() {
     })
 
     if (!response.ok || !response.body) {
-      setSendProgress(prev => prev ? { ...prev, done: true } : null)
+      const data = await response.json().catch(() => ({}))
+      const errorMsg = data.error ?? `Send failed (${response.status})`
+      setSendProgress(prev => prev ? { ...prev, done: true, error: errorMsg } : null)
       return
     }
 
@@ -432,16 +435,15 @@ export function MarketingPanel() {
           } else if (event.type === "result") {
             setSendProgress(prev => {
               if (!prev) return null
-              const recipients = prev.recipients.map(r =>
-                r.email === event.email ? { ...r, status: event.status as RecipientStatus } : r
-              )
               return {
                 ...prev,
-                recipients,
+                recipients: [...prev.recipients, { email: event.email, status: event.status as RecipientStatus }],
                 sent: event.status === "sent" ? prev.sent + 1 : prev.sent,
                 failed: event.status === "failed" ? prev.failed + 1 : prev.failed,
               }
             })
+          } else if (event.type === "error") {
+            setSendProgress(prev => prev ? { ...prev, done: true, error: event.message ?? "An error occurred" } : null)
           } else if (event.type === "done") {
             setSendProgress(prev => prev ? { ...prev, done: true, sendId: event.sendId } : null)
             // Update the placeholder in send history with final counts
@@ -518,7 +520,15 @@ export function MarketingPanel() {
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Email Lists</h2>
-          <span className="text-white/40 text-xs">{lists.length} list{lists.length !== 1 ? "s" : ""}</span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => router.push("/live/manage/ses-audit")}
+              className="text-xs text-white/30 hover:text-white/70 transition-colors"
+            >
+              SES Audit →
+            </button>
+            <span className="text-white/40 text-xs">{lists.length} list{lists.length !== 1 ? "s" : ""}</span>
+          </div>
         </div>
 
         {/* New list form */}
@@ -710,6 +720,8 @@ export function MarketingPanel() {
                 <div className="flex items-center justify-center py-8">
                   <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
                 </div>
+              ) : contactsError ? (
+                <p className="text-red-400 text-sm">{contactsError}</p>
               ) : contacts.length === 0 ? (
                 <p className="text-white/40 text-sm">No contacts yet.</p>
               ) : (
@@ -1122,6 +1134,9 @@ export function MarketingPanel() {
                   <div className="w-4 h-4 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
                 )}
               </div>
+              {sendProgress.error && (
+                <p className="text-red-400 text-xs bg-red-400/10 rounded px-2 py-1">{sendProgress.error}</p>
+              )}
               {/* Progress bar */}
               <div className="flex flex-col gap-1">
                 <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">

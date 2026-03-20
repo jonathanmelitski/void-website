@@ -100,25 +100,23 @@ export async function listContacts(
 
   const results: { email: string; unsubscribed: boolean }[] = []
 
-  for (const filteredStatus of ["OPT_IN", "OPT_OUT"] as const) {
-    let nextToken: string | undefined
-    do {
-      const res = await client.send(
-        new ListContactsCommand({
-          ContactListName: CONTACT_LIST,
-          Filter: {
-            FilteredStatus: filteredStatus,
-            TopicFilter: { TopicName: topicName, UseDefaultIfPreferenceUnavailable: false },
-          },
-          NextToken: nextToken,
-        })
-      )
-      for (const c of res.Contacts ?? []) {
-        results.push({ email: c.EmailAddress!, unsubscribed: filteredStatus === "OPT_OUT" })
-      }
-      nextToken = res.NextToken
-    } while (nextToken)
-  }
+  let nextToken: string | undefined
+  do {
+    const res = await client.send(
+      new ListContactsCommand({
+        ContactListName: CONTACT_LIST,
+        Filter: {
+          FilteredStatus: "OPT_IN",
+          TopicFilter: { TopicName: topicName, UseDefaultIfPreferenceUnavailable: false },
+        },
+        NextToken: nextToken,
+      })
+    )
+    for (const c of res.Contacts ?? []) {
+      results.push({ email: c.EmailAddress!, unsubscribed: false })
+    }
+    nextToken = res.NextToken
+  } while (nextToken)
 
   return results
 }
