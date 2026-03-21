@@ -25,6 +25,7 @@ frontend:
         - echo "S3_BUCKET_NAME=$S3_BUCKET_NAME" >> .env
         - echo "NEXT_PUBLIC_S3_BASE_URL=$NEXT_PUBLIC_S3_BASE_URL" >> .env
         - echo "NEXT_PUBLIC_BASE_URL=$NEXT_PUBLIC_BASE_URL" >> .env
+        - echo "TOTP_SECRET=$TOTP_SECRET" >> .env
         - npm run build
   artifacts:
     baseDirectory: .next

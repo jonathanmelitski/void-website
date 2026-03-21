@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto"
 import { NextRequest, NextResponse } from "next/server"
 import { verifyToken } from "@/lib/aws/cognito"
+import { verifyTOTP } from "@/lib/totp"
 import { getSend, logSend } from "@/lib/aws/sends"
 import { getNewsletter } from "@/lib/aws/newsletters"
 import { sendToEmails } from "@/lib/aws/ses"
@@ -27,6 +28,12 @@ export async function POST(
 ) {
   const caller = await requireAdmin(request)
   if (!caller) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  const body = await request.json().catch(() => ({}))
+  const { totpCode } = body as { totpCode?: string }
+  if (!totpCode || !await verifyTOTP(totpCode)) {
+    return NextResponse.json({ error: "Invalid or missing TOTP code" }, { status: 403 })
+  }
 
   const { id } = await params
   const send = await getSend(id)

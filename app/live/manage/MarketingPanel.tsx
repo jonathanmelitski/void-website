@@ -61,6 +61,11 @@ export function MarketingPanel() {
 
   const [testSendId, setTestSendId] = useState<string | null>(null)
 
+  // TOTP prompt
+  const [totpPromptCallback, setTotpPromptCallback] = useState<((code: string) => void) | null>(null)
+  const [totpInput, setTotpInput] = useState("")
+  const [totpError, setTotpError] = useState("")
+
   // Send progress
   type RecipientStatus = "sent" | "failed"
   const [sendProgress, setSendProgress] = useState<{
@@ -109,7 +114,7 @@ export function MarketingPanel() {
     }
   }
 
-  async function resendFailed() {
+  async function resendFailed(totpCode: string) {
     if (!deliveryModal) return
     const { send } = deliveryModal
     const failedEmails = (send.failedRecipients ?? [])
@@ -124,7 +129,11 @@ export function MarketingPanel() {
       },
     } : null)
 
-    const response = await fetch(`/api/marketing/sends/${send.id}/resend`, { method: "POST" })
+    const response = await fetch(`/api/marketing/sends/${send.id}/resend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ totpCode }),
+    })
     if (!response.ok || !response.body) {
       setDeliveryModal(prev => prev ? { ...prev, resending: false } : null)
       return
@@ -338,6 +347,27 @@ export function MarketingPanel() {
     setContacts(prev => prev.filter(c => c.email !== email))
   }
 
+  function requestTOTP(callback: (code: string) => void) {
+    setTotpInput("")
+    setTotpError("")
+    setTotpPromptCallback(() => callback)
+  }
+
+  function cancelTOTP() {
+    setTotpPromptCallback(null)
+    setTotpInput("")
+    setTotpError("")
+  }
+
+  function submitTOTP() {
+    if (totpInput.length !== 6 || !totpPromptCallback) return
+    const cb = totpPromptCallback
+    setTotpPromptCallback(null)
+    setTotpInput("")
+    setTotpError("")
+    cb(totpInput)
+  }
+
   function openSendDialog(listName: string) {
     setSendDialog(listName)
     setSelectedNewsletterId("")
@@ -367,7 +397,7 @@ export function MarketingPanel() {
     }
   }
 
-  async function sendToList() {
+  async function sendToList(totpCode: string) {
     if (!sendDialog || !selectedNewsletterId) return
     const listName = sendDialog
     const nl = newsletters.find(n => n.id === selectedNewsletterId)
@@ -390,7 +420,7 @@ export function MarketingPanel() {
     const response = await fetch("/api/marketing/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildSendPayload("list", { listName })),
+      body: JSON.stringify({ ...buildSendPayload("list", { listName }), totpCode }),
     })
 
     if (!response.ok || !response.body) {
@@ -457,7 +487,7 @@ export function MarketingPanel() {
     }
   }
 
-  async function sendTest() {
+  async function sendTest(totpCode: string) {
     if (!sendDialog || !selectedNewsletterId || !testEmail.trim()) return
     setSending(true)
     setTestResult("")
@@ -466,7 +496,7 @@ export function MarketingPanel() {
       const res = await fetch("/api/marketing/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildSendPayload("test", { email: testEmail.trim() })),
+        body: JSON.stringify({ ...buildSendPayload("test", { email: testEmail.trim() }), totpCode }),
       })
       const data = await res.json()
       if (res.ok) {
@@ -964,7 +994,7 @@ export function MarketingPanel() {
                   className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/30"
                 />
                 <button
-                  onClick={sendTest}
+                  onClick={() => requestTOTP(sendTest)}
                   disabled={sending || !selectedNewsletterId || !testEmail.trim()}
                   className="px-3 py-2 text-xs bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40 whitespace-nowrap"
                 >
@@ -1032,7 +1062,7 @@ export function MarketingPanel() {
                   </div>
                   {failed.length > 0 && !deliveryModal.resending && !deliveryModal.resendProgress?.done && (
                     <button
-                      onClick={resendFailed}
+                      onClick={() => requestTOTP(resendFailed)}
                       className="text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-lg transition-colors"
                     >
                       Resend to {failed.length} failed
@@ -1213,6 +1243,43 @@ export function MarketingPanel() {
         </div>
       )}
 
+      {/* TOTP prompt */}
+      {totpPromptCallback && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80">
+          <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-6 max-w-xs w-full mx-4 flex flex-col gap-5">
+            <div>
+              <h3 className="font-semibold">Verify identity</h3>
+              <p className="text-xs text-white/40 mt-1">Enter your 6-digit authenticator code to proceed.</p>
+            </div>
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={6}
+              autoFocus
+              value={totpInput}
+              onChange={e => { setTotpInput(e.target.value.replace(/\D/g, "").slice(0, 6)); setTotpError("") }}
+              onKeyDown={e => e.key === "Enter" && totpInput.length === 6 && submitTOTP()}
+              placeholder="000000"
+              className="bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-center text-2xl tracking-[0.4em] font-mono text-white placeholder-white/20 focus:outline-none focus:border-white/30 w-full"
+            />
+            {totpError && <p className="text-red-400 text-xs">{totpError}</p>}
+            <div className="flex gap-2 justify-end">
+              <button onClick={cancelTOTP} className="px-4 py-2 text-sm text-white/50 hover:text-white transition-colors">
+                Cancel
+              </button>
+              <button
+                onClick={submitTOTP}
+                disabled={totpInput.length !== 6}
+                className="px-4 py-2 text-sm bg-white text-black font-medium rounded-lg hover:bg-white/90 transition-colors disabled:opacity-50"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Confirm send dialog */}
       {confirmSend && sendDialog && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
@@ -1235,11 +1302,11 @@ export function MarketingPanel() {
                 Cancel
               </button>
               <button
-                onClick={sendToList}
+                onClick={() => requestTOTP(sendToList)}
                 disabled={sending}
                 className="px-4 py-2 text-sm bg-white text-black font-medium rounded-lg hover:bg-white/90 transition-colors disabled:opacity-50"
               >
-                {sending ? "Sending…" : "Send"}
+                Send
               </button>
             </div>
           </div>

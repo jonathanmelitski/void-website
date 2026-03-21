@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 export const maxDuration = 300
 import { verifyToken } from "@/lib/aws/cognito"
+import { verifyTOTP } from "@/lib/totp"
 import { getNewsletter } from "@/lib/aws/newsletters"
 import { sendNewsletterToList, sendTestEmail } from "@/lib/aws/ses"
 import { logSend, updateSend } from "@/lib/aws/sends"
@@ -26,7 +27,11 @@ export async function POST(request: NextRequest) {
   if (!caller) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   const body = await request.json()
-  const { mode, newsletterId, subject, replyTo, fromName, includeWebLink, trackingEnabled } = body
+  const { mode, newsletterId, subject, replyTo, fromName, includeWebLink, trackingEnabled, totpCode } = body
+
+  if (!totpCode || !await verifyTOTP(totpCode)) {
+    return NextResponse.json({ error: "Invalid or missing TOTP code" }, { status: 403 })
+  }
 
   if (!newsletterId) return NextResponse.json({ error: "newsletterId is required" }, { status: 400 })
 
