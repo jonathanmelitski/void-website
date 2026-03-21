@@ -98,6 +98,7 @@ const defaultNavigationLinks: Navbar01NavLink[] = [
   { href: '/roster', label: 'Roster' },
   { href: '/news', label: 'News' },
   { href: '/donate', label: 'Donate' },
+  { href: 'https://sites.google.com/view/venus-penn-ultimate/', label: 'Venus' },
   //{ href: '/schedule', label: 'Schedule' },
   //{ href: '/gallery', label: 'Gallery' },
 ];
