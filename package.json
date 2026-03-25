@@ -1,5 +1,4 @@
 {
   "name": "void-website-v2",
-  "private": true,
-  "workspaces": ["nextjs", "ws"]
+  "private": true
 }

@@ -355,7 +355,7 @@ cd /home/ubuntu
 git clone --branch ${REPO_BRANCH} --single-branch ${cloneUrl} repo
 cd repo/ws
 npm install
-cat > .env.local <<'ENVEOF'
+cat > .env <<'ENVEOF'
 ${envLines}
 ENVEOF
 NODE_ENV=production npx tsx server.ts >> /var/log/void-ws.log 2>&1 &`
