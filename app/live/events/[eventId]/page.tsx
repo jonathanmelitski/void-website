@@ -4,6 +4,76 @@ import { useEffect, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import { useAuth } from "@/lib/use-auth"
+import type { GameItem } from "@/lib/aws/games"
+
+const RESULT_COLORS: Record<string, string> = {
+  WIN: "text-green-400",
+  LOSS: "text-red-400",
+  TIE: "text-yellow-400",
+}
+
+function GamesList({ eventId }: { eventId: string }) {
+  const params = useParams<{ eventId: string }>()
+  const router = useRouter()
+  const [games, setGames] = useState<GameItem[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch(`/api/games?eventId=${eventId}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setGames(Array.isArray(data) ? data : []))
+      .finally(() => setLoading(false))
+  }, [eventId])
+
+  if (loading) return <div className="w-4 h-4 border border-white/20 border-t-white/60 rounded-full animate-spin" />
+
+  if (games.length === 0) {
+    return <p className="text-white/30 text-sm">No games logged for this event yet.</p>
+  }
+
+  const sorted = [...games].sort((a, b) => {
+    if (a.scheduledTime && b.scheduledTime) return new Date(a.scheduledTime).getTime() - new Date(b.scheduledTime).getTime()
+    return 0
+  })
+
+  return (
+    <div className="flex flex-col gap-2">
+      {sorted.map(game => (
+        <button
+          key={game.id}
+          onClick={() => router.push(`/live/events/${eventId}/games/${game.id}`)}
+          className="flex items-center gap-4 px-4 py-3 rounded-lg border border-white/10 hover:border-white/20 hover:bg-white/3 transition-colors text-left group"
+        >
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-sm">vs {game.opponent}</span>
+              {game.round && <span className="text-white/30 text-xs">{game.round}</span>}
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {game.status !== "SCHEDULED" && (
+              <span className="font-mono text-sm">
+                <span className={game.result === "WIN" ? "text-green-400" : game.result === "LOSS" ? "text-red-400" : ""}>{game.scoreVoid}</span>
+                {" – "}
+                <span className={game.result === "LOSS" ? "text-green-400" : game.result === "WIN" ? "text-red-400" : ""}>{game.scoreOpponent}</span>
+              </span>
+            )}
+            {game.result && (
+              <span className={`text-xs font-bold ${RESULT_COLORS[game.result] ?? ""}`}>{game.result}</span>
+            )}
+            {game.status === "SCHEDULED" && (
+              <span className="text-white/30 text-xs">Scheduled</span>
+            )}
+            {game.status === "IN_PROGRESS" && (
+              <span className="text-yellow-400/70 text-xs font-medium">Live</span>
+            )}
+          </div>
+          <span className="text-white/20 group-hover:text-white/40 text-xs transition-colors">→</span>
+        </button>
+      ))}
+    </div>
+  )
+}
 
 interface EventItem {
   id: string
@@ -110,7 +180,7 @@ export default function LiveEventPage() {
         {/* Stats */}
         <section>
           <h2 className="text-lg font-bold mb-3">Stats</h2>
-          <p className="text-white/30 text-sm">Game stats coming soon.</p>
+          <GamesList eventId={event.id} />
         </section>
 
         {/* Film */}

@@ -90,6 +90,7 @@ export interface Navbar01Props extends React.HTMLAttributes<HTMLElement> {
   ctaHref?: string;
   onSignInClick?: () => void;
   onCtaClick?: () => void;
+  liveGame?: { id: string; opponent: string } | null;
 }
 
 // Default navigation links
@@ -116,6 +117,7 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
       ctaHref = '/online',
       onSignInClick,
       onCtaClick,
+      liveGame,
       ...props
     },
     ref
@@ -229,14 +231,39 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
           </div>
           {/* Right side */}
           <div className="flex items-center gap-3">
-            <Link href="/live">
-              <Button
-                size="sm"
-                className="text-sm font-medium px-4 h-9 rounded-md shadow-sm"
-              >
-                {ctaText}
-              </Button>
-            </Link>
+            {/* Live badge — shown when a game is IN_PROGRESS */}
+            {liveGame && (
+              <Link href={`/live/watch/${liveGame.id}`}>
+                <span className="flex items-center gap-1.5 text-xs font-medium text-red-400 border border-red-400/30 bg-red-400/10 px-2.5 py-1 rounded-full cursor-pointer hover:bg-red-400/20 transition-colors">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-400" />
+                  </span>
+                  Live vs. {liveGame.opponent}
+                </span>
+              </Link>
+            )}
+
+            {/* CTA button — wrapped in spinning red ring when live */}
+            <div className="relative">
+              {liveGame && (
+                <>
+                  <div
+                    className="absolute inset-[-3px] rounded-md animate-spin z-0 pointer-events-none"
+                    style={{ background: "conic-gradient(from 0deg, transparent 60%, #ef4444, transparent)" }}
+                  />
+                  <div className="absolute inset-0 rounded-md bg-background z-[1] pointer-events-none" />
+                </>
+              )}
+              <Link href="/live" className="relative z-[2]">
+                <Button
+                  size="sm"
+                  className="text-sm font-medium px-4 h-9 rounded-md shadow-sm relative z-[2]"
+                >
+                  {ctaText}
+                </Button>
+              </Link>
+            </div>
           </div>
         </div>
       </header>

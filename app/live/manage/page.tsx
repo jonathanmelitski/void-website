@@ -11,8 +11,11 @@ import { AdminPanel } from "./AdminPanel"
 import { NewslettersPanel } from "./NewslettersPanel"
 import { AuditPanel } from "./AuditPanel"
 import { MarketingPanel } from "./MarketingPanel"
+import { GamesPanel } from "./GamesPanel"
+import { PlayersPanel } from "./PlayersPanel"
+import { LiveServerPanel } from "./LiveServerPanel"
 
-type Tab = "photos" | "events" | "users" | "newsletters" | "audit" | "marketing"
+type Tab = "photos" | "events" | "games" | "players" | "users" | "newsletters" | "audit" | "marketing" | "live-server"
 
 function getHighestRole(groups: string[]) {
   if (groups.includes("ADMIN")) return "ADMIN"
@@ -40,7 +43,7 @@ function ManagePageInner() {
   const searchParams = useSearchParams()
   const [activeTab, setActiveTab] = useState<Tab>(() => {
     const t = searchParams.get("tab")
-    return (["photos", "events", "newsletters", "users", "audit", "marketing"].includes(t ?? "") ? t : "photos") as Tab
+    return (["photos", "events", "games", "players", "newsletters", "users", "audit", "marketing", "live-server"].includes(t ?? "") ? t : "photos") as Tab
   })
 
   useEffect(() => {
@@ -62,10 +65,13 @@ function ManagePageInner() {
   const tabs: { id: Tab; label: string }[] = [
     { id: "photos", label: "Photos" },
     ...(isCoachOrAdmin ? [{ id: "events" as Tab, label: "Events" }] : []),
+    ...(isCoachOrAdmin ? [{ id: "games" as Tab, label: "Games" }] : []),
+    ...(isCoachOrAdmin ? [{ id: "players" as Tab, label: "Players" }] : []),
     ...(isCoachOrAdmin ? [{ id: "newsletters" as Tab, label: "Newsletters" }] : []),
     ...(isAdmin ? [{ id: "users" as Tab, label: "Users" }] : []),
     ...(isAdmin ? [{ id: "audit" as Tab, label: "Audit" }] : []),
     ...(isAdmin ? [{ id: "marketing" as Tab, label: "Marketing" }] : []),
+    ...(isAdmin ? [{ id: "live-server" as Tab, label: "Live Server" }] : []),
   ]
 
   return (
@@ -117,10 +123,13 @@ function ManagePageInner() {
       <div>
         {activeTab === "photos" && <UserPanel />}
         {activeTab === "events" && isCoachOrAdmin && <EventsPanel />}
+        {activeTab === "games" && isCoachOrAdmin && <GamesPanel />}
+        {activeTab === "players" && isCoachOrAdmin && <PlayersPanel />}
         {activeTab === "newsletters" && isCoachOrAdmin && <NewslettersPanel />}
         {activeTab === "users" && isAdmin && <AdminPanel />}
         {activeTab === "audit" && isAdmin && <AuditPanel />}
         {activeTab === "marketing" && isAdmin && <MarketingPanel />}
+        {activeTab === "live-server" && isAdmin && <LiveServerPanel />}
       </div>
     </div>
   )
