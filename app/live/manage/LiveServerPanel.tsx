@@ -28,6 +28,8 @@ export function LiveServerPanel() {
   const [confirmingDestroy, setConfirmingDestroy] = useState(false)
   const [destroyResult, setDestroyResult] = useState<DestroyAllResult | null>(null)
   const [error, setError] = useState("")
+  const [logs, setLogs] = useState<string | null>(null)
+  const [fetchingLogs, setFetchingLogs] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const confirmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -73,6 +75,24 @@ export function LiveServerPanel() {
     } finally {
       setActing(false)
       await fetchStatus()
+    }
+  }
+
+  async function handleFetchLogs() {
+    setFetchingLogs(true)
+    setLogs(null)
+    try {
+      const res = await fetch("/api/live-server", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "logs" }),
+      })
+      const d = await res.json()
+      setLogs(d.output ?? d.error ?? "No output")
+    } catch {
+      setLogs("Network error")
+    } finally {
+      setFetchingLogs(false)
     }
   }
 
@@ -177,6 +197,26 @@ export function LiveServerPanel() {
           {destroying ? "Destroying…" : confirmingDestroy ? "Confirm — click again" : "Destroy All"}
         </Button>
       </div>
+
+      {/* Logs */}
+      {status !== "offline" && (
+        <div className="flex flex-col gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={fetchingLogs}
+            onClick={handleFetchLogs}
+            className="self-start text-white/40 hover:text-white/70"
+          >
+            {fetchingLogs ? "Fetching logs…" : "Fetch Logs"}
+          </Button>
+          {logs && (
+            <pre className="text-xs text-white/60 bg-white/5 border border-white/10 rounded-lg p-4 overflow-auto max-h-96 whitespace-pre-wrap break-all">
+              {logs}
+            </pre>
+          )}
+        </div>
+      )}
 
       {/* Error display */}
       {error && (

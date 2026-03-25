@@ -24,7 +24,12 @@ import {
   ChangeResourceRecordSetsCommand,
   ListResourceRecordSetsCommand,
 } from "@aws-sdk/client-route-53"
-import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm"
+import {
+  SSMClient,
+  GetParameterCommand,
+  SendCommandCommand,
+  GetCommandInvocationCommand,
+} from "@aws-sdk/client-ssm"
 
 // ---- Constants ----
 
@@ -38,6 +43,7 @@ const CREDENTIALS = {
 const HOSTED_ZONE_ID = process.env.ROUTE53_HOSTED_ZONE_ID!
 const REPO_URL = process.env.EC2_REPO_URL ?? "https://github.com/jonathanmelitski/void-website"
 const REPO_BRANCH = process.env.EC2_REPO_BRANCH ?? "main"
+const GITHUB_TOKEN = process.env.EC2_GITHUB_TOKEN ?? ""
 const WS_HOSTNAME = "live.voidultimate.com"
 const SG_NAME = "void-ws-server"
 const PURPOSE_TAG = "void-ws-server"
@@ -287,6 +293,7 @@ export async function POST(request: NextRequest) {
       ["ROUTE53_HOSTED_ZONE_ID", HOSTED_ZONE_ID],
       ["WS_INTERNAL_SECRET", process.env.WS_INTERNAL_SECRET],
       ["EC2_INSTANCE_PROFILE", process.env.EC2_INSTANCE_PROFILE],
+      ["EC2_GITHUB_TOKEN", GITHUB_TOKEN],
     ].filter(([, v]) => !v).map(([k]) => k)
     if (missingVars.length > 0) {
       return NextResponse.json({ error: `Missing required env vars: ${missingVars.join(", ")}` }, { status: 500 })
@@ -342,7 +349,7 @@ set -e
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt-get install -y nodejs git
 cd /home/ubuntu
-git clone --branch ${REPO_BRANCH} --single-branch ${REPO_URL} app
+git clone --branch ${REPO_BRANCH} --single-branch ${REPO_URL.replace("https://", `https://${GITHUB_TOKEN}@`)} app
 cd app
 npm ci
 cat > .env.local <<'ENVEOF'
@@ -536,5 +543,64 @@ npm run start:ws >> /var/log/void-ws.log 2>&1 &`
     return NextResponse.json(result)
   }
 
-  return NextResponse.json({ error: "action must be 'start', 'stop', or 'destroy-all'" }, { status: 400 })
+  // ---- LOGS ----
+  if (action === "logs") {
+    let instance: Instance | null
+    try {
+      instance = await describeWsInstance()
+    } catch (e: unknown) {
+      return NextResponse.json({ error: `Describe failed: ${e instanceof Error ? e.message : e}` }, { status: 500 })
+    }
+    if (!instance?.InstanceId) {
+      return NextResponse.json({ error: "No instance running" }, { status: 404 })
+    }
+
+    try {
+      const sendRes = await ssm.send(new SendCommandCommand({
+        InstanceIds: [instance.InstanceId],
+        DocumentName: "AWS-RunShellScript",
+        Parameters: {
+          commands: [
+            "echo '===== cloud-init =====' && tail -200 /var/log/cloud-init-output.log 2>/dev/null || echo '[not found]'",
+            "echo '===== ws server =====' && tail -150 /var/log/void-ws.log 2>/dev/null || echo '[not found]'",
+          ],
+        },
+        TimeoutSeconds: 30,
+      }))
+
+      const commandId = sendRes.Command!.CommandId!
+
+      // Poll up to 20s for the command to complete
+      let output = "Waiting for SSM agent..."
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 1000))
+        try {
+          const result = await ssm.send(new GetCommandInvocationCommand({
+            CommandId: commandId,
+            InstanceId: instance.InstanceId,
+          }))
+          if (result.Status === "Success" || result.Status === "Failed") {
+            output = result.StandardOutputContent ?? "(no output)"
+            if (result.StandardErrorContent) output += `\n[stderr]\n${result.StandardErrorContent}`
+            break
+          }
+          if (result.Status === "Cancelled" || result.Status === "TimedOut") {
+            output = `Command ${result.Status}`
+            break
+          }
+        } catch { continue }
+      }
+
+      return NextResponse.json({ output })
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      // Common case: SSM agent not yet registered (instance still booting)
+      if (msg.includes("InvalidInstanceId")) {
+        return NextResponse.json({ output: "SSM agent not ready yet — instance is still booting. Try again in 30s." })
+      }
+      return NextResponse.json({ error: msg }, { status: 500 })
+    }
+  }
+
+  return NextResponse.json({ error: "action must be 'start', 'stop', 'destroy-all', or 'logs'" }, { status: 400 })
 }

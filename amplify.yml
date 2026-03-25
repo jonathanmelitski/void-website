@@ -35,6 +35,7 @@ frontend:
         - echo "EC2_INSTANCE_PROFILE=$EC2_INSTANCE_PROFILE" >> .env
         - echo "EC2_REPO_URL=$EC2_REPO_URL" >> .env
         - echo "EC2_REPO_BRANCH=$EC2_REPO_BRANCH" >> .env
+        - echo "EC2_GITHUB_TOKEN=$EC2_GITHUB_TOKEN" >> .env
         - echo "EC2_INSTANCE_TYPE=$EC2_INSTANCE_TYPE" >> .env
         - echo "WS_SERVER_URL=$WS_SERVER_URL" >> .env
         - echo "NEXT_PUBLIC_WS_HOST=$NEXT_PUBLIC_WS_HOST" >> .env
