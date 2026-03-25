@@ -1,0 +1,16 @@
+{
+  "name": "void-ws-server",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1003.0",
+    "@aws-sdk/lib-dynamodb": "^3.1003.0",
+    "@next/env": "^15.0.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}

@@ -41,7 +41,7 @@ const CREDENTIALS = {
   secretAccessKey: process.env.VOID_SECRET_ACCESS_KEY!,
 }
 const HOSTED_ZONE_ID = process.env.ROUTE53_HOSTED_ZONE_ID!
-const REPO_URL = process.env.EC2_REPO_URL ?? "https://github.com/jonathanmelitski/void-website"
+const REPO_URL = process.env.EC2_REPO_URL ?? ""
 const REPO_BRANCH = process.env.EC2_REPO_BRANCH ?? "main"
 const GITHUB_TOKEN = process.env.EC2_GITHUB_TOKEN ?? ""
 const WS_HOSTNAME = "live.voidultimate.com"
@@ -293,6 +293,7 @@ export async function POST(request: NextRequest) {
       ["ROUTE53_HOSTED_ZONE_ID", HOSTED_ZONE_ID],
       ["WS_INTERNAL_SECRET", process.env.WS_INTERNAL_SECRET],
       ["EC2_INSTANCE_PROFILE", process.env.EC2_INSTANCE_PROFILE],
+      ["EC2_REPO_URL", REPO_URL],
       ["EC2_GITHUB_TOKEN", GITHUB_TOKEN],
     ].filter(([, v]) => !v).map(([k]) => k)
     if (missingVars.length > 0) {
@@ -344,18 +345,20 @@ export async function POST(request: NextRequest) {
         `PORT=${WS_PORT}`,
       ].join("\n")
 
+      const cloneUrl = REPO_URL.replace("https://", `https://${GITHUB_TOKEN}@`)
+
       const userDataScript = `#!/bin/bash
 set -e
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt-get install -y nodejs git
 cd /home/ubuntu
-git clone --branch ${REPO_BRANCH} --single-branch ${REPO_URL.replace("https://", `https://${GITHUB_TOKEN}@`)} app
-cd app
-npm ci
+git clone --branch ${REPO_BRANCH} --single-branch ${cloneUrl} repo
+cd repo/ws
+npm install
 cat > .env.local <<'ENVEOF'
 ${envLines}
 ENVEOF
-npm run start:ws >> /var/log/void-ws.log 2>&1 &`
+NODE_ENV=production npx tsx server.ts >> /var/log/void-ws.log 2>&1 &`
 
       const instanceProfile = process.env.EC2_INSTANCE_PROFILE
       if (!instanceProfile) throw new Error("EC2_INSTANCE_PROFILE is not set — create an instance profile and set this env var")

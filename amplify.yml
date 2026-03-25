@@ -3,12 +3,13 @@ backend:
   phases:
     build:
       commands:
-        - npm ci --cache .npm --prefer-offline
-        - npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID
+        - cd nextjs && npm ci --cache .npm --prefer-offline
+        - cd nextjs && npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID
 frontend:
   phases:
     build:
       commands:
+        - cd nextjs
         - echo "VOID_REGION=$VOID_REGION" >> .env
         - echo "VOID_ACCESS_KEY_ID=$VOID_ACCESS_KEY_ID" >> .env
         - echo "VOID_SECRET_ACCESS_KEY=$VOID_SECRET_ACCESS_KEY" >> .env
@@ -33,19 +34,19 @@ frontend:
         - echo "WS_INTERNAL_SECRET=$WS_INTERNAL_SECRET" >> .env
         - echo "ROUTE53_HOSTED_ZONE_ID=$ROUTE53_HOSTED_ZONE_ID" >> .env
         - echo "EC2_INSTANCE_PROFILE=$EC2_INSTANCE_PROFILE" >> .env
+        - echo "EC2_INSTANCE_TYPE=$EC2_INSTANCE_TYPE" >> .env
         - echo "EC2_REPO_URL=$EC2_REPO_URL" >> .env
         - echo "EC2_REPO_BRANCH=$EC2_REPO_BRANCH" >> .env
         - echo "EC2_GITHUB_TOKEN=$EC2_GITHUB_TOKEN" >> .env
-        - echo "EC2_INSTANCE_TYPE=$EC2_INSTANCE_TYPE" >> .env
         - echo "WS_SERVER_URL=$WS_SERVER_URL" >> .env
         - echo "NEXT_PUBLIC_WS_HOST=$NEXT_PUBLIC_WS_HOST" >> .env
         - npm run build
   artifacts:
-    baseDirectory: .next
+    baseDirectory: nextjs/.next
     files:
       - '**/*'
   cache:
     paths:
-      - .next/cache/**/*
-      - .npm/**/*
-      - node_modules/**/*
+      - nextjs/.next/cache/**/*
+      - nextjs/.npm/**/*
+      - nextjs/node_modules/**/*
