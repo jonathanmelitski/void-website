@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import type { LiveServerInfo, LiveServerStatus, DestroyAllResult } from "@/app/api/live-server/route"
+import { StepProgress } from "@/components/ui/step-progress"
+import { readStream } from "@/lib/read-stream"
+import type { StepDef } from "@/lib/step-types"
+import type { LiveServerInfo, LiveServerStatus } from "@/app/api/live-server/route"
 
 const STATUS_DOT: Record<LiveServerStatus, string> = {
   online: "bg-green-400",
@@ -23,10 +26,9 @@ const STATUS_LABEL: Record<LiveServerStatus, string> = {
 export function LiveServerPanel() {
   const [info, setInfo] = useState<LiveServerInfo | null>(null)
   const [loading, setLoading] = useState(true)
-  const [acting, setActing] = useState(false)
-  const [destroying, setDestroying] = useState(false)
+  const [streaming, setStreaming] = useState(false)
+  const [steps, setSteps] = useState<StepDef[]>([])
   const [confirmingDestroy, setConfirmingDestroy] = useState(false)
-  const [destroyResult, setDestroyResult] = useState<DestroyAllResult | null>(null)
   const [error, setError] = useState("")
   const [logs, setLogs] = useState<string | null>(null)
   const [fetchingLogs, setFetchingLogs] = useState(false)
@@ -53,27 +55,32 @@ export function LiveServerPanel() {
     }
   }, [])
 
-  async function handleAction(action: "start" | "stop") {
-    setActing(true)
+  async function runStreamingAction(action: "start" | "stop" | "destroy-all") {
+    setStreaming(true)
     setError("")
-    setDestroyResult(null)
+    setSteps([])
     try {
       const res = await fetch("/api/live-server", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       })
-      const d = await res.json()
       if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
         setError(d.error ?? "Request failed")
-      } else {
-        setInfo(d as LiveServerInfo)
-        if (d.errors?.length) setError(d.errors.join(" · "))
+        return
       }
-    } catch {
-      setError("Network error")
+      await readStream(
+        res,
+        (s) => setSteps(s),
+        (id, status, err) => setSteps(prev =>
+          prev.map(s => s.id === id ? { ...s, status, ...(err ? { error: err } : {}) } : s)
+        ),
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed")
     } finally {
-      setActing(false)
+      setStreaming(false)
       await fetchStatus()
     }
   }
@@ -98,46 +105,20 @@ export function LiveServerPanel() {
 
   function handleDestroyClick() {
     if (!confirmingDestroy) {
-      // First click — arm the button, auto-reset after 5s
       setConfirmingDestroy(true)
       if (confirmTimeoutRef.current) clearTimeout(confirmTimeoutRef.current)
       confirmTimeoutRef.current = setTimeout(() => setConfirmingDestroy(false), 5000)
     } else {
-      // Second click — fire
       clearTimeout(confirmTimeoutRef.current!)
       setConfirmingDestroy(false)
-      runDestroyAll()
-    }
-  }
-
-  async function runDestroyAll() {
-    setDestroying(true)
-    setError("")
-    setDestroyResult(null)
-    try {
-      const res = await fetch("/api/live-server", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "destroy-all" }),
-      })
-      const d = await res.json()
-      if (!res.ok) {
-        setError(d.error ?? "Destroy failed")
-      } else {
-        setDestroyResult(d as DestroyAllResult)
-      }
-    } catch {
-      setError("Network error")
-    } finally {
-      setDestroying(false)
-      await fetchStatus()
+      runStreamingAction("destroy-all")
     }
   }
 
   const status = info?.status ?? "offline"
-  const canStart = !acting && !destroying && status === "offline"
-  const canStop = !acting && !destroying && (status === "online" || status === "unhealthy" || status === "starting")
-  const canDestroy = !acting && !destroying
+  const canStart = !streaming && status === "offline"
+  const canStop = !streaming && (status === "online" || status === "unhealthy" || status === "starting")
+  const canDestroy = !streaming
 
   return (
     <section className="flex flex-col gap-6 max-w-lg">
@@ -179,12 +160,12 @@ export function LiveServerPanel() {
 
       {/* Actions */}
       <div className="flex items-center gap-3 flex-wrap">
-        <Button size="sm" disabled={!canStart} onClick={() => handleAction("start")}>
-          {acting && (status === "offline" || status === "starting") ? "Starting…" : "Start Server"}
+        <Button size="sm" disabled={!canStart} onClick={() => runStreamingAction("start")}>
+          {streaming && status === "offline" ? "Starting…" : "Start Server"}
         </Button>
 
-        <Button size="sm" variant="destructive" disabled={!canStop} onClick={() => handleAction("stop")}>
-          {acting && status !== "offline" ? "Stopping…" : "Stop Server"}
+        <Button size="sm" variant="destructive" disabled={!canStop} onClick={() => runStreamingAction("stop")}>
+          {streaming && status !== "offline" ? "Stopping…" : "Stop Server"}
         </Button>
 
         <Button
@@ -194,9 +175,19 @@ export function LiveServerPanel() {
           onClick={handleDestroyClick}
           className={confirmingDestroy ? "text-red-400 border border-red-400/40 animate-pulse" : "text-white/40 hover:text-red-400"}
         >
-          {destroying ? "Destroying…" : confirmingDestroy ? "Confirm — click again" : "Destroy All"}
+          {streaming ? "Destroying…" : confirmingDestroy ? "Confirm — click again" : "Destroy All"}
         </Button>
       </div>
+
+      {/* Step progress */}
+      {steps.length > 0 && (
+        <div className="border border-white/10 rounded-lg p-4">
+          <StepProgress steps={steps} />
+        </div>
+      )}
+
+      {/* Error */}
+      {error && <p className="text-red-400 text-sm">{error}</p>}
 
       {/* Logs */}
       {status !== "offline" && (
@@ -214,45 +205,6 @@ export function LiveServerPanel() {
             <pre className="text-xs text-white/60 bg-white/5 border border-white/10 rounded-lg p-4 overflow-auto max-h-96 whitespace-pre-wrap break-all">
               {logs}
             </pre>
-          )}
-        </div>
-      )}
-
-      {/* Error display */}
-      {error && (
-        <p className="text-red-400 text-sm">{error}</p>
-      )}
-
-      {/* Destroy-all result */}
-      {destroyResult && (
-        <div className="border border-white/10 rounded-lg p-4 flex flex-col gap-2 text-sm">
-          <p className="font-medium text-white/70">Destroy All — Complete</p>
-          {destroyResult.terminated.length > 0 && (
-            <p className="text-white/50">
-              Terminated: <span className="font-mono text-white/70">{destroyResult.terminated.join(", ")}</span>
-            </p>
-          )}
-          {destroyResult.releasedEips.length > 0 && (
-            <p className="text-white/50">
-              Released EIPs: <span className="font-mono text-white/70">{destroyResult.releasedEips.join(", ")}</span>
-            </p>
-          )}
-          <p className="text-white/50">
-            Security group: <span className={destroyResult.sgDeleted ? "text-green-400" : "text-white/30"}>
-              {destroyResult.sgDeleted ? "deleted" : "not found / skipped"}
-            </span>
-          </p>
-          <p className="text-white/50">
-            DNS record: <span className={destroyResult.dnsDeleted ? "text-green-400" : "text-white/30"}>
-              {destroyResult.dnsDeleted ? "deleted" : "not found / skipped"}
-            </span>
-          </p>
-          {destroyResult.errors.length > 0 && (
-            <div className="mt-1 flex flex-col gap-1">
-              {destroyResult.errors.map((e, i) => (
-                <p key={i} className="text-red-400 text-xs">{e}</p>
-              ))}
-            </div>
           )}
         </div>
       )}

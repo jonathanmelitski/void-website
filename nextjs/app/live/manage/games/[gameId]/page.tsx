@@ -5,6 +5,9 @@ import { useRouter, useParams } from "next/navigation"
 import { useAuth } from "@/lib/use-auth"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { StepProgress } from "@/components/ui/step-progress"
+import { readStream } from "@/lib/read-stream"
+import type { StepDef } from "@/lib/step-types"
 import type { GameItem, GameStatus } from "@/lib/aws/games"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { GamePlayerItem } from "@/lib/aws/game-players"
@@ -1060,106 +1063,50 @@ function CompletedPointRow({
 function BroadcastSection({ game }: { game: GameItem }) {
   const [state, setState] = useState<string>("IDLE")
   const [rtmpUrl, setRtmpUrl] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [steps, setSteps] = useState<StepDef[]>([])
+  const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState("")
   const [copied, setCopied] = useState(false)
-  const prevState = useRef<string>("IDLE")
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/broadcast")
       if (!res.ok) return
       const data = await res.json()
-      const next: string = data.state ?? "IDLE"
-
-      // Auto-activate overlay when channel transitions to RUNNING
-      if (prevState.current !== "RUNNING" && next === "RUNNING") {
-        fetch("/api/broadcast", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "activate-overlay" }),
-        }).catch(() => {})
-      }
-
-      prevState.current = next
-      setState(next)
+      setState(data.state ?? "IDLE")
       if (data.rtmpUrl) setRtmpUrl(data.rtmpUrl)
     } catch {}
   }, [])
 
-  useEffect(() => {
-    fetchStatus()
-  }, [fetchStatus])
+  useEffect(() => { fetchStatus() }, [fetchStatus])
 
-  // Poll while transitioning
-  useEffect(() => {
-    const transitioning = state === "STARTING" || state === "STOPPING"
-    if (transitioning && !pollRef.current) {
-      pollRef.current = setInterval(fetchStatus, 4000)
-    } else if (!transitioning && pollRef.current) {
-      clearInterval(pollRef.current)
-      pollRef.current = null
-    }
-    return () => {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
-    }
-  }, [state, fetchStatus])
-
-  async function handleStart() {
-    setBusy(true)
+  async function runStreamingAction(action: string, extraBody?: object) {
+    setStreaming(true)
     setError("")
+    setSteps([])
     try {
       const res = await fetch("/api/broadcast", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "start", gameId: game.id }),
+        body: JSON.stringify({ action, ...extraBody }),
       })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error ?? "Failed to start broadcast"); return }
-      setState("STARTING")
-      if (data.rtmpUrl) setRtmpUrl(data.rtmpUrl)
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        setError(d.error ?? "Request failed")
+        return
+      }
+      await readStream(
+        res,
+        (s) => setSteps(s),
+        (id, status, err) => setSteps(prev =>
+          prev.map(s => s.id === id ? { ...s, status, ...(err ? { error: err } : {}) } : s)
+        ),
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed")
     } finally {
-      setBusy(false)
-    }
-  }
-
-  async function handleStop() {
-    setBusy(true)
-    setError("")
-    setState("STOPPING")
-    try {
-      const res = await fetch("/api/broadcast", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "stop" }),
-      })
-      const data = await res.json()
-      setState("IDLE")
-      setRtmpUrl(null)
-      if (data.errors?.length) setError(`Stopped with errors: ${data.errors.join(", ")}`)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function handleDestroyAll() {
-    if (!confirm("Destroy all MediaLive channels, inputs, and security groups? This cannot be undone.")) return
-    setBusy(true)
-    setError("")
-    try {
-      const res = await fetch("/api/broadcast", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "destroy-all" }),
-      })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error ?? "Destroy failed"); return }
-      setState("IDLE")
-      setRtmpUrl(null)
-      if (data.errors?.length) setError(`Done with errors: ${data.errors.join(", ")}`)
-    } finally {
-      setBusy(false)
+      setStreaming(false)
+      await fetchStatus()
     }
   }
 
@@ -1172,9 +1119,8 @@ function BroadcastSection({ game }: { game: GameItem }) {
   }
 
   const isRunning = state === "RUNNING"
-  const isTransitioning = state === "STARTING" || state === "STOPPING"
-  const canStart = state === "IDLE" && game.status !== "FINAL"
-  const canStop = isRunning || state === "STARTING"
+  const canStart = !streaming && state === "IDLE" && game.status !== "FINAL"
+  const canStop = !streaming && (isRunning || state === "STARTING")
 
   const badgeStyle: React.CSSProperties = isRunning
     ? { background: "#16a34a", color: "#fff", border: "none" }
@@ -1185,14 +1131,14 @@ function BroadcastSection({ game }: { game: GameItem }) {
       <div className="flex items-center gap-3">
         <h2 className="text-lg font-bold">Broadcast</h2>
         <Badge
-          variant={isTransitioning ? "secondary" : isRunning ? "default" : "outline"}
-          style={badgeStyle}
+          variant={streaming ? "secondary" : isRunning ? "default" : "outline"}
+          style={!streaming ? badgeStyle : {}}
           className="flex items-center gap-1"
         >
-          {isTransitioning && (
+          {streaming && (
             <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" />
           )}
-          {state}
+          {streaming ? "…" : state}
         </Badge>
       </div>
 
@@ -1213,28 +1159,29 @@ function BroadcastSection({ game }: { game: GameItem }) {
         </div>
       )}
 
+      {steps.length > 0 && <StepProgress steps={steps} />}
       {error && <p className="text-red-400 text-xs">{error}</p>}
 
       <div className="flex items-center gap-2">
         <Button
           variant="outline"
           size="sm"
-          onClick={handleStart}
-          disabled={!canStart || busy}
+          onClick={() => runStreamingAction("start", { gameId: game.id })}
+          disabled={!canStart}
         >
-          {busy && state === "IDLE" ? "…" : "Start Broadcast"}
+          Start Broadcast
         </Button>
         <Button
           variant="destructive"
           size="sm"
-          onClick={handleStop}
-          disabled={!canStop || busy}
+          onClick={() => runStreamingAction("stop")}
+          disabled={!canStop}
         >
-          {busy && state !== "IDLE" ? "…" : "Stop Broadcast"}
+          Stop Broadcast
         </Button>
         <button
-          onClick={handleDestroyAll}
-          disabled={busy}
+          onClick={() => runStreamingAction("destroy-all")}
+          disabled={streaming}
           className="text-xs text-white/20 hover:text-red-400 transition-colors disabled:opacity-50 ml-2"
         >
           Destroy All

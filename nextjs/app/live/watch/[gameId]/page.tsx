@@ -78,10 +78,10 @@ export default function LiveWatchPage() {
         const receivingThisHalf = isSecondHalf ? !data.game.voidReceivingFirst : data.game.voidReceivingFirst
         const wasAttackingRight = (pointsInHalfBeforeScore % 2 === 0) === receivingThisHalf
         if (data.game.scoreVoid > prev.void) {
-          triggerFlash(wasAttackingRight ? "RIGHT" : "LEFT")
+          triggerFlash(wasAttackingRight ? "RIGHT" : "LEFT", "VOID")
         } else {
           // opponent attacks opposite direction
-          triggerFlash(wasAttackingRight ? "LEFT" : "RIGHT")
+          triggerFlash(wasAttackingRight ? "LEFT" : "RIGHT", "OPP")
         }
       }
     }
@@ -99,10 +99,10 @@ export default function LiveWatchPage() {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function triggerFlash(side: "LEFT" | "RIGHT") {
+  function triggerFlash(side: "LEFT" | "RIGHT", team: "VOID" | "OPP") {
     if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current)
     setFlashEZ(side)
-    setScorePulse(side)
+    setScorePulse(team)
     flashTimeoutRef.current = setTimeout(() => {
       setFlashEZ(null)
       setScorePulse(null)

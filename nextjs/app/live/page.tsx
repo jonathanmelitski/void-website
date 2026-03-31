@@ -35,6 +35,7 @@ export default function LivePage() {
   const router = useRouter()
   const [events, setEvents] = useState<GalleryEvent[]>([])
   const [eventsLoading, setEventsLoading] = useState(true)
+  const [eventsError, setEventsError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!isLoading && !user) router.replace("/live/login")
@@ -43,7 +44,10 @@ export default function LivePage() {
   useEffect(() => {
     if (!user) return
     fetch("/api/events")
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`${res.status}`)
+        return res.json()
+      })
       .then((data: EventItem[]) => {
         const gallery: GalleryEvent[] = data.map(event => ({
           ...event,
@@ -51,8 +55,9 @@ export default function LivePage() {
           coverPhotoId: "",
         }))
         setEvents(gallery)
+        setEventsError(null)
       })
-      .catch(() => setEvents([]))
+      .catch(e => setEventsError(e instanceof Error ? e.message : "Failed to load events"))
       .finally(() => setEventsLoading(false))
   }, [user])
 
@@ -100,6 +105,8 @@ export default function LivePage() {
           <div className="flex items-center justify-center py-16">
             <div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
           </div>
+        ) : eventsError ? (
+          <p className="text-red-400/70 text-sm py-16 text-center">Failed to load events — {eventsError}</p>
         ) : events.length === 0 ? (
           <p className="text-white/40 text-sm py-16 text-center">No events yet.</p>
         ) : (

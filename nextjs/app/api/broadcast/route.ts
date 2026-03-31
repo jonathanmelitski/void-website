@@ -13,7 +13,9 @@ import {
   waitForChannelState,
   scheduleGraphicsOverlay,
   deactivateGraphicsOverlay,
-  destroyAll,
+  listVoidChannels,
+  listVoidInputs,
+  listVoidInputSecurityGroups,
   type ChannelState,
 } from "@/lib/aws/medialive"
 import {
@@ -23,6 +25,7 @@ import {
 } from "@aws-sdk/client-route-53"
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb"
+import type { StepDef, StepStatus, StreamEvent } from "@/lib/step-types"
 
 export const maxDuration = 300
 
@@ -78,7 +81,7 @@ async function clearBroadcastState(): Promise<void> {
   }))
 }
 
-// ---- Route53 A record for stream.voidultimate.com ----
+// ---- Route53 ----
 
 async function upsertStreamDns(ip: string): Promise<void> {
   await r53.send(new ChangeResourceRecordSetsCommand({
@@ -128,6 +131,267 @@ async function requireAdmin(request: NextRequest) {
   }
 }
 
+// ---- SSE helpers ----
+
+function makeStream(fn: (send: (event: StreamEvent) => void) => Promise<void>): Response {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: StreamEvent) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+      }
+      try {
+        await fn(send)
+      } catch (err) {
+        try { send({ type: "error", message: err instanceof Error ? err.message : String(err) }) } catch {}
+      } finally {
+        try { controller.close() } catch {}
+      }
+    },
+  })
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  })
+}
+
+function mkStep(send: (e: StreamEvent) => void) {
+  return (id: string, status: StepStatus, error?: string) =>
+    send({ type: "step", id, status, ...(error ? { error } : {}) })
+}
+
+// ---- Start ----
+
+async function streamStart(gameId: string, send: (e: StreamEvent) => void) {
+  const steps: StepDef[] = [
+    { id: "create-sg",        label: "Create input security group",   status: "pending" },
+    { id: "create-input",     label: "Create RTMP input",             status: "pending" },
+    { id: "create-channel",   label: "Create channel",                status: "pending" },
+    { id: "wait-idle",        label: "Wait for channel to initialize", status: "pending" },
+    { id: "start-channel",    label: "Start channel",                 status: "pending" },
+    { id: "wait-running",     label: "Wait for channel to start",     status: "pending" },
+    { id: "schedule-overlay", label: "Schedule scoreboard overlay",   status: "pending" },
+    { id: "update-dns",       label: "Update DNS",                    status: "pending" },
+    { id: "save-state",       label: "Save broadcast state",          status: "pending" },
+  ]
+  send({ type: "init", steps })
+  const step = mkStep(send)
+
+  const allocated = {
+    securityGroupId: null as string | null,
+    inputId: null as string | null,
+    channelId: null as string | null,
+    dnsSet: false,
+  }
+
+  try {
+    step("create-sg", "running")
+    const securityGroupId = await createInputSecurityGroup()
+    allocated.securityGroupId = securityGroupId
+    step("create-sg", "done")
+
+    step("create-input", "running")
+    const { inputId, endpointIp, rtmpUrl } = await createRtmpInput(gameId, securityGroupId)
+    allocated.inputId = inputId
+    step("create-input", "done")
+
+    step("create-channel", "running")
+    const channelId = await createChannel(inputId)
+    allocated.channelId = channelId
+    step("create-channel", "done")
+
+    step("wait-idle", "running")
+    await waitForChannelState(channelId, "IDLE")
+    step("wait-idle", "done")
+
+    step("start-channel", "running")
+    await startChannel(channelId)
+    step("start-channel", "done")
+
+    step("wait-running", "running")
+    await waitForChannelState(channelId, "RUNNING", 300_000)
+    step("wait-running", "done")
+
+    step("schedule-overlay", "running")
+    await scheduleGraphicsOverlay(channelId, gameId)
+    step("schedule-overlay", "done")
+
+    step("update-dns", "running")
+    await upsertStreamDns(endpointIp)
+    allocated.dnsSet = true
+    step("update-dns", "done")
+
+    step("save-state", "running")
+    await saveBroadcastState({ channelId, inputId, securityGroupId, gameId, rtmpUrl, startedAt: new Date().toISOString() })
+    step("save-state", "done")
+
+    // Allocation handed off — normal stop handles cleanup
+    Object.assign(allocated, { securityGroupId: null, inputId: null, channelId: null, dnsSet: false })
+
+    send({ type: "done" })
+  } catch (err) {
+    send({ type: "error", message: err instanceof Error ? err.message : String(err) })
+
+    // Best-effort rollback
+    if (allocated.dnsSet) { try { await deleteStreamDns() } catch {} }
+    if (allocated.channelId) {
+      try { await stopChannel(allocated.channelId) } catch {}
+      try { await waitForChannelState(allocated.channelId, "IDLE", 60_000) } catch {}
+      try { await deleteChannel(allocated.channelId) } catch {}
+      try { await waitForChannelState(allocated.channelId, "DELETED", 60_000) } catch {}
+    }
+    if (allocated.inputId) { try { await deleteInput(allocated.inputId) } catch {} }
+    if (allocated.securityGroupId) { try { await deleteInputSecurityGroup(allocated.securityGroupId) } catch {} }
+  }
+}
+
+// ---- Stop ----
+
+async function streamStop(send: (e: StreamEvent) => void) {
+  const broadcastState = await getBroadcastState()
+
+  if (!broadcastState) {
+    send({ type: "init", steps: [] })
+    send({ type: "done" })
+    return
+  }
+
+  const steps: StepDef[] = [
+    { id: "deactivate-overlay", label: "Deactivate scoreboard overlay",  status: "pending" },
+    { id: "stop-channel",       label: "Stop channel",                   status: "pending" },
+    { id: "wait-idle",          label: "Wait for channel to stop",       status: "pending" },
+    { id: "delete-channel",     label: "Delete channel",                 status: "pending" },
+    { id: "wait-deleted",       label: "Wait for channel deletion",      status: "pending" },
+    { id: "delete-input",       label: "Delete RTMP input",              status: "pending" },
+    { id: "delete-sg",          label: "Delete input security group",    status: "pending" },
+    { id: "delete-dns",         label: "Delete DNS record",              status: "pending" },
+    { id: "clear-state",        label: "Clear broadcast state",          status: "pending" },
+  ]
+  send({ type: "init", steps })
+  const step = mkStep(send)
+
+  const tryStep = async (id: string, fn: () => Promise<void>) => {
+    step(id, "running")
+    try { await fn(); step(id, "done") }
+    catch (e) { step(id, "error", e instanceof Error ? e.message : String(e)) }
+  }
+
+  await tryStep("deactivate-overlay", () => deactivateGraphicsOverlay(broadcastState.channelId))
+  await tryStep("stop-channel",       () => stopChannel(broadcastState.channelId))
+  await tryStep("wait-idle",          () => waitForChannelState(broadcastState.channelId, "IDLE", 120_000))
+  await tryStep("delete-channel",     () => deleteChannel(broadcastState.channelId))
+  await tryStep("wait-deleted",       () => waitForChannelState(broadcastState.channelId, "DELETED", 120_000))
+  await tryStep("delete-input",       () => deleteInput(broadcastState.inputId))
+  await tryStep("delete-sg",          () => deleteInputSecurityGroup(broadcastState.securityGroupId))
+  await tryStep("delete-dns",         () => deleteStreamDns())
+  await tryStep("clear-state",        () => clearBroadcastState())
+
+  send({ type: "done" })
+}
+
+// ---- Destroy All ----
+
+async function streamDestroyAll(send: (e: StreamEvent) => void) {
+  const steps: StepDef[] = [
+    { id: "list",            label: "Find all broadcast resources",    status: "pending" },
+    { id: "stop-channels",   label: "Stop all running channels",       status: "pending" },
+    { id: "wait-idle",       label: "Wait for channels to stop",       status: "pending" },
+    { id: "delete-channels", label: "Delete all channels",             status: "pending" },
+    { id: "wait-deleted",    label: "Wait for channel deletion",       status: "pending" },
+    { id: "delete-inputs",   label: "Delete all RTMP inputs",          status: "pending" },
+    { id: "delete-sgs",      label: "Delete all input security groups", status: "pending" },
+    { id: "delete-dns",      label: "Delete DNS record",               status: "pending" },
+    { id: "clear-state",     label: "Clear broadcast state",           status: "pending" },
+  ]
+  send({ type: "init", steps })
+  const step = mkStep(send)
+
+  // List
+  step("list", "running")
+  let channels: Awaited<ReturnType<typeof listVoidChannels>> = []
+  let inputs:   Awaited<ReturnType<typeof listVoidInputs>> = []
+  let sgs:      Awaited<ReturnType<typeof listVoidInputSecurityGroups>> = []
+  try {
+    ;[channels, inputs, sgs] = await Promise.all([
+      listVoidChannels(), listVoidInputs(), listVoidInputSecurityGroups(),
+    ])
+    step("list", "done")
+  } catch (e) {
+    step("list", "error", e instanceof Error ? e.message : String(e))
+  }
+
+  const errs = (items: string[]) => items.length ? items.join("; ") : undefined
+
+  // Stop running channels
+  step("stop-channels", "running")
+  const stopErrs: string[] = []
+  for (const ch of channels.filter(c => c.state === "RUNNING" || c.state === "STARTING")) {
+    try { await stopChannel(ch.id) }
+    catch (e) { stopErrs.push(`${ch.id}: ${e instanceof Error ? e.message : e}`) }
+  }
+  step("stop-channels", stopErrs.length ? "error" : "done", errs(stopErrs))
+
+  // Wait for IDLE
+  step("wait-idle", "running")
+  const idleErrs: string[] = []
+  for (const ch of channels) {
+    try { await waitForChannelState(ch.id, "IDLE", 120_000) }
+    catch (e) { idleErrs.push(`${ch.id}: ${e instanceof Error ? e.message : e}`) }
+  }
+  step("wait-idle", idleErrs.length ? "error" : "done", errs(idleErrs))
+
+  // Delete channels
+  step("delete-channels", "running")
+  const delChErrs: string[] = []
+  for (const ch of channels) {
+    try { await deleteChannel(ch.id) }
+    catch (e) { delChErrs.push(`${ch.id}: ${e instanceof Error ? e.message : e}`) }
+  }
+  step("delete-channels", delChErrs.length ? "error" : "done", errs(delChErrs))
+
+  // Wait for DELETED
+  step("wait-deleted", "running")
+  const delWaitErrs: string[] = []
+  for (const ch of channels) {
+    try { await waitForChannelState(ch.id, "DELETED", 120_000) }
+    catch (e) { delWaitErrs.push(`${ch.id}: ${e instanceof Error ? e.message : e}`) }
+  }
+  step("wait-deleted", delWaitErrs.length ? "error" : "done", errs(delWaitErrs))
+
+  // Delete inputs
+  step("delete-inputs", "running")
+  const delInErrs: string[] = []
+  for (const inp of inputs) {
+    try { await deleteInput(inp.id) }
+    catch (e) { delInErrs.push(`${inp.id}: ${e instanceof Error ? e.message : e}`) }
+  }
+  step("delete-inputs", delInErrs.length ? "error" : "done", errs(delInErrs))
+
+  // Delete input security groups
+  step("delete-sgs", "running")
+  const delSgErrs: string[] = []
+  for (const sg of sgs) {
+    try { await deleteInputSecurityGroup(sg.id) }
+    catch (e) { delSgErrs.push(`${sg.id}: ${e instanceof Error ? e.message : e}`) }
+  }
+  step("delete-sgs", delSgErrs.length ? "error" : "done", errs(delSgErrs))
+
+  // Delete DNS
+  step("delete-dns", "running")
+  try { await deleteStreamDns(); step("delete-dns", "done") }
+  catch (e) { step("delete-dns", "error", e instanceof Error ? e.message : String(e)) }
+
+  // Clear state
+  step("clear-state", "running")
+  try { await clearBroadcastState(); step("clear-state", "done") }
+  catch (e) { step("clear-state", "error", e instanceof Error ? e.message : String(e)) }
+
+  send({ type: "done" })
+}
+
 // ---- GET /api/broadcast ----
 
 export async function GET(request: NextRequest) {
@@ -146,9 +410,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       state: channelState,
       channelId: broadcastState?.channelId ?? null,
-      inputId: broadcastState?.inputId ?? null,
-      rtmpUrl: broadcastState?.rtmpUrl ?? null,
-      gameId: broadcastState?.gameId ?? null,
+      inputId:   broadcastState?.inputId ?? null,
+      rtmpUrl:   broadcastState?.rtmpUrl ?? null,
+      gameId:    broadcastState?.gameId ?? null,
     })
   } catch (err: unknown) {
     return NextResponse.json(
@@ -168,80 +432,20 @@ export async function POST(request: NextRequest) {
   const body = await request.json()
   const { action, gameId } = body as { action: string; gameId?: string }
 
-  // ---- START ----
   if (action === "start") {
-    if (!gameId) {
-      return NextResponse.json({ error: "gameId is required" }, { status: 400 })
-    }
-
-    const allocated = {
-      securityGroupId: null as string | null,
-      inputId: null as string | null,
-      channelId: null as string | null,
-      dnsSet: false,
-    }
-
-    try {
-      // 1. Create input security group
-      const securityGroupId = await createInputSecurityGroup()
-      allocated.securityGroupId = securityGroupId
-
-      // 2. Create RTMP push input — game ID is the stream key
-      const { inputId, endpointIp, rtmpUrl } = await createRtmpInput(gameId, securityGroupId)
-      allocated.inputId = inputId
-
-      // 3. Create MediaLive channel from voidchannel config, wired to this input
-      const channelId = await createChannel(inputId)
-      allocated.channelId = channelId
-
-      // 4. Wait for channel to finish provisioning before starting
-      await waitForChannelState(channelId, "IDLE")
-
-      // 5. Start the channel
-      await startChannel(channelId)
-
-      // 5. Point stream.voidultimate.com → MediaLive RTMP endpoint IP
-      await upsertStreamDns(endpointIp)
-      allocated.dnsSet = true
-
-      // 6. Persist state for activate-overlay and stop paths
-      await saveBroadcastState({
-        channelId,
-        inputId,
-        securityGroupId,
-        gameId,
-        rtmpUrl,
-        startedAt: new Date().toISOString(),
-      })
-
-      // Return 202 — UI polls GET and calls activate-overlay once state === RUNNING
-      return NextResponse.json(
-        { status: "starting", rtmpUrl, gameId },
-        { status: 202 }
-      )
-    } catch (err: unknown) {
-      // Best-effort rollback in dependency order
-      if (allocated.dnsSet) { try { await deleteStreamDns() } catch {} }
-      if (allocated.channelId) {
-        try { await stopChannel(allocated.channelId) } catch {}
-        try { await waitForChannelState(allocated.channelId, "IDLE", 60_000) } catch {}
-        try { await deleteChannel(allocated.channelId) } catch {}
-        try { await waitForChannelState(allocated.channelId, "DELETED", 60_000) } catch {}
-      }
-      if (allocated.inputId) { try { await deleteInput(allocated.inputId) } catch {} }
-      if (allocated.securityGroupId) {
-        try { await deleteInputSecurityGroup(allocated.securityGroupId) } catch {}
-      }
-
-      return NextResponse.json(
-        { error: err instanceof Error ? err.message : "Start failed" },
-        { status: 500 }
-      )
-    }
+    if (!gameId) return NextResponse.json({ error: "gameId is required" }, { status: 400 })
+    return makeStream(send => streamStart(gameId, send))
   }
 
-  // ---- ACTIVATE OVERLAY ----
-  // Called by the UI once it observes the channel reaching RUNNING
+  if (action === "stop") {
+    return makeStream(send => streamStop(send))
+  }
+
+  if (action === "destroy-all") {
+    return makeStream(send => streamDestroyAll(send))
+  }
+
+  // Manual overlay re-activation fallback
   if (action === "activate-overlay") {
     const broadcastState = await getBroadcastState()
     if (!broadcastState) {
@@ -258,68 +462,8 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // ---- STOP ----
-  if (action === "stop") {
-    const broadcastState = await getBroadcastState()
-    const errors: string[] = []
-
-    if (broadcastState?.channelId) {
-      // 1. Deactivate overlay (best-effort)
-      try { await deactivateGraphicsOverlay(broadcastState.channelId) } catch {}
-
-      // 2. Stop channel
-      try { await stopChannel(broadcastState.channelId) } catch (e) {
-        errors.push(`Stop: ${e instanceof Error ? e.message : e}`)
-      }
-
-      // 3. Wait for IDLE
-      try { await waitForChannelState(broadcastState.channelId, "IDLE", 120_000) } catch (e) {
-        errors.push(`Wait IDLE: ${e instanceof Error ? e.message : e}`)
-      }
-
-      // 4. Delete channel
-      try { await deleteChannel(broadcastState.channelId) } catch (e) {
-        errors.push(`Delete channel: ${e instanceof Error ? e.message : e}`)
-      }
-
-      // 5. Wait for DELETED before releasing input
-      try { await waitForChannelState(broadcastState.channelId, "DELETED", 120_000) } catch (e) {
-        errors.push(`Wait DELETED: ${e instanceof Error ? e.message : e}`)
-      }
-    }
-
-    // 6. Delete input (only after channel is gone)
-    if (broadcastState?.inputId) {
-      try { await deleteInput(broadcastState.inputId) } catch (e) {
-        errors.push(`Delete input: ${e instanceof Error ? e.message : e}`)
-      }
-    }
-
-    // 7. Delete security group (only after input is gone)
-    if (broadcastState?.securityGroupId) {
-      try { await deleteInputSecurityGroup(broadcastState.securityGroupId) } catch (e) {
-        errors.push(`Delete SG: ${e instanceof Error ? e.message : e}`)
-      }
-    }
-
-    // 8. Clean up DNS and state
-    try { await deleteStreamDns() } catch {}
-    try { await clearBroadcastState() } catch {}
-
-    return NextResponse.json({ status: "stopped", ...(errors.length ? { errors } : {}) })
-  }
-
-  // ---- DESTROY ALL ----
-  if (action === "destroy-all") {
-    try { await deleteStreamDns() } catch {}
-    try { await clearBroadcastState() } catch {}
-
-    const result = await destroyAll()
-    return NextResponse.json({ status: "destroyed", ...result })
-  }
-
   return NextResponse.json(
-    { error: "action must be 'start', 'activate-overlay', 'stop', or 'destroy-all'" },
+    { error: "action must be 'start', 'stop', 'destroy-all', or 'activate-overlay'" },
     { status: 400 }
   )
 }

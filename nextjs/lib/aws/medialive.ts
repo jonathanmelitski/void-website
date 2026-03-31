@@ -283,6 +283,33 @@ export async function deactivateGraphicsOverlay(channelId: string): Promise<void
   }))
 }
 
+// ---- List helpers (used by streaming destroy-all in API route) ----
+
+export type VoidChannelInfo = { id: string; name: string; state: string }
+export type VoidInputInfo = { id: string; name: string }
+export type VoidInputSGInfo = { id: string; inputCount: number }
+
+export async function listVoidChannels(): Promise<VoidChannelInfo[]> {
+  const res = await medialive.send(new ListChannelsCommand({}))
+  return (res.Channels ?? [])
+    .filter(c => c.Name?.startsWith("void-broadcast-") && c.Id)
+    .map(c => ({ id: c.Id!, name: c.Name!, state: c.State ?? "UNKNOWN" }))
+}
+
+export async function listVoidInputs(): Promise<VoidInputInfo[]> {
+  const res = await medialive.send(new ListInputsCommand({}))
+  return (res.Inputs ?? [])
+    .filter(i => i.Name?.startsWith("void-rtmp-") && i.Id)
+    .map(i => ({ id: i.Id!, name: i.Name! }))
+}
+
+export async function listVoidInputSecurityGroups(): Promise<VoidInputSGInfo[]> {
+  const res = await medialive.send(new ListInputSecurityGroupsCommand({}))
+  return (res.InputSecurityGroups ?? [])
+    .filter(sg => sg.Id)
+    .map(sg => ({ id: sg.Id!, inputCount: (sg.Inputs ?? []).length }))
+}
+
 // ---- Destroy All ----
 // Nukes every void-broadcast-* channel, void-rtmp-* input, and all input security groups.
 // Used for emergency cleanup regardless of DynamoDB state.

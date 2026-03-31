@@ -4,10 +4,35 @@ import { listEvents, createEvent } from "@/lib/aws/dynamo"
 import { logAudit } from "@/lib/aws/audit"
 import { randomUUID } from "crypto"
 
-export async function GET() {
+async function getCallerInfo(request: NextRequest) {
+  const token = request.cookies.get("access_token")?.value
+  if (!token) return null
+  try {
+    const payload = await verifyToken(token)
+    return payload
+  } catch {
+    return null
+  }
+}
+
+export async function GET(request: NextRequest) {
   try {
     const events = await listEvents()
-    return NextResponse.json(events)
+    const payload = await getCallerInfo(request)
+    const groups: string[] = payload?.["cognito:groups"] ?? []
+    const isPrivileged = groups.includes("COACH") || groups.includes("ADMIN")
+
+    if (isPrivileged) {
+      return NextResponse.json(events)
+    }
+
+    const callerEmail: string | undefined = payload?.email
+    const visible = events.filter(e => {
+      if (!e.isPrivate) return true
+      if (!callerEmail) return false
+      return e.allowedUsers?.includes(callerEmail) ?? false
+    })
+    return NextResponse.json(visible)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to fetch events"
     return NextResponse.json({ error: message }, { status: 500 })
@@ -30,7 +55,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
-  const { title, date, location, description, coverPhotoKey } = await request.json()
+  const { title, date, location, description, coverPhotoKey, isPrivate, allowedUsers } = await request.json()
   if (!title || !date) {
     return NextResponse.json({ error: "Title and date are required" }, { status: 400 })
   }
@@ -42,6 +67,8 @@ export async function POST(request: NextRequest) {
     ...(location ? { location } : {}),
     ...(description ? { description } : {}),
     ...(coverPhotoKey ? { coverPhotoKey } : {}),
+    ...(isPrivate ? { isPrivate: true } : {}),
+    ...(isPrivate && Array.isArray(allowedUsers) && allowedUsers.length > 0 ? { allowedUsers } : {}),
     createdAt: new Date().toISOString(),
   }
 

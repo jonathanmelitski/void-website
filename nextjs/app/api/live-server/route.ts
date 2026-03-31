@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { verifyToken } from "@/lib/aws/cognito"
+import type { StepDef, StepStatus, StreamEvent } from "@/lib/step-types"
+
+export const maxDuration = 300
 import {
   EC2Client,
   DescribeInstancesCommand,
@@ -61,12 +64,36 @@ export type LiveServerInfo = {
   errors?: string[]
 }
 
-export type DestroyAllResult = {
-  terminated: string[]
-  releasedEips: string[]
-  sgDeleted: boolean
-  dnsDeleted: boolean
-  errors: string[]
+// ---- SSE helpers ----
+
+function makeStream(fn: (send: (event: StreamEvent) => void) => Promise<void>): Response {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: StreamEvent) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+      }
+      try {
+        await fn(send)
+      } catch (err) {
+        try { send({ type: "error", message: err instanceof Error ? err.message : String(err) }) } catch {}
+      } finally {
+        try { controller.close() } catch {}
+      }
+    },
+  })
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  })
+}
+
+function mkStep(send: (e: StreamEvent) => void) {
+  return (id: string, status: StepStatus, error?: string) =>
+    send({ type: "step", id, status, ...(error ? { error } : {}) })
 }
 
 // ---- AWS clients ----
@@ -76,6 +103,19 @@ const r53 = new Route53Client({ region: "us-east-1", credentials: CREDENTIALS })
 const ssm = new SSMClient({ region: REGION, credentials: CREDENTIALS })
 
 // ---- EC2 helpers ----
+
+async function waitForInstancesTerminated(instanceIds: string[], timeoutMs = 120_000): Promise<void> {
+  if (instanceIds.length === 0) return
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const res = await ec2.send(new DescribeInstancesCommand({ InstanceIds: instanceIds }))
+    const instances = res.Reservations?.flatMap(r => r.Instances ?? []) ?? []
+    const allDone = instances.every(i => i.State?.Name === "terminated")
+    if (allDone) return
+    await new Promise(r => setTimeout(r, 5000))
+  }
+  throw new Error("Timed out waiting for instances to terminate")
+}
 
 async function describeWsInstance(): Promise<Instance | null> {
   const res = await ec2.send(new DescribeInstancesCommand({
@@ -279,75 +319,104 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// ---- POST /api/live-server ----
+// ---- Streaming action implementations ----
 
-export async function POST(request: NextRequest) {
-  if (!await requireAdmin(request)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+async function streamStart(send: (e: StreamEvent) => void) {
+  const steps: StepDef[] = [
+    { id: "validate",   label: "Validate configuration",              status: "pending" },
+    { id: "check",      label: "Check for existing instance",         status: "pending" },
+    { id: "resolve",    label: "Resolve VPC and AMI",                 status: "pending" },
+    { id: "sg",         label: "Find or create security group",       status: "pending" },
+    { id: "eip",        label: "Allocate Elastic IP",                 status: "pending" },
+    { id: "dns",        label: "Update DNS",                          status: "pending" },
+    { id: "launch",     label: "Launch EC2 instance",                 status: "pending" },
+  ]
+  send({ type: "init", steps })
+  const step = mkStep(send)
 
-  const { action } = await request.json()
+  // Validate
+  step("validate", "running")
+  const missingVars = [
+    ["ROUTE53_HOSTED_ZONE_ID", HOSTED_ZONE_ID],
+    ["WS_INTERNAL_SECRET", process.env.WS_INTERNAL_SECRET],
+    ["EC2_INSTANCE_PROFILE", process.env.EC2_INSTANCE_PROFILE],
+    ["EC2_REPO_URL", REPO_URL],
+    ["EC2_GITHUB_TOKEN", GITHUB_TOKEN],
+  ].filter(([, v]) => !v).map(([k]) => k)
+  if (missingVars.length > 0) {
+    step("validate", "error", `Missing env vars: ${missingVars.join(", ")}`)
+    send({ type: "error", message: `Missing required env vars: ${missingVars.join(", ")}` })
+    return
+  }
+  step("validate", "done")
 
-  // ---- START ----
-  if (action === "start") {
-    // Validate required env vars up front
-    const missingVars = [
-      ["ROUTE53_HOSTED_ZONE_ID", HOSTED_ZONE_ID],
-      ["WS_INTERNAL_SECRET", process.env.WS_INTERNAL_SECRET],
-      ["EC2_INSTANCE_PROFILE", process.env.EC2_INSTANCE_PROFILE],
-      ["EC2_REPO_URL", REPO_URL],
-      ["EC2_GITHUB_TOKEN", GITHUB_TOKEN],
-    ].filter(([, v]) => !v).map(([k]) => k)
-    if (missingVars.length > 0) {
-      return NextResponse.json({ error: `Missing required env vars: ${missingVars.join(", ")}` }, { status: 500 })
-    }
+  // Check for existing instance
+  step("check", "running")
+  let existing: Instance | null = null
+  try {
+    existing = await describeWsInstance()
+  } catch (e) {
+    step("check", "error", e instanceof Error ? e.message : String(e))
+    send({ type: "error", message: "Failed to describe instances" })
+    return
+  }
+  if (existing?.State?.Name === "running" || existing?.State?.Name === "pending") {
+    step("check", "done")
+    ;["resolve", "sg", "eip", "dns", "launch"].forEach(id => step(id, "done"))
+    send({ type: "done" })
+    return
+  }
+  step("check", "done")
 
-    // Track what we've allocated so we can roll back on failure
-    const allocated = { eipAllocationId: null as string | null, dnsUpserted: false }
+  const allocated = { eipAllocationId: null as string | null, dnsUpserted: false }
 
-    try {
-      const existing = await describeWsInstance()
-      if (existing?.State?.Name === "running" || existing?.State?.Name === "pending") {
-        return NextResponse.json({ status: "starting", instanceId: existing.InstanceId } satisfies LiveServerInfo)
-      }
+  try {
+    // Resolve VPC + AMI
+    step("resolve", "running")
+    const [vpcId, amiId] = await Promise.all([getDefaultVpc(), getLatestUbuntuAmi()])
+    const [subnetId, sgId] = await Promise.all([getDefaultSubnet(vpcId), findOrCreateSecurityGroup(vpcId)])
+    step("resolve", "done")
 
-      const [vpcId, amiId] = await Promise.all([getDefaultVpc(), getLatestUbuntuAmi()])
-      const [subnetId, sgId] = await Promise.all([
-        getDefaultSubnet(vpcId),
-        findOrCreateSecurityGroup(vpcId),
-      ])
+    // Security group (already found/created above)
+    step("sg", "done")
 
-      // Allocate EIP and tag it independently (findable even without an instance)
-      const eipRes = await ec2.send(new AllocateAddressCommand({ Domain: "vpc" }))
-      const allocationId = eipRes.AllocationId!
-      const publicIp = eipRes.PublicIp!
-      allocated.eipAllocationId = allocationId
+    // Allocate EIP
+    step("eip", "running")
+    const eipRes = await ec2.send(new AllocateAddressCommand({ Domain: "vpc" }))
+    const allocationId = eipRes.AllocationId!
+    const publicIp = eipRes.PublicIp!
+    allocated.eipAllocationId = allocationId
+    await ec2.send(new CreateTagsCommand({
+      Resources: [allocationId],
+      Tags: [
+        { Key: "Purpose", Value: PURPOSE_TAG },
+        { Key: "Name", Value: "void-ws-server" },
+      ],
+    }))
+    step("eip", "done")
 
-      await ec2.send(new CreateTagsCommand({
-        Resources: [allocationId],
-        Tags: [
-          { Key: "Purpose", Value: PURPOSE_TAG },
-          { Key: "Name", Value: "void-ws-server" },
-        ],
-      }))
+    // Update DNS
+    step("dns", "running")
+    await upsertDns(publicIp)
+    allocated.dnsUpserted = true
+    step("dns", "done")
 
-      // Point DNS at the new IP immediately — propagates while the instance is booting
-      await upsertDns(publicIp)
-      allocated.dnsUpserted = true
+    // Launch
+    step("launch", "running")
+    const envLines = [
+      `WS_INTERNAL_SECRET=${process.env.WS_INTERNAL_SECRET ?? ""}`,
+      `VOID_REGION=${REGION}`,
+      `VOID_ACCESS_KEY_ID=${process.env.VOID_ACCESS_KEY_ID ?? ""}`,
+      `VOID_SECRET_ACCESS_KEY=${process.env.VOID_SECRET_ACCESS_KEY ?? ""}`,
+      `DYNAMO_GAMES_TABLE=${process.env.DYNAMO_GAMES_TABLE ?? ""}`,
+      `DYNAMO_POINTS_TABLE=${process.env.DYNAMO_POINTS_TABLE ?? ""}`,
+      `DYNAMO_POINT_EVENTS_TABLE=${process.env.DYNAMO_POINT_EVENTS_TABLE ?? ""}`,
+      `DYNAMO_PLAYERS_TABLE=${process.env.DYNAMO_PLAYERS_TABLE ?? ""}`,
+      `PORT=${WS_PORT}`,
+    ].join("\n")
 
-      const envLines = [
-        `WS_INTERNAL_SECRET=${process.env.WS_INTERNAL_SECRET ?? ""}`,
-        `VOID_REGION=${REGION}`,
-        `VOID_ACCESS_KEY_ID=${process.env.VOID_ACCESS_KEY_ID ?? ""}`,
-        `VOID_SECRET_ACCESS_KEY=${process.env.VOID_SECRET_ACCESS_KEY ?? ""}`,
-        `DYNAMO_GAMES_TABLE=${process.env.DYNAMO_GAMES_TABLE ?? ""}`,
-        `DYNAMO_POINTS_TABLE=${process.env.DYNAMO_POINTS_TABLE ?? ""}`,
-        `DYNAMO_POINT_EVENTS_TABLE=${process.env.DYNAMO_POINT_EVENTS_TABLE ?? ""}`,
-        `DYNAMO_PLAYERS_TABLE=${process.env.DYNAMO_PLAYERS_TABLE ?? ""}`,
-        `PORT=${WS_PORT}`,
-      ].join("\n")
-
-      const cloneUrl = REPO_URL.replace("https://", `https://${GITHUB_TOKEN}@`)
-
-      const userDataScript = `#!/bin/bash
+    const cloneUrl = REPO_URL.replace("https://", `https://${GITHUB_TOKEN}@`)
+    const userDataScript = `#!/bin/bash
 set -e
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt-get install -y nodejs git
@@ -360,191 +429,204 @@ ${envLines}
 ENVEOF
 NODE_ENV=production npx tsx server.ts >> /var/log/void-ws.log 2>&1 &`
 
-      const instanceProfile = process.env.EC2_INSTANCE_PROFILE
-      if (!instanceProfile) throw new Error("EC2_INSTANCE_PROFILE is not set — create an instance profile and set this env var")
-
-      const runRes = await ec2.send(new RunInstancesCommand({
-        ImageId: amiId,
-        InstanceType: INSTANCE_TYPE as "t3.micro",
-        MinCount: 1,
-        MaxCount: 1,
-        SecurityGroupIds: [sgId],
-        SubnetId: subnetId,
-        IamInstanceProfile: { Name: instanceProfile },
-        UserData: Buffer.from(userDataScript).toString("base64"),
-        TagSpecifications: [{
-          ResourceType: "instance",
-          Tags: [
-            { Key: "Purpose", Value: PURPOSE_TAG },
-            { Key: "Name", Value: "void-ws-server" },
-            { Key: "EipAllocationId", Value: allocationId },
-            { Key: "EipPublicIp", Value: publicIp },
-          ],
-        }],
-      }))
-
-      const instanceId = runRes.Instances?.[0]?.InstanceId
-
-      // Instance is launched — normal stop/destroy-all handles cleanup from here
-      allocated.eipAllocationId = null
-      allocated.dnsUpserted = false
-
-      return NextResponse.json({ status: "starting", instanceId, publicIp } satisfies LiveServerInfo)
-    } catch (err: unknown) {
-      // Best-effort rollback of anything we allocated before the failure
-      if (allocated.dnsUpserted) { try { await deleteDns() } catch {} }
-      if (allocated.eipAllocationId) {
-        try { await ec2.send(new ReleaseAddressCommand({ AllocationId: allocated.eipAllocationId })) } catch {}
-      }
-      const message = err instanceof Error ? err.message : "Failed to start server"
-      return NextResponse.json({ error: message }, { status: 500 })
-    }
-  }
-
-  // ---- STOP ----
-  if (action === "stop") {
-    const errors: string[] = []
-
-    let instance: Instance | null
-    try {
-      instance = await describeWsInstance()
-    } catch (e: unknown) {
-      return NextResponse.json({ error: `Describe failed: ${e instanceof Error ? e.message : e}` }, { status: 500 })
-    }
-
-    if (!instance?.InstanceId) {
-      return NextResponse.json({ status: "offline" } satisfies LiveServerInfo)
-    }
-
-    const eipAllocId = instance.Tags?.find(t => t.Key === "EipAllocationId")?.Value
-
-    // Step 1: disassociate EIP (best-effort — may not be attached yet)
-    // Fetch AssociationId from DescribeAddresses since it's not on the instance object
-    if (eipAllocId) {
-      try {
-        const addrRes = await ec2.send(new DescribeAddressesCommand({
-          Filters: [{ Name: "allocation-id", Values: [eipAllocId] }],
-        }))
-        const assocId = addrRes.Addresses?.[0]?.AssociationId
-        if (assocId) {
-          await ec2.send(new DisassociateAddressCommand({ AssociationId: assocId }))
-        }
-      } catch { /* not fatal — may not be associated yet */ }
-    }
-
-    // Step 2: release EIP — continue even if this fails
-    if (eipAllocId) {
-      try {
-        await ec2.send(new ReleaseAddressCommand({ AllocationId: eipAllocId }))
-      } catch (e: unknown) {
-        errors.push(`EIP release failed: ${e instanceof Error ? e.message : e}`)
-      }
-    }
-
-    // Step 3: terminate instance — always attempt regardless of EIP result
-    try {
-      await ec2.send(new TerminateInstancesCommand({ InstanceIds: [instance.InstanceId] }))
-    } catch (e: unknown) {
-      errors.push(`Terminate failed: ${e instanceof Error ? e.message : e}`)
-    }
-
-    // Step 4: remove Route53 record
-    try { await deleteDns() }
-    catch (e: unknown) { errors.push(`DNS delete failed: ${e instanceof Error ? e.message : e}`) }
-
-    return NextResponse.json({
-      status: "stopping",
-      instanceId: instance.InstanceId,
-      ...(errors.length ? { errors } : {}),
-    } satisfies LiveServerInfo)
-  }
-
-  // ---- DESTROY ALL ----
-  if (action === "destroy-all") {
-    const result: DestroyAllResult = {
-      terminated: [],
-      releasedEips: [],
-      sgDeleted: false,
-      dnsDeleted: false,
-      errors: [],
-    }
-
-    // 1. Terminate all instances tagged Purpose=void-ws-server
-    try {
-      const res = await ec2.send(new DescribeInstancesCommand({
-        Filters: [{ Name: "tag:Purpose", Values: [PURPOSE_TAG] }],
-      }))
-      const instances = res.Reservations?.flatMap(r => r.Instances ?? []) ?? []
-      const toTerminate = instances
-        .filter(i => i.InstanceId && i.State?.Name !== "terminated" && i.State?.Name !== "shutting-down")
-        .map(i => i.InstanceId!)
-
-      if (toTerminate.length > 0) {
-        try {
-          await ec2.send(new TerminateInstancesCommand({ InstanceIds: toTerminate }))
-          result.terminated.push(...toTerminate)
-        } catch (e: unknown) {
-          result.errors.push(`Terminate instances failed: ${e instanceof Error ? e.message : e}`)
-        }
-      }
-    } catch (e: unknown) {
-      result.errors.push(`Describe instances failed: ${e instanceof Error ? e.message : e}`)
-    }
-
-    // 2. Release all EIPs tagged Purpose=void-ws-server (covers orphans from failed starts)
-    try {
-      const res = await ec2.send(new DescribeAddressesCommand({
-        Filters: [{ Name: "tag:Purpose", Values: [PURPOSE_TAG] }],
-      }))
-      const addresses = res.Addresses ?? []
-
-      for (const addr of addresses) {
-        // Disassociate first (ignore error — may not be associated)
-        if (addr.AssociationId) {
-          try { await ec2.send(new DisassociateAddressCommand({ AssociationId: addr.AssociationId })) } catch {}
-        }
-        // Release
-        if (addr.AllocationId) {
-          try {
-            await ec2.send(new ReleaseAddressCommand({ AllocationId: addr.AllocationId }))
-            result.releasedEips.push(addr.AllocationId)
-          } catch (e: unknown) {
-            result.errors.push(`EIP ${addr.AllocationId} release failed: ${e instanceof Error ? e.message : e}`)
-          }
-        }
-      }
-    } catch (e: unknown) {
-      result.errors.push(`Describe addresses failed: ${e instanceof Error ? e.message : e}`)
-    }
-
-    // 3. Delete security group (may fail if instances are still shutting down — caller can retry)
-    try {
-      const vpcId = await getDefaultVpc()
-      const sgRes = await ec2.send(new DescribeSecurityGroupsCommand({
-        Filters: [
-          { Name: "group-name", Values: [SG_NAME] },
-          { Name: "vpc-id", Values: [vpcId] },
+    const instanceProfile = process.env.EC2_INSTANCE_PROFILE!
+    const runRes = await ec2.send(new RunInstancesCommand({
+      ImageId: amiId,
+      InstanceType: INSTANCE_TYPE as "t3.micro",
+      MinCount: 1,
+      MaxCount: 1,
+      SecurityGroupIds: [sgId],
+      SubnetId: subnetId,
+      IamInstanceProfile: { Name: instanceProfile },
+      UserData: Buffer.from(userDataScript).toString("base64"),
+      TagSpecifications: [{
+        ResourceType: "instance",
+        Tags: [
+          { Key: "Purpose", Value: PURPOSE_TAG },
+          { Key: "Name", Value: "void-ws-server" },
+          { Key: "EipAllocationId", Value: allocationId },
+          { Key: "EipPublicIp", Value: publicIp },
         ],
-      }))
-      const sgId = sgRes.SecurityGroups?.[0]?.GroupId
-      if (sgId) {
-        await ec2.send(new DeleteSecurityGroupCommand({ GroupId: sgId }))
-        result.sgDeleted = true
-      }
-    } catch (e: unknown) {
-      result.errors.push(`SG delete failed: ${e instanceof Error ? e.message : e}`)
-    }
+      }],
+    }))
+    step("launch", "done")
 
-    // 4. Delete Route53 record
-    try {
-      await deleteDns()
-      result.dnsDeleted = true
-    } catch (e: unknown) {
-      result.errors.push(`DNS delete failed: ${e instanceof Error ? e.message : e}`)
+    allocated.eipAllocationId = null
+    allocated.dnsUpserted = false
+    send({ type: "done" })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    send({ type: "error", message: msg })
+    if (allocated.dnsUpserted) { try { await deleteDns() } catch {} }
+    if (allocated.eipAllocationId) {
+      try { await ec2.send(new ReleaseAddressCommand({ AllocationId: allocated.eipAllocationId })) } catch {}
     }
-
-    return NextResponse.json(result)
   }
+}
+
+async function streamStop(send: (e: StreamEvent) => void) {
+  const steps: StepDef[] = [
+    { id: "describe",      label: "Describe instance",     status: "pending" },
+    { id: "disassoc-eip",  label: "Disassociate EIP",      status: "pending" },
+    { id: "release-eip",   label: "Release EIP",           status: "pending" },
+    { id: "terminate",     label: "Terminate instance",    status: "pending" },
+    { id: "delete-dns",    label: "Delete DNS record",     status: "pending" },
+  ]
+  send({ type: "init", steps })
+  const step = mkStep(send)
+
+  const tryStep = async (id: string, fn: () => Promise<void>) => {
+    step(id, "running")
+    try { await fn(); step(id, "done") }
+    catch (e) { step(id, "error", e instanceof Error ? e.message : String(e)) }
+  }
+
+  step("describe", "running")
+  let instance: Instance | null
+  try {
+    instance = await describeWsInstance()
+    step("describe", "done")
+  } catch (e) {
+    step("describe", "error", e instanceof Error ? e.message : String(e))
+    send({ type: "error", message: "Failed to describe instance" })
+    return
+  }
+
+  if (!instance?.InstanceId) {
+    ;["disassoc-eip", "release-eip", "terminate", "delete-dns"].forEach(id => step(id, "done"))
+    send({ type: "done" })
+    return
+  }
+
+  const eipAllocId = instance.Tags?.find(t => t.Key === "EipAllocationId")?.Value
+
+  await tryStep("disassoc-eip", async () => {
+    if (!eipAllocId) return
+    const addrRes = await ec2.send(new DescribeAddressesCommand({
+      Filters: [{ Name: "allocation-id", Values: [eipAllocId] }],
+    }))
+    const assocId = addrRes.Addresses?.[0]?.AssociationId
+    if (assocId) await ec2.send(new DisassociateAddressCommand({ AssociationId: assocId }))
+  })
+
+  await tryStep("release-eip", async () => {
+    if (!eipAllocId) return
+    await ec2.send(new ReleaseAddressCommand({ AllocationId: eipAllocId }))
+  })
+
+  await tryStep("terminate", () =>
+    ec2.send(new TerminateInstancesCommand({ InstanceIds: [instance!.InstanceId!] })).then(() => {})
+  )
+
+  await tryStep("delete-dns", () => deleteDns())
+
+  send({ type: "done" })
+}
+
+async function streamDestroyAll(send: (e: StreamEvent) => void) {
+  const steps: StepDef[] = [
+    { id: "find-instances",   label: "Find all tagged instances",          status: "pending" },
+    { id: "terminate",        label: "Terminate all instances",            status: "pending" },
+    { id: "wait-terminated",  label: "Wait for instances to terminate",    status: "pending" },
+    { id: "find-eips",        label: "Find all tagged EIPs",               status: "pending" },
+    { id: "release-eips",     label: "Release all EIPs",                   status: "pending" },
+    { id: "delete-sg",        label: "Delete security group",              status: "pending" },
+    { id: "delete-dns",       label: "Delete DNS record",                  status: "pending" },
+  ]
+  send({ type: "init", steps })
+  const step = mkStep(send)
+
+  // Find + terminate instances
+  step("find-instances", "running")
+  let toTerminate: string[] = []
+  try {
+    const res = await ec2.send(new DescribeInstancesCommand({
+      Filters: [{ Name: "tag:Purpose", Values: [PURPOSE_TAG] }],
+    }))
+    toTerminate = (res.Reservations?.flatMap(r => r.Instances ?? []) ?? [])
+      .filter(i => i.InstanceId && i.State?.Name !== "terminated" && i.State?.Name !== "shutting-down")
+      .map(i => i.InstanceId!)
+    step("find-instances", "done")
+  } catch (e) {
+    step("find-instances", "error", e instanceof Error ? e.message : String(e))
+  }
+
+  step("terminate", "running")
+  try {
+    if (toTerminate.length > 0) {
+      await ec2.send(new TerminateInstancesCommand({ InstanceIds: toTerminate }))
+    }
+    step("terminate", "done")
+  } catch (e) {
+    step("terminate", "error", e instanceof Error ? e.message : String(e))
+  }
+
+  step("wait-terminated", "running")
+  try {
+    await waitForInstancesTerminated(toTerminate)
+    step("wait-terminated", "done")
+  } catch (e) {
+    step("wait-terminated", "error", e instanceof Error ? e.message : String(e))
+  }
+
+  // Find + release EIPs
+  step("find-eips", "running")
+  let eipAddresses: { AllocationId?: string; AssociationId?: string }[] = []
+  try {
+    const res = await ec2.send(new DescribeAddressesCommand({
+      Filters: [{ Name: "tag:Purpose", Values: [PURPOSE_TAG] }],
+    }))
+    eipAddresses = res.Addresses ?? []
+    step("find-eips", "done")
+  } catch (e) {
+    step("find-eips", "error", e instanceof Error ? e.message : String(e))
+  }
+
+  step("release-eips", "running")
+  const eipErrs: string[] = []
+  for (const addr of eipAddresses) {
+    if (addr.AssociationId) {
+      try { await ec2.send(new DisassociateAddressCommand({ AssociationId: addr.AssociationId })) } catch {}
+    }
+    if (addr.AllocationId) {
+      try { await ec2.send(new ReleaseAddressCommand({ AllocationId: addr.AllocationId })) }
+      catch (e) { eipErrs.push(`${addr.AllocationId}: ${e instanceof Error ? e.message : e}`) }
+    }
+  }
+  step("release-eips", eipErrs.length ? "error" : "done", eipErrs.join("; ") || undefined)
+
+  // Delete SG
+  step("delete-sg", "running")
+  try {
+    const vpcId = await getDefaultVpc()
+    const sgRes = await ec2.send(new DescribeSecurityGroupsCommand({
+      Filters: [{ Name: "group-name", Values: [SG_NAME] }, { Name: "vpc-id", Values: [vpcId] }],
+    }))
+    const sgId = sgRes.SecurityGroups?.[0]?.GroupId
+    if (sgId) await ec2.send(new DeleteSecurityGroupCommand({ GroupId: sgId }))
+    step("delete-sg", "done")
+  } catch (e) {
+    step("delete-sg", "error", e instanceof Error ? e.message : String(e))
+  }
+
+  // Delete DNS
+  step("delete-dns", "running")
+  try { await deleteDns(); step("delete-dns", "done") }
+  catch (e) { step("delete-dns", "error", e instanceof Error ? e.message : String(e)) }
+
+  send({ type: "done" })
+}
+
+// ---- POST /api/live-server ----
+
+export async function POST(request: NextRequest) {
+  if (!await requireAdmin(request)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  const { action } = await request.json()
+
+  if (action === "start")       return makeStream(send => streamStart(send))
+  if (action === "stop")        return makeStream(send => streamStop(send))
+  if (action === "destroy-all") return makeStream(send => streamDestroyAll(send))
 
   // ---- LOGS ----
   if (action === "logs") {
