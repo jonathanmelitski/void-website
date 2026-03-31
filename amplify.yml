@@ -40,6 +40,7 @@ frontend:
         - echo "EC2_GITHUB_TOKEN=$EC2_GITHUB_TOKEN" >> .env
         - echo "WS_SERVER_URL=$WS_SERVER_URL" >> .env
         - echo "NEXT_PUBLIC_WS_HOST=$NEXT_PUBLIC_WS_HOST" >> .env
+        - echo "YOUTUBE_STREAM_KEY=$YOUTUBE_STREAM_KEY" >> .env
         - npm run build
   artifacts:
     baseDirectory: nextjs/.next

@@ -244,13 +244,16 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
               </Link>
             )}
 
-            {/* CTA button — wrapped in spinning red ring when live */}
+            {/* CTA button — wrapped in red border ring when live */}
             <div className="relative">
               {liveGame && (
                 <>
                   <div
-                    className="absolute inset-[-3px] rounded-md animate-spin z-0 pointer-events-none"
-                    style={{ background: "conic-gradient(from 0deg, transparent 60%, #ef4444, transparent)" }}
+                    className="absolute inset-[-2px] rounded-lg z-0 pointer-events-none"
+                    style={{
+                      background: "conic-gradient(from var(--border-angle), #991b1b 0%, #ef4444 20%, #fca5a5 27%, #ef4444 35%, #991b1b 55%, #991b1b 100%)",
+                      animation: "border-spotlight 4s linear infinite",
+                    }}
                   />
                   <div className="absolute inset-0 rounded-md bg-background z-[1] pointer-events-none" />
                 </>

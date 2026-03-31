@@ -6,7 +6,7 @@ import type { GameItem } from "@/lib/aws/games"
 import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
 import type { PlayerItem } from "@/lib/aws/players"
-import type { LiveGameMessage } from "@/server"
+import type { LiveGameMessage } from "@/lib/live-types"
 
 // --- Connection status ---
 type ConnStatus = "connecting" | "connected" | "reconnecting" | "polling" | "final"
@@ -30,35 +30,12 @@ const EVENT_COLORS: Record<PointEventType, string> = {
   PULL: "text-white/40",
 }
 
-// Infer possession from a point and its events
-function inferPossession(point: PointItem | null, events: PointEventItem[]): Possession {
+// Possession is determined by line type at the start of the point
+// O-line = VOID received the pull = VOID on offense
+// D-line = VOID pulled = VOID on defense
+function inferPossession(point: PointItem | null): Possession {
   if (!point) return "VOID"
-  const sorted = [...events].sort((a, b) => a.sortOrder - b.sortOrder)
-
-  // Starting possession based on line type
-  // O-line: VOID received the pull → VOID starts with disc
-  // D-line: VOID pulled → Opponent starts with disc
-  let voidHas = point.lineType === "O"
-
-  for (const ev of sorted) {
-    switch (ev.eventType) {
-      case "PULL":
-        // Possession goes to receiver — flip from puller
-        voidHas = !voidHas
-        break
-      case "TURNOVER":
-        voidHas = !voidHas
-        break
-      case "BLOCK":
-        voidHas = true
-        break
-      case "GOAL":
-        // Don't flip on goal — point is over
-        break
-    }
-  }
-
-  return voidHas ? "VOID" : "OPP"
+  return point.lineType === "O" ? "VOID" : "OPP"
 }
 
 export default function LiveWatchPage() {
@@ -69,7 +46,7 @@ export default function LiveWatchPage() {
   const [pointEvents, setPointEvents] = useState<PointEventItem[]>([])
   const [players, setPlayers] = useState<PlayerItem[]>([])
   const [connStatus, setConnStatus] = useState<ConnStatus>("connecting")
-  const [flashEZ, setFlashEZ] = useState<"VOID" | "OPP" | null>(null)
+  const [flashEZ, setFlashEZ] = useState<"LEFT" | "RIGHT" | null>(null)
   const [scorePulse, setScorePulse] = useState<"VOID" | "OPP" | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -88,10 +65,25 @@ export default function LiveWatchPage() {
   const applyUpdate = useCallback((data: LiveGameMessage) => {
     const prev = prevScoreRef.current
 
-    // Detect score change for flash animation
+    // Detect score change for flash animation — flash the attacking end zone
     if (prev) {
-      if (data.game.scoreVoid > prev.void) triggerFlash("VOID")
-      else if (data.game.scoreOpponent > prev.opp) triggerFlash("OPP")
+      const completedCount = data.points.filter(p => p.status === "COMPLETE").length
+      if (data.game.scoreVoid > prev.void || data.game.scoreOpponent > prev.opp) {
+        const isSecondHalf = data.game.secondHalfStartCompletedCount !== undefined
+        const halfStartCount = data.game.secondHalfStartCompletedCount ?? 0
+        // The point that just completed was the last completed point (index completedCount - 1)
+        const pointsInHalfBeforeScore = isSecondHalf
+          ? (completedCount - 1) - halfStartCount
+          : (completedCount - 1)
+        const receivingThisHalf = isSecondHalf ? !data.game.voidReceivingFirst : data.game.voidReceivingFirst
+        const wasAttackingRight = (pointsInHalfBeforeScore % 2 === 0) === receivingThisHalf
+        if (data.game.scoreVoid > prev.void) {
+          triggerFlash(wasAttackingRight ? "RIGHT" : "LEFT")
+        } else {
+          // opponent attacks opposite direction
+          triggerFlash(wasAttackingRight ? "LEFT" : "RIGHT")
+        }
+      }
     }
 
     prevScoreRef.current = { void: data.game.scoreVoid, opp: data.game.scoreOpponent }
@@ -107,7 +99,7 @@ export default function LiveWatchPage() {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function triggerFlash(side: "VOID" | "OPP") {
+  function triggerFlash(side: "LEFT" | "RIGHT") {
     if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current)
     setFlashEZ(side)
     setScorePulse(side)
@@ -229,14 +221,23 @@ export default function LiveWatchPage() {
   const completedPoints = points
     .filter(p => p.status === "COMPLETE")
     .sort((a, b) => a.pointNumber - b.pointNumber)
+  // Field direction: teams switch ends after every point.
+  // At halftime the direction resets from the opposite starting end (whoever pulled now receives).
+  // secondHalfStartCompletedCount marks when half was called; direction resets from !voidReceivingFirst.
+  const voidAttacksRight = (() => {
+    if (!game) return true
+    const isSecondHalf = game.secondHalfStartCompletedCount !== undefined
+    const pointsThisHalf = isSecondHalf
+      ? completedPoints.length - game.secondHalfStartCompletedCount!
+      : completedPoints.length
+    // Second half receiving team is whoever PULLED in the first half (opposite of voidReceivingFirst)
+    const receivingThisHalf = isSecondHalf ? !game.voidReceivingFirst : game.voidReceivingFirst
+    return (pointsThisHalf % 2 === 0) === receivingThisHalf
+  })()
   const recentEvents = [...pointEvents]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 20)
-  const activeEvents = activePoint
-    ? pointEvents.filter(e => e.pointId === activePoint.id)
-    : []
-  const possession = inferPossession(activePoint, activeEvents)
-  const discX = possession === "VOID" ? "68%" : "32%"
+  const possession = inferPossession(activePoint)
   const activeLinePlayers = activePoint
     ? activePoint.playerIds
         .map(id => players.find(p => p.id === id))
@@ -311,7 +312,7 @@ export default function LiveWatchPage() {
       <FieldView
         opponent={game.opponent}
         possession={possession}
-        discX={discX}
+        voidAttacksRight={voidAttacksRight}
         flashEZ={game.status !== "FINAL" ? flashEZ : null}
         linePlayers={activeLinePlayers}
         isActive={game.status === "IN_PROGRESS" && !!activePoint}
@@ -367,19 +368,24 @@ export default function LiveWatchPage() {
         <section className="mt-6">
           <h2 className="text-xs font-medium text-white/30 uppercase tracking-widest mb-3">Points</h2>
           <div className="flex flex-wrap gap-1.5">
-            {completedPoints.map(point => (
-              <span
-                key={point.id}
-                title={`P${point.pointNumber}: ${point.outcome} (${point.lineType}-line)`}
-                className={`text-xs px-2 py-0.5 rounded font-mono ${
-                  point.outcome === "HOLD"
-                    ? "bg-green-400/15 text-green-400"
-                    : "bg-red-400/15 text-red-400"
-                }`}
-              >
-                P{point.pointNumber}
-              </span>
-            ))}
+            {completedPoints.map(point => {
+              const voidScored =
+                (point.outcome === "HOLD" && point.lineType === "O") ||
+                (point.outcome === "BREAK" && point.lineType === "D")
+              return (
+                <span
+                  key={point.id}
+                  title={`P${point.pointNumber}: ${point.outcome} (${point.lineType}-line)`}
+                  className={`text-xs px-2 py-0.5 rounded font-mono ${
+                    voidScored
+                      ? "bg-green-400/15 text-green-400"
+                      : "bg-red-400/15 text-red-400"
+                  }`}
+                >
+                  P{point.pointNumber}
+                </span>
+              )
+            })}
           </div>
         </section>
       )}
@@ -406,87 +412,134 @@ export default function LiveWatchPage() {
 function FieldView({
   opponent,
   possession,
-  discX,
+  voidAttacksRight,
   flashEZ,
   linePlayers,
   isActive,
 }: {
   opponent: string
   possession: Possession
-  discX: string
-  flashEZ: "VOID" | "OPP" | null
+  voidAttacksRight: boolean
+  flashEZ: "LEFT" | "RIGHT" | null
   linePlayers: PlayerItem[]
   isActive: boolean
 }) {
+  const voidOnOffense = possession === "VOID"
+  // Arrows follow the disc: toward VOID's attack EZ when on O, toward opponent's attack EZ when on D
+  const arrowsGoRight = (voidOnOffense && voidAttacksRight) || (!voidOnOffense && !voidAttacksRight)
+
+  // Left EZ is VOID's attack target when !voidAttacksRight, defend target when voidAttacksRight
+  const leftIsAttack = !voidAttacksRight
+  const rightIsAttack = voidAttacksRight
+
   return (
-    <div className="relative w-full rounded-xl overflow-hidden border border-white/10" style={{ aspectRatio: "2.5 / 1" }}>
-      {/* Field base */}
-      <div className="absolute inset-0 bg-[#1a2e1a]" />
+    <>
+      <style>{`
+        @keyframes arrowFlowRight {
+          0%   { opacity: 0; transform: translateX(-8px); }
+          35%  { opacity: 0.5; }
+          65%  { opacity: 0.5; }
+          100% { opacity: 0; transform: translateX(8px); }
+        }
+        @keyframes arrowFlowLeft {
+          0%   { opacity: 0; transform: translateX(8px); }
+          35%  { opacity: 0.5; }
+          65%  { opacity: 0.5; }
+          100% { opacity: 0; transform: translateX(-8px); }
+        }
+      `}</style>
 
-      {/* Field lines */}
-      <div className="absolute inset-0 flex">
-        {/* VOID end zone */}
-        <div
-          className={`relative w-[20%] border-r border-white/20 flex items-center justify-center transition-colors duration-300 ${
-            flashEZ === "VOID" ? "bg-green-400/40" : "bg-white/5"
-          }`}
-        >
-          <span className="text-white/50 text-xs font-bold tracking-wider rotate-[-90deg] select-none">VOID</span>
-          {flashEZ === "VOID" && (
-            <div className="absolute inset-0 bg-green-400/20 animate-ping rounded-none" />
-          )}
-        </div>
+      <div className="relative w-full rounded-xl overflow-hidden border border-white/10" style={{ aspectRatio: "2.5 / 1" }}>
+        {/* Field base */}
+        <div className="absolute inset-0 bg-[#1a2e1a]" />
 
-        {/* Main field */}
-        <div className="relative flex-1 border-white/10">
-          {/* Center line */}
-          <div className="absolute inset-y-0 left-1/2 w-px bg-white/10" />
-          {/* Hash marks */}
-          <div className="absolute inset-y-[30%] left-[25%] w-px bg-white/5" />
-          <div className="absolute inset-y-[30%] left-[75%] w-px bg-white/5" />
+        <div className="absolute inset-0 flex">
+          {/* Left end zone */}
+          <div className={`relative w-[20%] border-r border-white/20 flex flex-col items-center justify-center gap-1 transition-colors duration-300 ${
+            flashEZ === "LEFT" ? "bg-green-400/40" : leftIsAttack ? "bg-green-400/5" : "bg-white/3"
+          }`}>
+            <span className="text-white/50 text-[10px] font-bold tracking-wider rotate-[-90deg] select-none whitespace-nowrap">VOID</span>
+            {isActive && (
+              <span className={`absolute bottom-2 text-[8px] font-bold tracking-widest rotate-[-90deg] whitespace-nowrap ${
+                leftIsAttack ? "text-green-400/60" : "text-white/25"
+              }`}>
+                {leftIsAttack ? "ATTACK" : "DEFEND"}
+              </span>
+            )}
+            {flashEZ === "LEFT" && <div className="absolute inset-0 bg-green-400/20 animate-ping" />}
+          </div>
 
-          {/* Player dots for current line */}
-          {isActive && linePlayers.length > 0 && (
-            <div
-              className={`absolute top-[20%] flex gap-2 transition-all duration-700 ${
-                possession === "VOID" ? "left-[55%]" : "left-[10%]"
-              }`}
-            >
-              {linePlayers.slice(0, 7).map(p => (
-                <div
-                  key={p.id}
-                  className="w-6 h-6 rounded-full bg-white/20 border border-white/40 flex items-center justify-center"
-                  title={`${p.first_name} ${p.last_name}`}
-                >
-                  <span className="text-white text-[9px] font-bold">{p.number}</span>
+          {/* Main field */}
+          <div className="relative flex-1">
+            {/* Center line */}
+            <div className="absolute inset-y-0 left-1/2 w-px bg-white/10" />
+
+            {/* Flowing direction arrows */}
+            {isActive && (
+              <div className="absolute inset-0 flex items-center overflow-hidden pointer-events-none">
+                {[0, 1, 2, 3, 4, 5, 6, 7].map(i => (
+                  <span
+                    key={i}
+                    className="absolute select-none text-white/25 font-light"
+                    style={{
+                      fontSize: "18px",
+                      left: `${3 + i * 13}%`,
+                      animation: `${arrowsGoRight ? "arrowFlowRight" : "arrowFlowLeft"} 2.4s ease-in-out ${i * 0.18}s infinite`,
+                    }}
+                  >
+                    {arrowsGoRight ? "›" : "‹"}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Offense/Defense badge + player dots — same vertical axis */}
+            {isActive && (
+              <>
+                {/* Row: players set the height, badge centers within it */}
+                <div className="absolute left-0 right-0 top-2 flex justify-center gap-1 z-10">
+                  {/* Badge: vertically centered within the player row */}
+                  <div className={`absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold tracking-widest uppercase px-1.5 py-0.5 rounded ${
+                    voidOnOffense
+                      ? "text-green-400 bg-green-400/15 border border-green-400/25"
+                      : "text-white/35 bg-white/5 border border-white/10"
+                  }`}>
+                    {voidOnOffense ? "OFFENSE" : "DEFENSE"}
+                  </div>
+                  {linePlayers.slice(0, 7).map(p => (
+                    <div
+                      key={p.id}
+                      title={`${p.first_name} ${p.last_name}`}
+                      className="w-8 h-8 rounded-full flex items-center justify-center border text-[11px] font-bold transition-all duration-500 border-transparent text-white"
+                      style={{ backgroundColor: "rgb(60, 21, 97)", boxShadow: "0 2px 8px rgba(0,0,0,0.6)" }}
+                    >
+                      {p.number}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
+              </>
+            )}
 
-          {/* Disc */}
-          {isActive && (
-            <div
-              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full border-2 border-white bg-white/20 shadow-lg shadow-white/10 transition-all duration-700 z-10"
-              style={{ left: discX }}
-            />
-          )}
-        </div>
+          </div>
 
-        {/* Opponent end zone */}
-        <div
-          className={`relative w-[20%] border-l border-white/20 flex items-center justify-center transition-colors duration-300 ${
-            flashEZ === "OPP" ? "bg-green-400/40" : "bg-white/5"
-          }`}
-        >
-          <span className="text-white/50 text-xs font-bold tracking-wider rotate-[90deg] select-none truncate max-w-[60px]">
-            {opponent.toUpperCase()}
-          </span>
-          {flashEZ === "OPP" && (
-            <div className="absolute inset-0 bg-green-400/20 animate-ping" />
-          )}
+          {/* Right end zone */}
+          <div className={`relative w-[20%] border-l border-white/20 flex flex-col items-center justify-center transition-colors duration-300 ${
+            flashEZ === "RIGHT" ? "bg-green-400/40" : rightIsAttack ? "bg-green-400/5" : "bg-white/3"
+          }`}>
+            <span className="text-white/50 text-[10px] font-bold tracking-wider rotate-[90deg] select-none truncate max-w-[60px]">
+              {opponent.toUpperCase()}
+            </span>
+            {isActive && (
+              <span className={`absolute bottom-2 text-[8px] font-bold tracking-widest rotate-[90deg] whitespace-nowrap ${
+                rightIsAttack ? "text-green-400/60" : "text-white/25"
+              }`}>
+                {rightIsAttack ? "ATTACK" : "DEFEND"}
+              </span>
+            )}
+            {flashEZ === "RIGHT" && <div className="absolute inset-0 bg-green-400/20 animate-ping" />}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }

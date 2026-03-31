@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import React, { useEffect, useState, useCallback, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { useAuth } from "@/lib/use-auth"
 import { Button } from "@/components/ui/button"
@@ -139,7 +139,11 @@ export default function GameManagePage() {
             </p>
             <p className="text-white/30 text-xs mt-1">Cap: {game.cap} · VOID {game.voidReceivingFirst ? "received" : "pulled"} first</p>
           </div>
-          <GameStatusControl game={game} onUpdate={updated => setGame(updated)} />
+          <GameStatusControl
+            game={game}
+            completedCount={completedPoints.length}
+            onUpdate={updated => setGame(updated)}
+          />
         </div>
       </div>
 
@@ -150,6 +154,9 @@ export default function GameManagePage() {
         gameId={gameId}
         onRosterChange={setGamePlayers}
       />
+
+      {/* Broadcast */}
+      <BroadcastSection game={game} />
 
       {/* Active Point */}
       {activePoint && (
@@ -166,12 +173,13 @@ export default function GameManagePage() {
         />
       )}
 
-      {/* Add Point Button */}
+      {/* Add Point */}
       {!activePoint && game.status !== "FINAL" && (
         <AddPointSection
           game={game}
           attendingPlayers={attendingPlayers}
           nextPointNumber={points.length + 1}
+          completedPoints={completedPoints}
           currentScoreVoid={game.scoreVoid}
           currentScoreOpponent={game.scoreOpponent}
           onPointCreated={point => {
@@ -209,7 +217,15 @@ export default function GameManagePage() {
 }
 
 // --- Game Status Control ---
-function GameStatusControl({ game, onUpdate }: { game: GameItem; onUpdate: (g: GameItem) => void }) {
+function GameStatusControl({
+  game,
+  completedCount,
+  onUpdate,
+}: {
+  game: GameItem
+  completedCount: number
+  onUpdate: (g: GameItem) => void
+}) {
   const [saving, setSaving] = useState(false)
 
   async function setStatus(status: GameStatus) {
@@ -228,15 +244,23 @@ function GameStatusControl({ game, onUpdate }: { game: GameItem; onUpdate: (g: G
 
   if (game.status === "FINAL") return null
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={() => setStatus(game.status === "SCHEDULED" ? "IN_PROGRESS" : "FINAL")}
-      disabled={saving}
-      className="shrink-0"
-    >
-      {saving ? "…" : game.status === "SCHEDULED" ? "Start Game" : "End Game"}
-    </Button>
+    <div className="flex items-center gap-2 shrink-0">
+      {game.status === "IN_PROGRESS" && game.secondHalfStartCompletedCount === undefined && (
+        <MarkHalfButton
+          gameId={game.id}
+          completedCount={completedCount}
+          onMarked={onUpdate}
+        />
+      )}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setStatus(game.status === "SCHEDULED" ? "IN_PROGRESS" : "FINAL")}
+        disabled={saving}
+      >
+        {saving ? "…" : game.status === "SCHEDULED" ? "Start Game" : "End Game"}
+      </Button>
+    </div>
   )
 }
 
@@ -433,7 +457,11 @@ function ActivePointSection({
     onEventDeleted(id)
   }
 
-  async function handleCompletePoint(outcome: "HOLD" | "BREAK") {
+  async function handleCompletePoint(voidScored: boolean) {
+    // HOLD = O-line scores (expected); BREAK = D-line scores (unexpected)
+    const outcome = voidScored
+      ? (point.lineType === "O" ? "HOLD" : "BREAK")
+      : (point.lineType === "O" ? "BREAK" : "HOLD")
     setCompleting(true)
     try {
       const res = await fetch(`/api/points/${point.id}`, {
@@ -518,24 +546,58 @@ function ActivePointSection({
         <Button
           size="sm"
           variant="outline"
-          onClick={() => handleCompletePoint("HOLD")}
+          onClick={() => handleCompletePoint(true)}
           disabled={completing || !hasGoal}
           className="text-green-400 border-green-400/30 hover:bg-green-400/10"
         >
-          Hold (we scored)
+          VOID Scored — {point.lineType === "O" ? "Hold" : "Break!"}
         </Button>
         <Button
           size="sm"
           variant="outline"
-          onClick={() => handleCompletePoint("BREAK")}
-          disabled={completing || !hasGoal}
+          onClick={() => handleCompletePoint(false)}
+          disabled={completing}
           className="text-red-400 border-red-400/30 hover:bg-red-400/10"
         >
-          Break (they scored)
+          Opp Scored — {point.lineType === "O" ? "Break" : "Hold"}
         </Button>
-        {!hasGoal && <span className="text-white/30 text-xs">Log a GOAL first</span>}
+        {!hasGoal && <span className="text-white/30 text-xs">Log a GOAL to credit a scorer</span>}
       </div>
     </section>
+  )
+}
+
+// --- Mark Half Button ---
+function MarkHalfButton({
+  gameId,
+  completedCount,
+  onMarked,
+}: {
+  gameId: string
+  completedCount: number
+  onMarked: (updated: GameItem) => void
+}) {
+  const [saving, setSaving] = useState(false)
+
+  async function handleMark() {
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/games/${gameId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secondHalfStartCompletedCount: completedCount }),
+      })
+      if (res.ok) onMarked(await res.json())
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Button variant="outline" size="sm" onClick={handleMark} disabled={saving}
+      className="text-white/50 border-white/20 hover:text-white">
+      {saving ? "…" : "Mark Half"}
+    </Button>
   )
 }
 
@@ -544,6 +606,7 @@ function AddPointSection({
   game,
   attendingPlayers,
   nextPointNumber,
+  completedPoints,
   currentScoreVoid,
   currentScoreOpponent,
   onPointCreated,
@@ -551,12 +614,29 @@ function AddPointSection({
   game: GameItem
   attendingPlayers: PlayerItem[]
   nextPointNumber: number
+  completedPoints: PointItem[]
   currentScoreVoid: number
   currentScoreOpponent: number
   onPointCreated: (p: PointItem) => void
 }) {
+  // Auto-derive line type: scoring team pulls next (D-line), receiving team is O-line
+  const isSecondHalf = game.secondHalfStartCompletedCount !== undefined
+  const receivingThisHalf = isSecondHalf ? !game.voidReceivingFirst : game.voidReceivingFirst
+  const pointsThisHalf = isSecondHalf
+    ? completedPoints.slice(game.secondHalfStartCompletedCount!)
+    : completedPoints
+  const lineType: "O" | "D" = (() => {
+    if (pointsThisHalf.length === 0) {
+      return receivingThisHalf ? "O" : "D"
+    }
+    const last = pointsThisHalf[pointsThisHalf.length - 1]
+    const voidScoredLast =
+      (last.outcome === "HOLD" && last.lineType === "O") ||
+      (last.outcome === "BREAK" && last.lineType === "D")
+    return voidScoredLast ? "D" : "O"
+  })()
+
   const [open, setOpen] = useState(false)
-  const [lineType, setLineType] = useState<"O" | "D">("O")
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
@@ -601,7 +681,7 @@ function AddPointSection({
     return (
       <div className="flex justify-center">
         <Button variant="outline" onClick={() => setOpen(true)}>
-          + Start Point {nextPointNumber}
+          + Start Point {nextPointNumber} ({lineType}-line)
         </Button>
       </div>
     )
@@ -609,29 +689,11 @@ function AddPointSection({
 
   return (
     <section className="border border-white/10 rounded-xl p-5">
-      <h2 className="text-lg font-bold mb-4">Start Point {nextPointNumber}</h2>
+      <h2 className="text-lg font-bold mb-1">Start Point {nextPointNumber}</h2>
+      <p className="text-white/40 text-sm mb-4">
+        {lineType === "O" ? "O-line — VOID received the pull" : "D-line — VOID is pulling"}
+      </p>
       <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-        {/* Line type */}
-        <div>
-          <p className="text-sm text-white/50 mb-2">VOID line type</p>
-          <div className="flex gap-2">
-            {(["O", "D"] as const).map(lt => (
-              <button
-                key={lt}
-                type="button"
-                onClick={() => setLineType(lt)}
-                className={[
-                  "px-4 py-2 rounded-lg border text-sm font-medium transition-colors",
-                  lineType === lt
-                    ? "border-white bg-white text-black"
-                    : "border-white/20 text-white/50 hover:text-white hover:border-white/40",
-                ].join(" ")}
-              >
-                {lt === "O" ? "O-line (received)" : "D-line (pulling)"}
-              </button>
-            ))}
-          </div>
-        </div>
 
         {/* Player selection */}
         <div>
@@ -807,7 +869,9 @@ function CompletedPointRow({
         >
           <span className="text-white/30 font-mono text-xs w-6 text-right shrink-0">P{point.pointNumber}</span>
           <span className={`text-xs font-medium px-1.5 py-0.5 rounded shrink-0 ${
-            point.outcome === "HOLD" ? "bg-green-400/15 text-green-400" : "bg-red-400/15 text-red-400"
+            (point.outcome === "HOLD" && point.lineType === "O") || (point.outcome === "BREAK" && point.lineType === "D")
+              ? "bg-green-400/15 text-green-400"
+              : "bg-red-400/15 text-red-400"
           }`}>
             {point.outcome}
           </span>
@@ -989,5 +1053,193 @@ function CompletedPointRow({
         </div>
       )}
     </div>
+  )
+}
+
+// --- Broadcast Section ---
+function BroadcastSection({ game }: { game: GameItem }) {
+  const [state, setState] = useState<string>("IDLE")
+  const [rtmpUrl, setRtmpUrl] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const [copied, setCopied] = useState(false)
+  const prevState = useRef<string>("IDLE")
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/broadcast")
+      if (!res.ok) return
+      const data = await res.json()
+      const next: string = data.state ?? "IDLE"
+
+      // Auto-activate overlay when channel transitions to RUNNING
+      if (prevState.current !== "RUNNING" && next === "RUNNING") {
+        fetch("/api/broadcast", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "activate-overlay" }),
+        }).catch(() => {})
+      }
+
+      prevState.current = next
+      setState(next)
+      if (data.rtmpUrl) setRtmpUrl(data.rtmpUrl)
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    fetchStatus()
+  }, [fetchStatus])
+
+  // Poll while transitioning
+  useEffect(() => {
+    const transitioning = state === "STARTING" || state === "STOPPING"
+    if (transitioning && !pollRef.current) {
+      pollRef.current = setInterval(fetchStatus, 4000)
+    } else if (!transitioning && pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+    return () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    }
+  }, [state, fetchStatus])
+
+  async function handleStart() {
+    setBusy(true)
+    setError("")
+    try {
+      const res = await fetch("/api/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start", gameId: game.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error ?? "Failed to start broadcast"); return }
+      setState("STARTING")
+      if (data.rtmpUrl) setRtmpUrl(data.rtmpUrl)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleStop() {
+    setBusy(true)
+    setError("")
+    setState("STOPPING")
+    try {
+      const res = await fetch("/api/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stop" }),
+      })
+      const data = await res.json()
+      setState("IDLE")
+      setRtmpUrl(null)
+      if (data.errors?.length) setError(`Stopped with errors: ${data.errors.join(", ")}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleDestroyAll() {
+    if (!confirm("Destroy all MediaLive channels, inputs, and security groups? This cannot be undone.")) return
+    setBusy(true)
+    setError("")
+    try {
+      const res = await fetch("/api/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "destroy-all" }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error ?? "Destroy failed"); return }
+      setState("IDLE")
+      setRtmpUrl(null)
+      if (data.errors?.length) setError(`Done with errors: ${data.errors.join(", ")}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function copyUrl() {
+    if (!rtmpUrl) return
+    navigator.clipboard.writeText(rtmpUrl).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  const isRunning = state === "RUNNING"
+  const isTransitioning = state === "STARTING" || state === "STOPPING"
+  const canStart = state === "IDLE" && game.status !== "FINAL"
+  const canStop = isRunning || state === "STARTING"
+
+  const badgeStyle: React.CSSProperties = isRunning
+    ? { background: "#16a34a", color: "#fff", border: "none" }
+    : {}
+
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center gap-3">
+        <h2 className="text-lg font-bold">Broadcast</h2>
+        <Badge
+          variant={isTransitioning ? "secondary" : isRunning ? "default" : "outline"}
+          style={badgeStyle}
+          className="flex items-center gap-1"
+        >
+          {isTransitioning && (
+            <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" />
+          )}
+          {state}
+        </Badge>
+      </div>
+
+      {rtmpUrl && (
+        <div className="flex flex-col gap-1">
+          <p className="text-white/40 text-xs">RTMP Ingest URL (OBS → Settings → Stream)</p>
+          <div className="flex items-center gap-2">
+            <code className="text-xs font-mono text-white/80 bg-white/5 px-3 py-1.5 rounded border border-white/10 flex-1 truncate">
+              {rtmpUrl}
+            </code>
+            <button
+              onClick={copyUrl}
+              className="text-xs text-white/40 hover:text-white/70 transition-colors shrink-0 px-2 py-1.5"
+            >
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && <p className="text-red-400 text-xs">{error}</p>}
+
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleStart}
+          disabled={!canStart || busy}
+        >
+          {busy && state === "IDLE" ? "…" : "Start Broadcast"}
+        </Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          onClick={handleStop}
+          disabled={!canStop || busy}
+        >
+          {busy && state !== "IDLE" ? "…" : "Stop Broadcast"}
+        </Button>
+        <button
+          onClick={handleDestroyAll}
+          disabled={busy}
+          className="text-xs text-white/20 hover:text-red-400 transition-colors disabled:opacity-50 ml-2"
+        >
+          Destroy All
+        </button>
+      </div>
+    </section>
   )
 }

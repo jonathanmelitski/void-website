@@ -26,6 +26,7 @@ export type GameItem = {
   status: GameStatus
   result?: GameResult
   voidReceivingFirst: boolean // true = VOID received the first pull of the game
+  secondHalfStartCompletedCount?: number // number of completed points when second half was marked
   notes?: string
   createdAt: string
   updatedAt: string

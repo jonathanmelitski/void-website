@@ -3,6 +3,18 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@property --border-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes border-spotlight {
+  to {
+    --border-angle: 360deg;
+  }
+}
+
 @font-face {
   font-family: 'Bebas Neue';
   src: url('/public/jersey/BebasNeue-Regular.ttf') format('truetype');
