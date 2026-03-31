@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { verifyToken } from "@/lib/aws/cognito"
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
+import { DynamoDBDocumentClient, PutCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb"
 import type { StepDef, StepStatus, StreamEvent } from "@/lib/step-types"
 
 export const maxDuration = 300
@@ -52,6 +54,71 @@ const SG_NAME = "void-ws-server"
 const PURPOSE_TAG = "void-ws-server"
 const WS_PORT = 3000
 
+const BROADCAST_TABLE = process.env.DYNAMO_BROADCAST_TABLE!
+const WS_JOB_PK = "job-ws"
+
+// ---- DynamoDB client ----
+
+const dynamo = DynamoDBDocumentClient.from(
+  new DynamoDBClient({ region: REGION, credentials: CREDENTIALS })
+)
+
+// ---- Job state helpers ----
+
+type JobItem = {
+  pk: string
+  action: string
+  steps: StepDef[]
+  startedAt: string
+  completedAt?: string
+  errorMessage?: string
+}
+
+async function saveJob(action: string, steps: StepDef[]): Promise<void> {
+  await dynamo.send(new PutCommand({
+    TableName: BROADCAST_TABLE,
+    Item: { pk: WS_JOB_PK, action, steps, startedAt: new Date().toISOString() },
+  }))
+}
+
+async function patchJobStep(id: string, status: StepStatus, error?: string): Promise<void> {
+  const res = await dynamo.send(new GetCommand({ TableName: BROADCAST_TABLE, Key: { pk: WS_JOB_PK } }))
+  const item = res.Item as JobItem | undefined
+  if (!item) return
+  const steps = item.steps.map(s =>
+    s.id === id ? { ...s, status, ...(error ? { error } : {}) } : s
+  )
+  await dynamo.send(new UpdateCommand({
+    TableName: BROADCAST_TABLE,
+    Key: { pk: WS_JOB_PK },
+    UpdateExpression: "SET steps = :steps",
+    ExpressionAttributeValues: { ":steps": steps },
+  }))
+}
+
+async function completeJob(): Promise<void> {
+  await dynamo.send(new UpdateCommand({
+    TableName: BROADCAST_TABLE,
+    Key: { pk: WS_JOB_PK },
+    UpdateExpression: "SET completedAt = :t",
+    ExpressionAttributeValues: { ":t": new Date().toISOString() },
+  }))
+}
+
+async function failJob(message: string): Promise<void> {
+  await dynamo.send(new UpdateCommand({
+    TableName: BROADCAST_TABLE,
+    Key: { pk: WS_JOB_PK },
+    UpdateExpression: "SET completedAt = :t, errorMessage = :m",
+    ExpressionAttributeValues: { ":t": new Date().toISOString(), ":m": message },
+  }))
+}
+
+async function getJob(): Promise<JobItem | null> {
+  const res = await dynamo.send(new GetCommand({ TableName: BROADCAST_TABLE, Key: { pk: WS_JOB_PK } }))
+  return (res.Item as JobItem) ?? null
+}
+
 // ---- Types ----
 
 export type LiveServerStatus = "offline" | "starting" | "online" | "unhealthy" | "stopping"
@@ -71,7 +138,7 @@ function makeStream(fn: (send: (event: StreamEvent) => void) => Promise<void>): 
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: StreamEvent) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+        try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)) } catch {}
       }
       try {
         await fn(send)
@@ -92,8 +159,10 @@ function makeStream(fn: (send: (event: StreamEvent) => void) => Promise<void>): 
 }
 
 function mkStep(send: (e: StreamEvent) => void) {
-  return (id: string, status: StepStatus, error?: string) =>
+  return async (id: string, status: StepStatus, error?: string) => {
     send({ type: "step", id, status, ...(error ? { error } : {}) })
+    await patchJobStep(id, status, error)
+  }
 }
 
 // ---- AWS clients ----
@@ -268,10 +337,10 @@ export async function GET(request: NextRequest) {
   if (!await requireAdmin(request)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   try {
-    const instance = await describeWsInstance()
+    const [instance, job] = await Promise.all([describeWsInstance(), getJob()])
 
     if (!instance?.State?.Name) {
-      return NextResponse.json({ status: "offline" } satisfies LiveServerInfo)
+      return NextResponse.json({ status: "offline", job: job ?? null } satisfies LiveServerInfo & { job: JobItem | null })
     }
 
     const state = instance.State.Name
@@ -280,13 +349,13 @@ export async function GET(request: NextRequest) {
     const eipPublicIp = instance.Tags?.find(t => t.Key === "EipPublicIp")?.Value
 
     if (state === "pending") {
-      return NextResponse.json({ status: "starting", instanceId, publicIp: eipPublicIp } satisfies LiveServerInfo)
+      return NextResponse.json({ status: "starting", instanceId, publicIp: eipPublicIp, job: job ?? null })
     }
     if (state === "stopping" || state === "shutting-down") {
-      return NextResponse.json({ status: "stopping", instanceId } satisfies LiveServerInfo)
+      return NextResponse.json({ status: "stopping", instanceId, job: job ?? null })
     }
     if (state === "stopped") {
-      return NextResponse.json({ status: "offline", instanceId } satisfies LiveServerInfo)
+      return NextResponse.json({ status: "offline", instanceId, job: job ?? null })
     }
 
     if (state === "running") {
@@ -309,10 +378,11 @@ export async function GET(request: NextRequest) {
         instanceId,
         publicIp: ip,
         ...(health ? { health } : {}),
-      } satisfies LiveServerInfo)
+        job: job ?? null,
+      })
     }
 
-    return NextResponse.json({ status: "offline" } satisfies LiveServerInfo)
+    return NextResponse.json({ status: "offline", job: job ?? null })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to describe instance"
     return NextResponse.json({ error: message }, { status: 500 })
@@ -332,10 +402,11 @@ async function streamStart(send: (e: StreamEvent) => void) {
     { id: "launch",     label: "Launch EC2 instance",                 status: "pending" },
   ]
   send({ type: "init", steps })
+  await saveJob("start", steps)
   const step = mkStep(send)
 
   // Validate
-  step("validate", "running")
+  await step("validate", "running")
   const missingVars = [
     ["ROUTE53_HOSTED_ZONE_ID", HOSTED_ZONE_ID],
     ["WS_INTERNAL_SECRET", process.env.WS_INTERNAL_SECRET],
@@ -344,44 +415,49 @@ async function streamStart(send: (e: StreamEvent) => void) {
     ["EC2_GITHUB_TOKEN", GITHUB_TOKEN],
   ].filter(([, v]) => !v).map(([k]) => k)
   if (missingVars.length > 0) {
-    step("validate", "error", `Missing env vars: ${missingVars.join(", ")}`)
-    send({ type: "error", message: `Missing required env vars: ${missingVars.join(", ")}` })
+    await step("validate", "error", `Missing env vars: ${missingVars.join(", ")}`)
+    const msg = `Missing required env vars: ${missingVars.join(", ")}`
+    send({ type: "error", message: msg })
+    await failJob(msg)
     return
   }
-  step("validate", "done")
+  await step("validate", "done")
 
   // Check for existing instance
-  step("check", "running")
+  await step("check", "running")
   let existing: Instance | null = null
   try {
     existing = await describeWsInstance()
   } catch (e) {
-    step("check", "error", e instanceof Error ? e.message : String(e))
+    const msg = e instanceof Error ? e.message : String(e)
+    await step("check", "error", msg)
     send({ type: "error", message: "Failed to describe instances" })
+    await failJob("Failed to describe instances")
     return
   }
   if (existing?.State?.Name === "running" || existing?.State?.Name === "pending") {
-    step("check", "done")
-    ;["resolve", "sg", "eip", "dns", "launch"].forEach(id => step(id, "done"))
+    await step("check", "done")
+    for (const id of ["resolve", "sg", "eip", "dns", "launch"]) await step(id, "done")
     send({ type: "done" })
+    await completeJob()
     return
   }
-  step("check", "done")
+  await step("check", "done")
 
   const allocated = { eipAllocationId: null as string | null, dnsUpserted: false }
 
   try {
     // Resolve VPC + AMI
-    step("resolve", "running")
+    await step("resolve", "running")
     const [vpcId, amiId] = await Promise.all([getDefaultVpc(), getLatestUbuntuAmi()])
     const [subnetId, sgId] = await Promise.all([getDefaultSubnet(vpcId), findOrCreateSecurityGroup(vpcId)])
-    step("resolve", "done")
+    await step("resolve", "done")
 
     // Security group (already found/created above)
-    step("sg", "done")
+    await step("sg", "done")
 
     // Allocate EIP
-    step("eip", "running")
+    await step("eip", "running")
     const eipRes = await ec2.send(new AllocateAddressCommand({ Domain: "vpc" }))
     const allocationId = eipRes.AllocationId!
     const publicIp = eipRes.PublicIp!
@@ -393,16 +469,16 @@ async function streamStart(send: (e: StreamEvent) => void) {
         { Key: "Name", Value: "void-ws-server" },
       ],
     }))
-    step("eip", "done")
+    await step("eip", "done")
 
     // Update DNS
-    step("dns", "running")
+    await step("dns", "running")
     await upsertDns(publicIp)
     allocated.dnsUpserted = true
-    step("dns", "done")
+    await step("dns", "done")
 
     // Launch
-    step("launch", "running")
+    await step("launch", "running")
     const envLines = [
       `WS_INTERNAL_SECRET=${process.env.WS_INTERNAL_SECRET ?? ""}`,
       `VOID_REGION=${REGION}`,
@@ -430,7 +506,7 @@ ENVEOF
 NODE_ENV=production npx tsx server.ts >> /var/log/void-ws.log 2>&1 &`
 
     const instanceProfile = process.env.EC2_INSTANCE_PROFILE!
-    const runRes = await ec2.send(new RunInstancesCommand({
+    await ec2.send(new RunInstancesCommand({
       ImageId: amiId,
       InstanceType: INSTANCE_TYPE as "t3.micro",
       MinCount: 1,
@@ -449,14 +525,16 @@ NODE_ENV=production npx tsx server.ts >> /var/log/void-ws.log 2>&1 &`
         ],
       }],
     }))
-    step("launch", "done")
+    await step("launch", "done")
 
     allocated.eipAllocationId = null
     allocated.dnsUpserted = false
     send({ type: "done" })
+    await completeJob()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     send({ type: "error", message: msg })
+    await failJob(msg)
     if (allocated.dnsUpserted) { try { await deleteDns() } catch {} }
     if (allocated.eipAllocationId) {
       try { await ec2.send(new ReleaseAddressCommand({ AllocationId: allocated.eipAllocationId })) } catch {}
@@ -473,28 +551,31 @@ async function streamStop(send: (e: StreamEvent) => void) {
     { id: "delete-dns",    label: "Delete DNS record",     status: "pending" },
   ]
   send({ type: "init", steps })
+  await saveJob("stop", steps)
   const step = mkStep(send)
 
   const tryStep = async (id: string, fn: () => Promise<void>) => {
-    step(id, "running")
-    try { await fn(); step(id, "done") }
-    catch (e) { step(id, "error", e instanceof Error ? e.message : String(e)) }
+    await step(id, "running")
+    try { await fn(); await step(id, "done") }
+    catch (e) { await step(id, "error", e instanceof Error ? e.message : String(e)) }
   }
 
-  step("describe", "running")
+  await step("describe", "running")
   let instance: Instance | null
   try {
     instance = await describeWsInstance()
-    step("describe", "done")
+    await step("describe", "done")
   } catch (e) {
-    step("describe", "error", e instanceof Error ? e.message : String(e))
+    await step("describe", "error", e instanceof Error ? e.message : String(e))
     send({ type: "error", message: "Failed to describe instance" })
+    await failJob("Failed to describe instance")
     return
   }
 
   if (!instance?.InstanceId) {
-    ;["disassoc-eip", "release-eip", "terminate", "delete-dns"].forEach(id => step(id, "done"))
+    for (const id of ["disassoc-eip", "release-eip", "terminate", "delete-dns"]) await step(id, "done")
     send({ type: "done" })
+    await completeJob()
     return
   }
 
@@ -521,6 +602,7 @@ async function streamStop(send: (e: StreamEvent) => void) {
   await tryStep("delete-dns", () => deleteDns())
 
   send({ type: "done" })
+  await completeJob()
 }
 
 async function streamDestroyAll(send: (e: StreamEvent) => void) {
@@ -534,10 +616,11 @@ async function streamDestroyAll(send: (e: StreamEvent) => void) {
     { id: "delete-dns",       label: "Delete DNS record",                  status: "pending" },
   ]
   send({ type: "init", steps })
+  await saveJob("destroy-all", steps)
   const step = mkStep(send)
 
   // Find + terminate instances
-  step("find-instances", "running")
+  await step("find-instances", "running")
   let toTerminate: string[] = []
   try {
     const res = await ec2.send(new DescribeInstancesCommand({
@@ -546,43 +629,43 @@ async function streamDestroyAll(send: (e: StreamEvent) => void) {
     toTerminate = (res.Reservations?.flatMap(r => r.Instances ?? []) ?? [])
       .filter(i => i.InstanceId && i.State?.Name !== "terminated" && i.State?.Name !== "shutting-down")
       .map(i => i.InstanceId!)
-    step("find-instances", "done")
+    await step("find-instances", "done")
   } catch (e) {
-    step("find-instances", "error", e instanceof Error ? e.message : String(e))
+    await step("find-instances", "error", e instanceof Error ? e.message : String(e))
   }
 
-  step("terminate", "running")
+  await step("terminate", "running")
   try {
     if (toTerminate.length > 0) {
       await ec2.send(new TerminateInstancesCommand({ InstanceIds: toTerminate }))
     }
-    step("terminate", "done")
+    await step("terminate", "done")
   } catch (e) {
-    step("terminate", "error", e instanceof Error ? e.message : String(e))
+    await step("terminate", "error", e instanceof Error ? e.message : String(e))
   }
 
-  step("wait-terminated", "running")
+  await step("wait-terminated", "running")
   try {
     await waitForInstancesTerminated(toTerminate)
-    step("wait-terminated", "done")
+    await step("wait-terminated", "done")
   } catch (e) {
-    step("wait-terminated", "error", e instanceof Error ? e.message : String(e))
+    await step("wait-terminated", "error", e instanceof Error ? e.message : String(e))
   }
 
   // Find + release EIPs
-  step("find-eips", "running")
+  await step("find-eips", "running")
   let eipAddresses: { AllocationId?: string; AssociationId?: string }[] = []
   try {
     const res = await ec2.send(new DescribeAddressesCommand({
       Filters: [{ Name: "tag:Purpose", Values: [PURPOSE_TAG] }],
     }))
     eipAddresses = res.Addresses ?? []
-    step("find-eips", "done")
+    await step("find-eips", "done")
   } catch (e) {
-    step("find-eips", "error", e instanceof Error ? e.message : String(e))
+    await step("find-eips", "error", e instanceof Error ? e.message : String(e))
   }
 
-  step("release-eips", "running")
+  await step("release-eips", "running")
   const eipErrs: string[] = []
   for (const addr of eipAddresses) {
     if (addr.AssociationId) {
@@ -593,10 +676,10 @@ async function streamDestroyAll(send: (e: StreamEvent) => void) {
       catch (e) { eipErrs.push(`${addr.AllocationId}: ${e instanceof Error ? e.message : e}`) }
     }
   }
-  step("release-eips", eipErrs.length ? "error" : "done", eipErrs.join("; ") || undefined)
+  await step("release-eips", eipErrs.length ? "error" : "done", eipErrs.join("; ") || undefined)
 
   // Delete SG
-  step("delete-sg", "running")
+  await step("delete-sg", "running")
   try {
     const vpcId = await getDefaultVpc()
     const sgRes = await ec2.send(new DescribeSecurityGroupsCommand({
@@ -604,17 +687,18 @@ async function streamDestroyAll(send: (e: StreamEvent) => void) {
     }))
     const sgId = sgRes.SecurityGroups?.[0]?.GroupId
     if (sgId) await ec2.send(new DeleteSecurityGroupCommand({ GroupId: sgId }))
-    step("delete-sg", "done")
+    await step("delete-sg", "done")
   } catch (e) {
-    step("delete-sg", "error", e instanceof Error ? e.message : String(e))
+    await step("delete-sg", "error", e instanceof Error ? e.message : String(e))
   }
 
   // Delete DNS
-  step("delete-dns", "running")
-  try { await deleteDns(); step("delete-dns", "done") }
-  catch (e) { step("delete-dns", "error", e instanceof Error ? e.message : String(e)) }
+  await step("delete-dns", "running")
+  try { await deleteDns(); await step("delete-dns", "done") }
+  catch (e) { await step("delete-dns", "error", e instanceof Error ? e.message : String(e)) }
 
   send({ type: "done" })
+  await completeJob()
 }
 
 // ---- POST /api/live-server ----

@@ -3,36 +3,36 @@
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { StepProgress } from "@/components/ui/step-progress"
-import { readStream } from "@/lib/read-stream"
 import type { StepDef } from "@/lib/step-types"
-import type { LiveServerInfo, LiveServerStatus } from "@/app/api/live-server/route"
+import type { LiveServerInfo } from "@/app/api/live-server/route"
 
-const STATUS_DOT: Record<LiveServerStatus, string> = {
-  online: "bg-green-400",
+const STATUS_DOT: Record<string, string> = {
+  online:   "bg-green-400",
   starting: "bg-yellow-400 animate-pulse",
   stopping: "bg-yellow-400 animate-pulse",
-  unhealthy: "bg-red-400",
-  offline: "bg-white/20",
+  unhealthy:"bg-red-400",
+  offline:  "bg-white/20",
 }
 
-const STATUS_LABEL: Record<LiveServerStatus, string> = {
-  online: "Online",
+const STATUS_LABEL: Record<string, string> = {
+  online:   "Online",
   starting: "Starting…",
   stopping: "Stopping…",
-  unhealthy: "Unhealthy",
-  offline: "Offline",
+  unhealthy:"Unhealthy",
+  offline:  "Offline",
 }
 
 export function LiveServerPanel() {
   const [info, setInfo] = useState<LiveServerInfo | null>(null)
   const [loading, setLoading] = useState(true)
-  const [streaming, setStreaming] = useState(false)
+  const [acting, setActing] = useState(false)
   const [steps, setSteps] = useState<StepDef[]>([])
   const [confirmingDestroy, setConfirmingDestroy] = useState(false)
   const [error, setError] = useState("")
   const [logs, setLogs] = useState<string | null>(null)
   const [fetchingLogs, setFetchingLogs] = useState(false)
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const statusIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const confirmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   async function fetchStatus() {
@@ -48,41 +48,47 @@ export function LiveServerPanel() {
 
   useEffect(() => {
     fetchStatus()
-    intervalRef.current = setInterval(fetchStatus, 5000)
+    statusIntervalRef.current = setInterval(fetchStatus, 5000)
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
+      if (statusIntervalRef.current) clearInterval(statusIntervalRef.current)
+      if (pollRef.current) clearInterval(pollRef.current)
       if (confirmTimeoutRef.current) clearTimeout(confirmTimeoutRef.current)
     }
   }, [])
 
-  async function runStreamingAction(action: "start" | "stop" | "destroy-all") {
-    setStreaming(true)
+  function stopPolling() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+  }
+
+  function startPolling() {
+    stopPolling()
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch("/api/live-server")
+        if (!res.ok) return
+        const data = await res.json()
+        setInfo(data)
+        if (data.job?.steps) setSteps(data.job.steps)
+        if (data.job?.completedAt || data.job?.errorMessage) {
+          stopPolling()
+          setActing(false)
+          if (data.job?.errorMessage) setError(data.job.errorMessage)
+        }
+      } catch {}
+    }, 2000)
+  }
+
+  function runAction(action: "start" | "stop" | "destroy-all") {
+    setActing(true)
     setError("")
     setSteps([])
-    try {
-      const res = await fetch("/api/live-server", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        setError(d.error ?? "Request failed")
-        return
-      }
-      await readStream(
-        res,
-        (s) => setSteps(s),
-        (id, status, err) => setSteps(prev =>
-          prev.map(s => s.id === id ? { ...s, status, ...(err ? { error: err } : {}) } : s)
-        ),
-      )
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Request failed")
-    } finally {
-      setStreaming(false)
-      await fetchStatus()
-    }
+    startPolling()
+    // Fire-and-forget — Lambda keeps running past HTTP timeout; client polls for progress
+    fetch("/api/live-server", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    }).catch(() => {}) // 504 is expected for long operations
   }
 
   async function handleFetchLogs() {
@@ -111,14 +117,14 @@ export function LiveServerPanel() {
     } else {
       clearTimeout(confirmTimeoutRef.current!)
       setConfirmingDestroy(false)
-      runStreamingAction("destroy-all")
+      runAction("destroy-all")
     }
   }
 
   const status = info?.status ?? "offline"
-  const canStart = !streaming && status === "offline"
-  const canStop = !streaming && (status === "online" || status === "unhealthy" || status === "starting")
-  const canDestroy = !streaming
+  const canStart = !acting && status === "offline"
+  const canStop = !acting && (status === "online" || status === "unhealthy" || status === "starting")
+  const canDestroy = !acting
 
   return (
     <section className="flex flex-col gap-6 max-w-lg">
@@ -132,7 +138,7 @@ export function LiveServerPanel() {
           <>
             <div className="flex items-center gap-3">
               <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_DOT[status]}`} />
-              <span className="font-medium">{STATUS_LABEL[status]}</span>
+              <span className="font-medium">{STATUS_LABEL[status] ?? status}</span>
               {info?.publicIp && (
                 <span className="text-white/40 text-sm font-mono ml-auto">{info.publicIp}</span>
               )}
@@ -160,12 +166,12 @@ export function LiveServerPanel() {
 
       {/* Actions */}
       <div className="flex items-center gap-3 flex-wrap">
-        <Button size="sm" disabled={!canStart} onClick={() => runStreamingAction("start")}>
-          {streaming && status === "offline" ? "Starting…" : "Start Server"}
+        <Button size="sm" disabled={!canStart} onClick={() => runAction("start")}>
+          {acting && status === "offline" ? "Starting…" : "Start Server"}
         </Button>
 
-        <Button size="sm" variant="destructive" disabled={!canStop} onClick={() => runStreamingAction("stop")}>
-          {streaming && status !== "offline" ? "Stopping…" : "Stop Server"}
+        <Button size="sm" variant="destructive" disabled={!canStop} onClick={() => runAction("stop")}>
+          {acting && status !== "offline" ? "Stopping…" : "Stop Server"}
         </Button>
 
         <Button
@@ -175,7 +181,7 @@ export function LiveServerPanel() {
           onClick={handleDestroyClick}
           className={confirmingDestroy ? "text-red-400 border border-red-400/40 animate-pulse" : "text-white/40 hover:text-red-400"}
         >
-          {streaming ? "Destroying…" : confirmingDestroy ? "Confirm — click again" : "Destroy All"}
+          {acting ? "Destroying…" : confirmingDestroy ? "Confirm — click again" : "Destroy All"}
         </Button>
       </div>
 

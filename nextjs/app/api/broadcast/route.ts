@@ -24,7 +24,7 @@ import {
   ListResourceRecordSetsCommand,
 } from "@aws-sdk/client-route-53"
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
-import { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb"
+import { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb"
 import type { StepDef, StepStatus, StreamEvent } from "@/lib/step-types"
 
 export const maxDuration = 300
@@ -81,6 +81,63 @@ async function clearBroadcastState(): Promise<void> {
   }))
 }
 
+// ---- Job state (DynamoDB) ----
+
+export type JobItem = {
+  pk: string
+  action: string
+  steps: StepDef[]
+  startedAt: string
+  completedAt?: string
+  errorMessage?: string
+}
+
+async function saveJob(pk: string, action: string, steps: StepDef[]): Promise<void> {
+  await dynamo.send(new PutCommand({
+    TableName: BROADCAST_TABLE,
+    Item: { pk, action, steps, startedAt: new Date().toISOString() },
+  }))
+}
+
+async function patchJobStep(pk: string, id: string, status: StepStatus, error?: string): Promise<void> {
+  // Read current steps, update the matching one, write back
+  const res = await dynamo.send(new GetCommand({ TableName: BROADCAST_TABLE, Key: { pk } }))
+  const item = res.Item as JobItem | undefined
+  if (!item) return
+  const steps = item.steps.map(s =>
+    s.id === id ? { ...s, status, ...(error ? { error } : {}) } : s
+  )
+  await dynamo.send(new UpdateCommand({
+    TableName: BROADCAST_TABLE,
+    Key: { pk },
+    UpdateExpression: "SET steps = :steps",
+    ExpressionAttributeValues: { ":steps": steps },
+  }))
+}
+
+async function completeJob(pk: string): Promise<void> {
+  await dynamo.send(new UpdateCommand({
+    TableName: BROADCAST_TABLE,
+    Key: { pk },
+    UpdateExpression: "SET completedAt = :t",
+    ExpressionAttributeValues: { ":t": new Date().toISOString() },
+  }))
+}
+
+async function failJob(pk: string, message: string): Promise<void> {
+  await dynamo.send(new UpdateCommand({
+    TableName: BROADCAST_TABLE,
+    Key: { pk },
+    UpdateExpression: "SET completedAt = :t, errorMessage = :m",
+    ExpressionAttributeValues: { ":t": new Date().toISOString(), ":m": message },
+  }))
+}
+
+async function getJob(pk: string): Promise<JobItem | null> {
+  const res = await dynamo.send(new GetCommand({ TableName: BROADCAST_TABLE, Key: { pk } }))
+  return (res.Item as JobItem) ?? null
+}
+
 // ---- Route53 ----
 
 async function upsertStreamDns(ip: string): Promise<void> {
@@ -131,14 +188,14 @@ async function requireAdmin(request: NextRequest) {
   }
 }
 
-// ---- SSE helpers ----
+// ---- SSE helpers (keeps Lambda alive; client uses polling instead) ----
 
 function makeStream(fn: (send: (event: StreamEvent) => void) => Promise<void>): Response {
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: StreamEvent) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+        try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)) } catch {}
       }
       try {
         await fn(send)
@@ -158,27 +215,33 @@ function makeStream(fn: (send: (event: StreamEvent) => void) => Promise<void>): 
   })
 }
 
-function mkStep(send: (e: StreamEvent) => void) {
-  return (id: string, status: StepStatus, error?: string) =>
+// mkStep persists each step to DynamoDB AND emits via SSE
+function mkStep(pk: string, send: (e: StreamEvent) => void) {
+  return async (id: string, status: StepStatus, error?: string) => {
     send({ type: "step", id, status, ...(error ? { error } : {}) })
+    await patchJobStep(pk, id, status, error)
+  }
 }
 
 // ---- Start ----
 
+const JOB_PK = "job"
+
 async function streamStart(gameId: string, send: (e: StreamEvent) => void) {
   const steps: StepDef[] = [
-    { id: "create-sg",        label: "Create input security group",   status: "pending" },
-    { id: "create-input",     label: "Create RTMP input",             status: "pending" },
-    { id: "create-channel",   label: "Create channel",                status: "pending" },
+    { id: "create-sg",        label: "Create input security group",    status: "pending" },
+    { id: "create-input",     label: "Create RTMP input",              status: "pending" },
+    { id: "create-channel",   label: "Create channel",                 status: "pending" },
     { id: "wait-idle",        label: "Wait for channel to initialize", status: "pending" },
-    { id: "start-channel",    label: "Start channel",                 status: "pending" },
-    { id: "wait-running",     label: "Wait for channel to start",     status: "pending" },
-    { id: "schedule-overlay", label: "Schedule scoreboard overlay",   status: "pending" },
-    { id: "update-dns",       label: "Update DNS",                    status: "pending" },
-    { id: "save-state",       label: "Save broadcast state",          status: "pending" },
+    { id: "start-channel",    label: "Start channel",                  status: "pending" },
+    { id: "wait-running",     label: "Wait for channel to start",      status: "pending" },
+    { id: "schedule-overlay", label: "Schedule scoreboard overlay",    status: "pending" },
+    { id: "update-dns",       label: "Update DNS",                     status: "pending" },
+    { id: "save-state",       label: "Save broadcast state",           status: "pending" },
   ]
   send({ type: "init", steps })
-  const step = mkStep(send)
+  await saveJob(JOB_PK, "start", steps)
+  const step = mkStep(JOB_PK, send)
 
   const allocated = {
     securityGroupId: null as string | null,
@@ -188,52 +251,54 @@ async function streamStart(gameId: string, send: (e: StreamEvent) => void) {
   }
 
   try {
-    step("create-sg", "running")
+    await step("create-sg", "running")
     const securityGroupId = await createInputSecurityGroup()
     allocated.securityGroupId = securityGroupId
-    step("create-sg", "done")
+    await step("create-sg", "done")
 
-    step("create-input", "running")
+    await step("create-input", "running")
     const { inputId, endpointIp, rtmpUrl } = await createRtmpInput(gameId, securityGroupId)
     allocated.inputId = inputId
-    step("create-input", "done")
+    await step("create-input", "done")
 
-    step("create-channel", "running")
+    await step("create-channel", "running")
     const channelId = await createChannel(inputId)
     allocated.channelId = channelId
-    step("create-channel", "done")
+    await step("create-channel", "done")
 
-    step("wait-idle", "running")
+    await step("wait-idle", "running")
     await waitForChannelState(channelId, "IDLE")
-    step("wait-idle", "done")
+    await step("wait-idle", "done")
 
-    step("start-channel", "running")
+    await step("start-channel", "running")
     await startChannel(channelId)
-    step("start-channel", "done")
+    await step("start-channel", "done")
 
-    step("wait-running", "running")
+    await step("wait-running", "running")
     await waitForChannelState(channelId, "RUNNING", 300_000)
-    step("wait-running", "done")
+    await step("wait-running", "done")
 
-    step("schedule-overlay", "running")
+    await step("schedule-overlay", "running")
     await scheduleGraphicsOverlay(channelId, gameId)
-    step("schedule-overlay", "done")
+    await step("schedule-overlay", "done")
 
-    step("update-dns", "running")
+    await step("update-dns", "running")
     await upsertStreamDns(endpointIp)
     allocated.dnsSet = true
-    step("update-dns", "done")
+    await step("update-dns", "done")
 
-    step("save-state", "running")
+    await step("save-state", "running")
     await saveBroadcastState({ channelId, inputId, securityGroupId, gameId, rtmpUrl, startedAt: new Date().toISOString() })
-    step("save-state", "done")
+    await step("save-state", "done")
 
-    // Allocation handed off — normal stop handles cleanup
     Object.assign(allocated, { securityGroupId: null, inputId: null, channelId: null, dnsSet: false })
 
     send({ type: "done" })
+    await completeJob(JOB_PK)
   } catch (err) {
-    send({ type: "error", message: err instanceof Error ? err.message : String(err) })
+    const msg = err instanceof Error ? err.message : String(err)
+    send({ type: "error", message: msg })
+    await failJob(JOB_PK, msg)
 
     // Best-effort rollback
     if (allocated.dnsSet) { try { await deleteStreamDns() } catch {} }
@@ -271,12 +336,13 @@ async function streamStop(send: (e: StreamEvent) => void) {
     { id: "clear-state",        label: "Clear broadcast state",          status: "pending" },
   ]
   send({ type: "init", steps })
-  const step = mkStep(send)
+  await saveJob(JOB_PK, "stop", steps)
+  const step = mkStep(JOB_PK, send)
 
   const tryStep = async (id: string, fn: () => Promise<void>) => {
-    step(id, "running")
-    try { await fn(); step(id, "done") }
-    catch (e) { step(id, "error", e instanceof Error ? e.message : String(e)) }
+    await step(id, "running")
+    try { await fn(); await step(id, "done") }
+    catch (e) { await step(id, "error", e instanceof Error ? e.message : String(e)) }
   }
 
   await tryStep("deactivate-overlay", () => deactivateGraphicsOverlay(broadcastState.channelId))
@@ -290,27 +356,29 @@ async function streamStop(send: (e: StreamEvent) => void) {
   await tryStep("clear-state",        () => clearBroadcastState())
 
   send({ type: "done" })
+  await completeJob(JOB_PK)
 }
 
 // ---- Destroy All ----
 
 async function streamDestroyAll(send: (e: StreamEvent) => void) {
   const steps: StepDef[] = [
-    { id: "list",            label: "Find all broadcast resources",    status: "pending" },
-    { id: "stop-channels",   label: "Stop all running channels",       status: "pending" },
-    { id: "wait-idle",       label: "Wait for channels to stop",       status: "pending" },
-    { id: "delete-channels", label: "Delete all channels",             status: "pending" },
-    { id: "wait-deleted",    label: "Wait for channel deletion",       status: "pending" },
-    { id: "delete-inputs",   label: "Delete all RTMP inputs",          status: "pending" },
+    { id: "list",            label: "Find all broadcast resources",     status: "pending" },
+    { id: "stop-channels",   label: "Stop all running channels",        status: "pending" },
+    { id: "wait-idle",       label: "Wait for channels to stop",        status: "pending" },
+    { id: "delete-channels", label: "Delete all channels",              status: "pending" },
+    { id: "wait-deleted",    label: "Wait for channel deletion",        status: "pending" },
+    { id: "delete-inputs",   label: "Delete all RTMP inputs",           status: "pending" },
     { id: "delete-sgs",      label: "Delete all input security groups", status: "pending" },
-    { id: "delete-dns",      label: "Delete DNS record",               status: "pending" },
-    { id: "clear-state",     label: "Clear broadcast state",           status: "pending" },
+    { id: "delete-dns",      label: "Delete DNS record",                status: "pending" },
+    { id: "clear-state",     label: "Clear broadcast state",            status: "pending" },
   ]
   send({ type: "init", steps })
-  const step = mkStep(send)
+  await saveJob(JOB_PK, "destroy-all", steps)
+  const step = mkStep(JOB_PK, send)
 
   // List
-  step("list", "running")
+  await step("list", "running")
   let channels: Awaited<ReturnType<typeof listVoidChannels>> = []
   let inputs:   Awaited<ReturnType<typeof listVoidInputs>> = []
   let sgs:      Awaited<ReturnType<typeof listVoidInputSecurityGroups>> = []
@@ -318,78 +386,79 @@ async function streamDestroyAll(send: (e: StreamEvent) => void) {
     ;[channels, inputs, sgs] = await Promise.all([
       listVoidChannels(), listVoidInputs(), listVoidInputSecurityGroups(),
     ])
-    step("list", "done")
+    await step("list", "done")
   } catch (e) {
-    step("list", "error", e instanceof Error ? e.message : String(e))
+    await step("list", "error", e instanceof Error ? e.message : String(e))
   }
 
   const errs = (items: string[]) => items.length ? items.join("; ") : undefined
 
   // Stop running channels
-  step("stop-channels", "running")
+  await step("stop-channels", "running")
   const stopErrs: string[] = []
   for (const ch of channels.filter(c => c.state === "RUNNING" || c.state === "STARTING")) {
     try { await stopChannel(ch.id) }
     catch (e) { stopErrs.push(`${ch.id}: ${e instanceof Error ? e.message : e}`) }
   }
-  step("stop-channels", stopErrs.length ? "error" : "done", errs(stopErrs))
+  await step("stop-channels", stopErrs.length ? "error" : "done", errs(stopErrs))
 
   // Wait for IDLE
-  step("wait-idle", "running")
+  await step("wait-idle", "running")
   const idleErrs: string[] = []
   for (const ch of channels) {
     try { await waitForChannelState(ch.id, "IDLE", 120_000) }
     catch (e) { idleErrs.push(`${ch.id}: ${e instanceof Error ? e.message : e}`) }
   }
-  step("wait-idle", idleErrs.length ? "error" : "done", errs(idleErrs))
+  await step("wait-idle", idleErrs.length ? "error" : "done", errs(idleErrs))
 
   // Delete channels
-  step("delete-channels", "running")
+  await step("delete-channels", "running")
   const delChErrs: string[] = []
   for (const ch of channels) {
     try { await deleteChannel(ch.id) }
     catch (e) { delChErrs.push(`${ch.id}: ${e instanceof Error ? e.message : e}`) }
   }
-  step("delete-channels", delChErrs.length ? "error" : "done", errs(delChErrs))
+  await step("delete-channels", delChErrs.length ? "error" : "done", errs(delChErrs))
 
   // Wait for DELETED
-  step("wait-deleted", "running")
+  await step("wait-deleted", "running")
   const delWaitErrs: string[] = []
   for (const ch of channels) {
     try { await waitForChannelState(ch.id, "DELETED", 120_000) }
     catch (e) { delWaitErrs.push(`${ch.id}: ${e instanceof Error ? e.message : e}`) }
   }
-  step("wait-deleted", delWaitErrs.length ? "error" : "done", errs(delWaitErrs))
+  await step("wait-deleted", delWaitErrs.length ? "error" : "done", errs(delWaitErrs))
 
   // Delete inputs
-  step("delete-inputs", "running")
+  await step("delete-inputs", "running")
   const delInErrs: string[] = []
   for (const inp of inputs) {
     try { await deleteInput(inp.id) }
     catch (e) { delInErrs.push(`${inp.id}: ${e instanceof Error ? e.message : e}`) }
   }
-  step("delete-inputs", delInErrs.length ? "error" : "done", errs(delInErrs))
+  await step("delete-inputs", delInErrs.length ? "error" : "done", errs(delInErrs))
 
   // Delete input security groups
-  step("delete-sgs", "running")
+  await step("delete-sgs", "running")
   const delSgErrs: string[] = []
   for (const sg of sgs) {
     try { await deleteInputSecurityGroup(sg.id) }
     catch (e) { delSgErrs.push(`${sg.id}: ${e instanceof Error ? e.message : e}`) }
   }
-  step("delete-sgs", delSgErrs.length ? "error" : "done", errs(delSgErrs))
+  await step("delete-sgs", delSgErrs.length ? "error" : "done", errs(delSgErrs))
 
   // Delete DNS
-  step("delete-dns", "running")
-  try { await deleteStreamDns(); step("delete-dns", "done") }
-  catch (e) { step("delete-dns", "error", e instanceof Error ? e.message : String(e)) }
+  await step("delete-dns", "running")
+  try { await deleteStreamDns(); await step("delete-dns", "done") }
+  catch (e) { await step("delete-dns", "error", e instanceof Error ? e.message : String(e)) }
 
   // Clear state
-  step("clear-state", "running")
-  try { await clearBroadcastState(); step("clear-state", "done") }
-  catch (e) { step("clear-state", "error", e instanceof Error ? e.message : String(e)) }
+  await step("clear-state", "running")
+  try { await clearBroadcastState(); await step("clear-state", "done") }
+  catch (e) { await step("clear-state", "error", e instanceof Error ? e.message : String(e)) }
 
   send({ type: "done" })
+  await completeJob(JOB_PK)
 }
 
 // ---- GET /api/broadcast ----
@@ -400,7 +469,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const broadcastState = await getBroadcastState()
+    const [broadcastState, job] = await Promise.all([
+      getBroadcastState(),
+      getJob(JOB_PK),
+    ])
 
     let channelState: ChannelState = "IDLE"
     if (broadcastState?.channelId) {
@@ -413,6 +485,7 @@ export async function GET(request: NextRequest) {
       inputId:   broadcastState?.inputId ?? null,
       rtmpUrl:   broadcastState?.rtmpUrl ?? null,
       gameId:    broadcastState?.gameId ?? null,
+      job:       job ?? null,
     })
   } catch (err: unknown) {
     return NextResponse.json(
