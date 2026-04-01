@@ -46,7 +46,7 @@ async function invokeWorkerAsync(payload: object): Promise<void> {
   await lambdaClient.send(new InvokeCommand({
     FunctionName: process.env.BROADCAST_WORKER_FUNCTION_NAME!,
     InvocationType: "Event", // async — returns immediately, Lambda runs in background
-    Payload: JSON.stringify(payload),
+    Payload: Buffer.from(JSON.stringify(payload)),
   }))
 }
 
