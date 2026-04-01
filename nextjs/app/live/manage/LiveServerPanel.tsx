@@ -38,7 +38,11 @@ export function LiveServerPanel() {
   async function fetchStatus() {
     try {
       const res = await fetch("/api/live-server")
-      if (res.ok) setInfo(await res.json())
+      if (res.ok) {
+        const data = await res.json()
+        setInfo(data)
+        return data
+      }
     } catch {
       // silent
     } finally {
@@ -47,13 +51,20 @@ export function LiveServerPanel() {
   }
 
   useEffect(() => {
-    fetchStatus()
+    fetchStatus().then(data => {
+      if (data?.job?.steps?.length) setSteps(data.job.steps)
+      if (data?.job && !data.job.completedAt && !data.job.errorMessage) {
+        setActing(true)
+        startPolling()
+      }
+    })
     statusIntervalRef.current = setInterval(fetchStatus, 5000)
     return () => {
       if (statusIntervalRef.current) clearInterval(statusIntervalRef.current)
       if (pollRef.current) clearInterval(pollRef.current)
       if (confirmTimeoutRef.current) clearTimeout(confirmTimeoutRef.current)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function stopPolling() {

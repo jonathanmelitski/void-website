@@ -2,7 +2,7 @@ import {
   streamStart,
   streamStop,
   streamDestroyAll,
-} from "../../../lib/aws/broadcast-jobs"
+} from "../nextjs/lib/aws/broadcast-jobs"
 
 type WorkerEvent =
   | { action: "start"; gameId: string }

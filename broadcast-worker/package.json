@@ -1,0 +1,10 @@
+{
+  "name": "broadcast-worker",
+  "private": true,
+  "scripts": {
+    "build": "cd ../nextjs && npx esbuild ../broadcast-worker/handler.ts --bundle --platform=node --target=node20 --outfile=../broadcast-worker/dist/handler.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

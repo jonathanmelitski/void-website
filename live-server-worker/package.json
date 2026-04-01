@@ -1,0 +1,10 @@
+{
+  "name": "live-server-worker",
+  "private": true,
+  "scripts": {
+    "build": "cd ../nextjs && npx esbuild ../live-server-worker/handler.ts --bundle --platform=node --target=node20 --outfile=../live-server-worker/dist/handler.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

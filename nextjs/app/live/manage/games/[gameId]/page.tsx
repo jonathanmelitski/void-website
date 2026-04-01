@@ -1078,7 +1078,16 @@ function BroadcastSection({ game }: { game: GameItem }) {
     } catch {}
   }, [])
 
-  useEffect(() => { fetchStatus() }, [fetchStatus])
+  useEffect(() => {
+    fetchStatus().then(data => {
+      if (data?.job?.steps?.length) setSteps(data.job.steps)
+      if (data?.job && !data.job.completedAt && !data.job.errorMessage) {
+        setActing(true)
+        startPolling()
+      }
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   function stopPolling() {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }

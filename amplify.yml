@@ -35,16 +35,10 @@ applications:
             - echo "DYNAMO_GAME_PLAYERS_TABLE=$DYNAMO_GAME_PLAYERS_TABLE" >> .env
             - echo "DYNAMO_BROADCAST_TABLE=$DYNAMO_BROADCAST_TABLE" >> .env
             - echo "WS_INTERNAL_SECRET=$WS_INTERNAL_SECRET" >> .env
-            - echo "ROUTE53_HOSTED_ZONE_ID=$ROUTE53_HOSTED_ZONE_ID" >> .env
-            - echo "EC2_INSTANCE_PROFILE=$EC2_INSTANCE_PROFILE" >> .env
-            - echo "EC2_INSTANCE_TYPE=$EC2_INSTANCE_TYPE" >> .env
-            - echo "EC2_REPO_URL=$EC2_REPO_URL" >> .env
-            - echo "EC2_REPO_BRANCH=$EC2_REPO_BRANCH" >> .env
-            - echo "EC2_GITHUB_TOKEN=$EC2_GITHUB_TOKEN" >> .env
             - echo "WS_SERVER_URL=$WS_SERVER_URL" >> .env
             - echo "NEXT_PUBLIC_WS_HOST=$NEXT_PUBLIC_WS_HOST" >> .env
-            - echo "YOUTUBE_STREAM_KEY=$YOUTUBE_STREAM_KEY" >> .env
             - echo "BROADCAST_WORKER_FUNCTION_NAME=$BROADCAST_WORKER_FUNCTION_NAME" >> .env
+            - echo "LIVE_SERVER_WORKER_FUNCTION_NAME=$LIVE_SERVER_WORKER_FUNCTION_NAME" >> .env
             - npm run build
       artifacts:
         baseDirectory: .next
