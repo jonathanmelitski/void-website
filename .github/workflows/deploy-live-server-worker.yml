@@ -20,20 +20,19 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: nextjs/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install nextjs dependencies
+      - name: Install dependencies
         run: npm ci
-        working-directory: nextjs
 
       - name: Bundle
         run: |
           mkdir -p live-server-worker/dist
-          cd nextjs && ./node_modules/.bin/esbuild ../live-server-worker/handler.ts \
+          node_modules/.bin/esbuild live-server-worker/handler.ts \
             --bundle \
             --platform=node \
             --target=node20 \
-            --outfile=../live-server-worker/dist/handler.js
+            --outfile=live-server-worker/dist/handler.js
 
       - name: Zip
         run: zip -j live-server-worker/dist/function.zip live-server-worker/dist/handler.js
