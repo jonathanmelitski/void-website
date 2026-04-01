@@ -15,13 +15,12 @@ import {
   BatchUpdateScheduleCommand,
 } from "@aws-sdk/client-medialive"
 
-const MEDIALIVE_REGION = "us-east-1"
 const ROLE_ARN = "arn:aws:iam::217828988640:role/MediaLiveAccessRole"
 const SCOREBOARD_BASE = "https://voidultimate.com/live/scoreboard"
 const YOUTUBE_STREAM_KEY = process.env.YOUTUBE_STREAM_KEY ?? ""
 
 const medialive = new MediaLiveClient({
-  region: MEDIALIVE_REGION,
+  region: process.env.VOID_REGION ?? "us-east-1",
   credentials: {
     accessKeyId: process.env.VOID_ACCESS_KEY_ID!,
     secretAccessKey: process.env.VOID_SECRET_ACCESS_KEY!,
