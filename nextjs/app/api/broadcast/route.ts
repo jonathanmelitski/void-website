@@ -267,7 +267,7 @@ async function streamStart(gameId: string, send: (e: StreamEvent) => void) {
     await step("create-channel", "done")
 
     await step("wait-idle", "running")
-    await waitForChannelState(channelId, "IDLE")
+    await waitForChannelState(channelId, "IDLE", 120_000)
     await step("wait-idle", "done")
 
     await step("start-channel", "running")
@@ -275,7 +275,7 @@ async function streamStart(gameId: string, send: (e: StreamEvent) => void) {
     await step("start-channel", "done")
 
     await step("wait-running", "running")
-    await waitForChannelState(channelId, "RUNNING", 300_000)
+    await waitForChannelState(channelId, "RUNNING", 200_000)
     await step("wait-running", "done")
 
     await step("schedule-overlay", "running")

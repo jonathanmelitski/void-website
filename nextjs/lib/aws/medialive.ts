@@ -194,7 +194,7 @@ export async function createChannel(inputId: string): Promise<string> {
         Height: 1080,
         Name: "video_570gok",
         RespondToAfd: "NONE",
-        ScalingBehavior: "DEFAULT",
+        ScalingBehavior: "STRETCH_TO_OUTPUT",
         Sharpness: 50,
         Width: 1920,
       }],

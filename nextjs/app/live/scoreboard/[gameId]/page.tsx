@@ -183,7 +183,7 @@ export default function ScoreboardOverlay() {
 
   return (
     <>
-      <style>{`html, body { background: transparent !important; background-color: transparent !important; }`}</style>
+      <style>{`html, body { background: transparent !important; background-color: transparent !important; margin: 0; padding: 0; width: 1920px; height: 1080px; overflow: hidden; }`}</style>
       <style>{`
         @keyframes scoreFlash {
           0%   { transform: scale(1); }
@@ -212,14 +212,23 @@ export default function ScoreboardOverlay() {
         .banner-drop { animation: bannerDrop 0.2s ease-out forwards; }
       `}</style>
 
+      {/* Fixed 1920×1080 canvas — ensures vw units and bottom positioning are always correct
+          regardless of what viewport the MediaLive headless browser uses */}
       <div
-        className="fixed inset-x-0 flex flex-col items-center pointer-events-none"
-        style={{ bottom: "2vh", fontFamily: "'Inter', 'Helvetica Neue', Arial, sans-serif" }}
+        style={{
+          position: "fixed", top: 0, left: 0,
+          width: 1920, height: 1080,
+          overflow: "hidden", pointerEvents: "none",
+          display: "flex", flexDirection: "column", alignItems: "center",
+          justifyContent: "flex-end",
+          paddingBottom: 22,
+          fontFamily: "'Inter', 'Helvetica Neue', Arial, sans-serif",
+        }}
       >
-        {/* ── SCALED CONTAINER — middle 3/5 ── */}
+        {/* ── SCALED CONTAINER — middle 3/5 of 1920px = 1152px ── */}
         <div
           style={{
-            width: "60vw", minWidth: 420, maxWidth: 960,
+            width: 1152,
             borderRadius: 10,
             overflow: "hidden",
           }}
