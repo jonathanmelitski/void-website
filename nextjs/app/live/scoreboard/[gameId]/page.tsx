@@ -10,10 +10,22 @@ import type { LiveGameMessage } from "@/lib/live-types"
 type ConnStatus = "connecting" | "connected" | "reconnecting" | "polling" | "final"
 type Possession = "VOID" | "OPP"
 
-// Shared layout constants — used in both the banner row and the main bar
-// so columns align perfectly without measuring the DOM.
-const INDICATOR_W = "clamp(36px, 3.6vw, 54px)"
-const CENTER_W    = "clamp(44px, 4.6vw, 66px)"
+// ── Fixed pixel dimensions — overlay always renders in a 1920×1080 context ──
+const INDICATOR_W = 54   // logo box and half-indicator box
+const CENTER_W    = 66   // center LIVE / FINAL panel
+const BAR_H       = 48   // main score bar height
+const BANNER_H    = 20   // break-chance banner strip
+const LOGO_SIZE   = 26   // favicon inside logo box
+const SCORE_FONT  = 30   // score digits
+const NAME_FONT   = 17   // team name text
+const BREAK_FONT  = 24   // BREAK overlay text
+const BANNER_FONT = 10   // "Break Chance" banner text
+const TRIANGLE_W  = 10   // possession triangle width
+const CENTER_FONT = 8    // LIVE / FINAL label in center panel
+const HALF_FONT   = 14   // half number (1ST / 2ND)
+const HALF_SM     = 9    // half "FINAL" small text
+const STRIP_H     = 14   // bottom info strip height
+const STRIP_FONT  = 8    // bottom strip text
 
 function inferPossession(point: PointItem | null, events: PointEventItem[]): Possession {
   if (!point) return "VOID"
@@ -165,17 +177,10 @@ export default function ScoreboardOverlay() {
     return null
   })()
 
-  // 2nd half starts once secondHalfStartCompletedCount is set
-  const half   = game?.secondHalfStartCompletedCount != null ? "2ND" : "1ST"
+  const half    = game?.secondHalfStartCompletedCount != null ? "2ND" : "1ST"
   const isFinal = game?.status === "FINAL"
-  const isLive  = connStatus === "connected" || connStatus === "polling"
-
-  // Both score boxes share the same width so they're symmetric at the center seam.
-  // Base it on the higher score's digit count so a 10+ score doesn't make one side wider.
-  const maxScore   = Math.max(game?.scoreVoid ?? 0, game?.scoreOpponent ?? 0)
-  // Padding shared between name area and score box sides so spacing is symmetric
-  // scoreBoxW = digit width + 2 * PAD (visually equal distance on both sides)
-  const scoreBoxW  = maxScore >= 10 ? "clamp(52px, 5.4vw, 78px)" : "clamp(40px, 4.2vw, 60px)"
+  const maxScore = Math.max(game?.scoreVoid ?? 0, game?.scoreOpponent ?? 0)
+  const scoreBoxW = maxScore >= 10 ? 78 : 60
 
   if (!game) return null
 
@@ -183,8 +188,15 @@ export default function ScoreboardOverlay() {
 
   return (
     <>
-      <style>{`html, body { background: transparent !important; background-color: transparent !important; margin: 0; padding: 0; width: 1920px; height: 1080px; overflow: hidden; }`}</style>
       <style>{`
+        html, body {
+          background: transparent !important;
+          background-color: transparent !important;
+          margin: 0; padding: 0;
+          width: 1920px; height: 1080px;
+          overflow: hidden;
+          font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+        }
         @keyframes scoreFlash {
           0%   { transform: scale(1); }
           20%  { transform: scale(1.22); color: #4ade80; }
@@ -198,10 +210,6 @@ export default function ScoreboardOverlay() {
           0%   { clip-path: inset(0 0% 0 0%); }
           100% { clip-path: inset(0 50% 0 50%); }
         }
-        @keyframes bannerDrop {
-          0%   { opacity: 0; transform: translateY(-4px); }
-          100% { opacity: 1; transform: translateY(0); }
-        }
         @keyframes livePing {
           0%   { transform: scale(1);   opacity: 0.75; }
           100% { transform: scale(2.4); opacity: 0; }
@@ -209,69 +217,53 @@ export default function ScoreboardOverlay() {
         .score-flash { animation: scoreFlash 0.55s cubic-bezier(0.22, 0.61, 0.36, 1) forwards; }
         .break-in    { animation: breakIn  0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
         .break-out   { animation: breakOut 0.7s  cubic-bezier(0.4, 0, 0.2, 1) forwards; }
-        .banner-drop { animation: bannerDrop 0.2s ease-out forwards; }
       `}</style>
 
-      {/* Fixed 1920×1080 canvas — ensures vw units and bottom positioning are always correct
-          regardless of what viewport the MediaLive headless browser uses */}
-      <div
-        style={{
-          position: "fixed", top: 0, left: 0,
-          width: 1920, height: 1080,
-          overflow: "hidden", pointerEvents: "none",
-          display: "flex", flexDirection: "column", alignItems: "center",
-          justifyContent: "flex-end",
-          paddingBottom: 22,
-          fontFamily: "'Inter', 'Helvetica Neue', Arial, sans-serif",
-        }}
-      >
-        {/* ── SCALED CONTAINER — middle 3/5 of 1920px = 1152px ── */}
-        <div
-          style={{
-            width: 1152,
-            borderRadius: 10,
-            overflow: "hidden",
-          }}
-        >
+      {/* Fixed 1920×1080 canvas */}
+      <div style={{
+        position: "fixed", top: 0, left: 0,
+        width: 1920, height: 1080,
+        overflow: "hidden", pointerEvents: "none",
+        display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "flex-end",
+        paddingBottom: 22,
+        fontFamily: "'Inter', 'Helvetica Neue', Arial, sans-serif",
+      }}>
+        {/* ── Scaled container — 1152px wide (middle 3/5 of 1920px) ── */}
+        <div style={{ width: 1152, borderRadius: 10, overflow: "hidden" }}>
 
-          {/* ── BREAK CHANCE BANNER ROW ── */}
-          {/* Always in the DOM — height animates so it slides up/down from the bar edge */}
-          <div
-            style={{
-              height: showBanner ? "clamp(14px, 1.4vw, 20px)" : 0,
-              overflow: "hidden",
-              transition: "height 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
-              display: "flex",
-              width: "100%",
-              // Round the top corners here so the wrapper's own clip applies them
-              borderRadius: "10px 10px 0 0",
-            }}
-          >
-            {/* Inner row slides up from below as height opens */}
-            <div
-              className="flex w-full"
-              style={{
-                height: "clamp(14px, 1.4vw, 20px)",
-                transform: showBanner ? "translateY(0)" : "translateY(100%)",
-                transition: "transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
-              }}
-            >
+          {/* ── BREAK CHANCE BANNER ── */}
+          <div style={{
+            height: showBanner ? BANNER_H : 0,
+            overflow: "hidden",
+            transition: "height 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
+            display: "flex", width: "100%",
+            borderRadius: "10px 10px 0 0",
+          }}>
+            <div style={{
+              display: "flex", width: "100%",
+              height: BANNER_H,
+              transform: showBanner ? "translateY(0)" : "translateY(100%)",
+              transition: "transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
+            }}>
               <div style={{ width: INDICATOR_W, flexShrink: 0 }} />
-              <div className="flex items-center justify-center"
-                   style={{ flex: "1 1 0", background: breakChance === "VOID" ? "#991b1b" : "transparent" }}>
+              <div style={{
+                flex: "1 1 0", display: "flex", alignItems: "center", justifyContent: "center",
+                background: breakChance === "VOID" ? "#991b1b" : "transparent",
+              }}>
                 {breakChance === "VOID" && (
-                  <span className="font-black tracking-[0.2em] uppercase text-white"
-                        style={{ fontSize: "clamp(7px, 0.8vw, 10px)" }}>
+                  <span style={{ fontWeight: 900, letterSpacing: "0.2em", textTransform: "uppercase", color: "white", fontSize: BANNER_FONT }}>
                     Break Chance
                   </span>
                 )}
               </div>
               <div style={{ width: CENTER_W, flexShrink: 0 }} />
-              <div className="flex items-center justify-center"
-                   style={{ flex: "1 1 0", background: breakChance === "OPP" ? "#991b1b" : "transparent" }}>
+              <div style={{
+                flex: "1 1 0", display: "flex", alignItems: "center", justifyContent: "center",
+                background: breakChance === "OPP" ? "#991b1b" : "transparent",
+              }}>
                 {breakChance === "OPP" && (
-                  <span className="font-black tracking-[0.2em] uppercase text-white"
-                        style={{ fontSize: "clamp(7px, 0.8vw, 10px)" }}>
+                  <span style={{ fontWeight: 900, letterSpacing: "0.2em", textTransform: "uppercase", color: "white", fontSize: BANNER_FONT }}>
                     Break Chance
                   </span>
                 )}
@@ -281,33 +273,27 @@ export default function ScoreboardOverlay() {
           </div>
 
           {/* ── MAIN BAR ── */}
-          <div className="flex items-stretch w-full"
-               style={{ height: "3.2vw", minHeight: 36, maxHeight: 48, boxShadow: "0 6px 32px rgba(0,0,0,0.55), 0 1px 4px rgba(0,0,0,0.4)" }}>
+          <div style={{
+            display: "flex", alignItems: "stretch", width: "100%",
+            height: BAR_H,
+            boxShadow: "0 6px 32px rgba(0,0,0,0.55), 0 1px 4px rgba(0,0,0,0.4)",
+          }}>
 
-            {/* Left — logo box */}
-            <div
-              className="flex items-center justify-center shrink-0"
-              style={{
-                width: INDICATOR_W,
-                background: "white",
-                borderRight: "1px solid rgba(0,0,0,0.1)",
-              }}
-            >
+            {/* Logo box */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              width: INDICATOR_W,
+              background: "white",
+              borderRight: "1px solid rgba(0,0,0,0.1)",
+            }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/favicon.ico"
                 alt="VOID"
-                style={{
-                  width: "clamp(16px, 1.8vw, 26px)",
-                  height: "clamp(16px, 1.8vw, 26px)",
-                  borderRadius: "clamp(3px, 0.35vw, 5px)",
-                  objectFit: "contain",
-                  imageRendering: "auto",
-                }}
+                style={{ width: LOGO_SIZE, height: LOGO_SIZE, borderRadius: 5, objectFit: "contain" }}
               />
             </div>
 
-            {/* VOID block — always in the flex tree; BREAK overlays absolutely */}
             <VoidBlock
               score={game.scoreVoid}
               possession={possession}
@@ -320,32 +306,28 @@ export default function ScoreboardOverlay() {
             />
 
             {/* Center panel */}
-            <div
-              className="flex flex-col items-center justify-center shrink-0"
-              style={{
-                width: CENTER_W,
-                background: "rgba(6,6,10,0.95)",
-                borderLeft:  "1px solid rgba(255,255,255,0.06)",
-                borderRight: "1px solid rgba(255,255,255,0.06)",
-              }}
-            >
+            <div style={{
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              width: CENTER_W,
+              background: "rgba(6,6,10,0.95)",
+              borderLeft:  "1px solid rgba(255,255,255,0.06)",
+              borderRight: "1px solid rgba(255,255,255,0.06)",
+            }}>
               {isFinal ? (
-                <span style={{ fontSize: "clamp(5px, 0.55vw, 8px)", color: "rgba(255,255,255,0.4)", fontWeight: 700, letterSpacing: "0.18em" }}>
+                <span style={{ fontSize: CENTER_FONT, color: "rgba(255,255,255,0.4)", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase" }}>
                   FINAL
                 </span>
               ) : (
-                <span className="flex items-center gap-1">
-                  <span className="relative flex" style={{ width: 6, height: 6 }}>
-                    <span className="absolute inline-flex h-full w-full rounded-full"
-                          style={{ background: "#f87171", animation: "livePing 1.1s ease-out infinite" }} />
-                    <span className="relative inline-flex rounded-full" style={{ width: 6, height: 6, background: "#f87171" }} />
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ position: "relative", display: "flex", width: 6, height: 6 }}>
+                    <span style={{ position: "absolute", display: "inline-flex", height: "100%", width: "100%", borderRadius: "9999px", background: "#f87171", animation: "livePing 1.1s ease-out infinite" }} />
+                    <span style={{ position: "relative", display: "inline-flex", borderRadius: "9999px", width: 6, height: 6, background: "#f87171" }} />
                   </span>
-                  <span style={{ fontSize: "clamp(5px, 0.55vw, 8px)", color: "#f87171", fontWeight: 700, letterSpacing: "0.16em" }}>LIVE</span>
+                  <span style={{ fontSize: CENTER_FONT, color: "#f87171", fontWeight: 700, letterSpacing: "0.16em" }}>LIVE</span>
                 </span>
               )}
             </div>
 
-            {/* OPP block — always in the flex tree; BREAK overlays absolutely */}
             <OppBlock
               name={game.opponent}
               score={game.scoreOpponent}
@@ -358,23 +340,19 @@ export default function ScoreboardOverlay() {
               breakExiting={breakExiting}
             />
 
-            {/* Right — half indicator */}
-            <div
-              className="flex flex-col items-center justify-center shrink-0"
-              style={{
-                width: INDICATOR_W,
-                background: "white",
-                borderLeft: "1px solid rgba(0,0,0,0.1)",
-              }}
-            >
+            {/* Half indicator */}
+            <div style={{
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              width: INDICATOR_W,
+              background: "white",
+              borderLeft: "1px solid rgba(0,0,0,0.1)",
+            }}>
               {isFinal ? (
-                <span className="font-black uppercase text-black"
-                      style={{ fontSize: "clamp(6px, 0.65vw, 9px)", letterSpacing: "0.04em" }}>
+                <span style={{ fontWeight: 900, textTransform: "uppercase", color: "black", fontSize: HALF_SM, letterSpacing: "0.04em" }}>
                   FINAL
                 </span>
               ) : (
-                <span className="font-black text-black tabular-nums"
-                      style={{ fontSize: "clamp(9px, 0.95vw, 14px)", lineHeight: 1 }}>
+                <span style={{ fontWeight: 900, color: "black", fontSize: HALF_FONT, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
                   {half}
                 </span>
               )}
@@ -382,21 +360,18 @@ export default function ScoreboardOverlay() {
           </div>
 
           {/* ── BOTTOM STRIP ── */}
-          <div
-            className="flex items-center justify-center w-full"
-            style={{
-              height: "clamp(10px, 0.9vw, 14px)",
-              background: "rgba(220,220,228,0.9)",
-              borderTop: "1px solid rgba(0,0,0,0.07)",
-            }}
-          >
-            <span style={{ fontSize: "clamp(5px, 0.52vw, 8px)", color: "rgba(30,30,60,0.5)", fontWeight: 600, letterSpacing: "0.2em" }}
-                  className="uppercase tracking-widest">
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "center", width: "100%",
+            height: STRIP_H,
+            background: "rgba(220,220,228,0.9)",
+            borderTop: "1px solid rgba(0,0,0,0.07)",
+          }}>
+            <span style={{ fontSize: STRIP_FONT, color: "rgba(30,30,60,0.5)", fontWeight: 600, letterSpacing: "0.2em", textTransform: "uppercase" }}>
               {[game.round, `Cap ${game.cap}`, "VOID Ultimate"].filter(Boolean).join("  ·  ")}
             </span>
           </div>
 
-        </div>{/* end scaled container */}
+        </div>
       </div>
     </>
   )
@@ -409,75 +384,82 @@ function VoidBlock({
   score, possession, voidOnOLine, flash, isFinal, scoreBoxW, showBreak, breakExiting,
 }: {
   score: number; possession: Possession; voidOnOLine: boolean | undefined
-  flash: boolean; isFinal: boolean; scoreBoxW: string
+  flash: boolean; isFinal: boolean; scoreBoxW: number
   showBreak: boolean; breakExiting: boolean
 }) {
+  void possession
   return (
-    <div
-      className="relative"
-      style={{
-        flex: "1 1 0",
-        display: "flex",
-        alignItems: "stretch",
-        background: isFinal
-          ? "linear-gradient(90deg, #f8f7ff 0%, #ede9fe 100%)"
-          : "linear-gradient(90deg, rgb(55,18,95) 0%, rgb(72,26,117) 100%)",
-        transition: "background 0.4s ease",
-        overflow: "hidden",
-      }}
-    >
-      {/* Permanent left-edge color bar */}
+    <div style={{
+      position: "relative",
+      flex: "1 1 0",
+      display: "flex",
+      alignItems: "stretch",
+      background: isFinal
+        ? "linear-gradient(90deg, #f8f7ff 0%, #ede9fe 100%)"
+        : "linear-gradient(90deg, rgb(55,18,95) 0%, rgb(72,26,117) 100%)",
+      transition: "background 0.4s ease",
+      overflow: "hidden",
+    }}>
+      {/* Left-edge color bar */}
       {!isFinal && (
-        <div className="absolute left-0 inset-y-0 w-[4px]"
-             style={{ background: "linear-gradient(180deg, #c4b5fd, #7c3aed)" }} />
+        <div style={{
+          position: "absolute", left: 0, top: 0, bottom: 0, width: 4,
+          background: "linear-gradient(180deg, #c4b5fd, #7c3aed)",
+        }} />
       )}
 
-      {/* Team name — left area */}
-      <div className="flex items-center flex-1" style={{ padding: "0 clamp(14px, 1.6vw, 24px)" }}>
-        <span className="font-black uppercase leading-none"
-              style={{ fontSize: "clamp(8px, 1.2vw, 17px)", letterSpacing: "0.04em", color: isFinal ? "rgb(55,18,95)" : "#ddd6fe" }}>
+      {/* Team name */}
+      <div style={{ display: "flex", alignItems: "center", flex: 1, padding: "0 24px" }}>
+        <span style={{
+          fontWeight: 900, textTransform: "uppercase", lineHeight: 1,
+          fontSize: NAME_FONT, letterSpacing: "0.04em",
+          color: isFinal ? "rgb(55,18,95)" : "#ddd6fe",
+        }}>
           VOID
         </span>
       </div>
 
-      {/* O-line triangle — full height, points left (away from score box) */}
+      {/* Possession triangle */}
       {voidOnOLine && !isFinal && (
-        <div
-          className="flex-shrink-0 self-stretch"
-          style={{
-            width: "clamp(6px, 0.7vw, 10px)",
-            background: "white",
-            clipPath: "polygon(100% 0, 100% 100%, 0 50%)",
-            filter: "drop-shadow(-2px 0 3px rgba(0,0,0,0.35))",
-          }}
-        />
+        <div style={{
+          flexShrink: 0, alignSelf: "stretch",
+          width: TRIANGLE_W,
+          background: "white",
+          clipPath: "polygon(100% 0, 100% 100%, 0 50%)",
+          filter: "drop-shadow(-2px 0 3px rgba(0,0,0,0.35))",
+        }} />
       )}
 
-      {/* Score box — full height, flush at right (center) edge, no border-radius */}
-      <div
-        className="flex items-center justify-center flex-shrink-0"
-        style={{
-          width: scoreBoxW,
-          background: isFinal ? "rgba(109,40,217,0.12)" : "rgba(139,92,246,0.3)",
-        }}
-      >
+      {/* Score box */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+        width: scoreBoxW,
+        background: isFinal ? "rgba(109,40,217,0.12)" : "rgba(139,92,246,0.3)",
+      }}>
         <span
           key={flash ? `f${score}` : `s${score}`}
-          className={`font-black tabular-nums leading-none ${flash ? "score-flash" : ""}`}
-          style={{ fontSize: "clamp(14px, 2.1vw, 30px)", color: isFinal ? "rgb(55,18,95)" : "white" }}
+          className={flash ? "score-flash" : undefined}
+          style={{
+            fontWeight: 900, fontVariantNumeric: "tabular-nums", lineHeight: 1,
+            fontSize: SCORE_FONT,
+            color: isFinal ? "rgb(55,18,95)" : "white",
+          }}
         >
           {score}
         </span>
       </div>
 
-      {/* BREAK overlay — absolute so it never shifts the flex layout */}
+      {/* BREAK overlay */}
       {showBreak && (
         <div
-          className={`absolute inset-0 flex items-center justify-center ${breakExiting ? "break-out" : "break-in"}`}
-          style={{ background: "#b91c1c" }}
+          className={breakExiting ? "break-out" : "break-in"}
+          style={{
+            position: "absolute", inset: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "#b91c1c",
+          }}
         >
-          <span className="font-black uppercase text-white"
-                style={{ fontSize: "clamp(12px, 1.7vw, 24px)", letterSpacing: "0.12em" }}>
+          <span style={{ fontWeight: 900, textTransform: "uppercase", color: "white", fontSize: BREAK_FONT, letterSpacing: "0.12em" }}>
             BREAK
           </span>
         </div>
@@ -493,75 +475,84 @@ function OppBlock({
   name, score, possession, oppOnOLine, flash, isFinal, scoreBoxW, showBreak, breakExiting,
 }: {
   name: string; score: number; possession: Possession; oppOnOLine: boolean | undefined
-  flash: boolean; isFinal: boolean; scoreBoxW: string
+  flash: boolean; isFinal: boolean; scoreBoxW: number
   showBreak: boolean; breakExiting: boolean
 }) {
+  void possession
   return (
-    <div
-      className="relative"
-      style={{
-        flex: "1 1 0",
-        display: "flex",
-        alignItems: "stretch",
-        background: isFinal
-          ? "linear-gradient(90deg, #e8e8ee 0%, #d8d8e4 100%)"
-          : "linear-gradient(90deg, #1e2433 0%, #252d3d 100%)",
-        transition: "background 0.4s ease",
-        overflow: "hidden",
-      }}
-    >
-      {/* Permanent right-edge color bar */}
+    <div style={{
+      position: "relative",
+      flex: "1 1 0",
+      display: "flex",
+      alignItems: "stretch",
+      background: isFinal
+        ? "linear-gradient(90deg, #e8e8ee 0%, #d8d8e4 100%)"
+        : "linear-gradient(90deg, #1e2433 0%, #252d3d 100%)",
+      transition: "background 0.4s ease",
+      overflow: "hidden",
+    }}>
+      {/* Right-edge color bar */}
       {!isFinal && (
-        <div className="absolute right-0 inset-y-0 w-[4px]"
-             style={{ background: "linear-gradient(180deg, #94a3b8, #475569)" }} />
+        <div style={{
+          position: "absolute", right: 0, top: 0, bottom: 0, width: 4,
+          background: "linear-gradient(180deg, #94a3b8, #475569)",
+        }} />
       )}
 
-      {/* Score box — full height, flush at left (center) edge, no border-radius */}
-      <div
-        className="flex items-center justify-center flex-shrink-0"
-        style={{
-          width: scoreBoxW,
-          background: isFinal ? "rgba(30,36,51,0.1)" : "rgba(100,116,139,0.3)",
-        }}
-      >
+      {/* Score box */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+        width: scoreBoxW,
+        background: isFinal ? "rgba(30,36,51,0.1)" : "rgba(100,116,139,0.3)",
+      }}>
         <span
           key={flash ? `f${score}` : `s${score}`}
-          className={`font-black tabular-nums leading-none ${flash ? "score-flash" : ""}`}
-          style={{ fontSize: "clamp(14px, 2.1vw, 30px)", color: isFinal ? "#1e2433" : "white" }}
+          className={flash ? "score-flash" : undefined}
+          style={{
+            fontWeight: 900, fontVariantNumeric: "tabular-nums", lineHeight: 1,
+            fontSize: SCORE_FONT,
+            color: isFinal ? "#1e2433" : "white",
+          }}
         >
           {score}
         </span>
       </div>
 
-      {/* O-line triangle — full height, points right (away from score box) */}
+      {/* Possession triangle */}
       {oppOnOLine && !isFinal && (
-        <div
-          className="flex-shrink-0 self-stretch"
-          style={{
-            width: "clamp(6px, 0.7vw, 10px)",
-            background: "white",
-            clipPath: "polygon(0 0, 100% 50%, 0 100%)",
-            filter: "drop-shadow(2px 0 3px rgba(0,0,0,0.35))",
-          }}
-        />
+        <div style={{
+          flexShrink: 0, alignSelf: "stretch",
+          width: TRIANGLE_W,
+          background: "white",
+          clipPath: "polygon(0 0, 100% 50%, 0 100%)",
+          filter: "drop-shadow(2px 0 3px rgba(0,0,0,0.35))",
+        }} />
       )}
 
-      {/* Team name — right area */}
-      <div className="flex items-center flex-1 justify-end" style={{ padding: "0 clamp(14px, 1.6vw, 24px)" }}>
-        <span className="font-black uppercase leading-none truncate"
-              style={{ fontSize: "clamp(8px, 1.2vw, 17px)", letterSpacing: "0.04em", maxWidth: "18vw", color: isFinal ? "#1e2433" : "#cbd5e1" }}>
+      {/* Team name */}
+      <div style={{ display: "flex", alignItems: "center", flex: 1, justifyContent: "flex-end", padding: "0 24px" }}>
+        <span style={{
+          fontWeight: 900, textTransform: "uppercase", lineHeight: 1,
+          fontSize: NAME_FONT, letterSpacing: "0.04em",
+          maxWidth: 340,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          color: isFinal ? "#1e2433" : "#cbd5e1",
+        }}>
           {name}
         </span>
       </div>
 
-      {/* BREAK overlay — absolute so it never shifts the flex layout */}
+      {/* BREAK overlay */}
       {showBreak && (
         <div
-          className={`absolute inset-0 flex items-center justify-center ${breakExiting ? "break-out" : "break-in"}`}
-          style={{ background: "#b91c1c" }}
+          className={breakExiting ? "break-out" : "break-in"}
+          style={{
+            position: "absolute", inset: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "#b91c1c",
+          }}
         >
-          <span className="font-black uppercase text-white"
-                style={{ fontSize: "clamp(12px, 1.7vw, 24px)", letterSpacing: "0.12em" }}>
+          <span style={{ fontWeight: 900, textTransform: "uppercase", color: "white", fontSize: BREAK_FONT, letterSpacing: "0.12em" }}>
             BREAK
           </span>
         </div>
