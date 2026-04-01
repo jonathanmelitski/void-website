@@ -215,6 +215,8 @@ export function mkStep(pk: string, send: (e: StreamEvent) => void) {
 // ---- Start ----
 
 export async function streamStart(gameId: string, send: (e: StreamEvent) => void): Promise<void> {
+  console.log("[broadcast-jobs] streamStart called, gameId:", gameId)
+  console.log("[broadcast-jobs] env check — VOID_REGION:", process.env.VOID_REGION, "DYNAMO_BROADCAST_TABLE:", process.env.DYNAMO_BROADCAST_TABLE, "ROUTE53_HOSTED_ZONE_ID:", process.env.ROUTE53_HOSTED_ZONE_ID)
   const steps: StepDef[] = [
     { id: "create-sg",        label: "Create input security group",    status: "pending" },
     { id: "create-input",     label: "Create RTMP input",              status: "pending" },
@@ -284,6 +286,7 @@ export async function streamStart(gameId: string, send: (e: StreamEvent) => void
     await completeJob(JOB_PK)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    console.log("[broadcast-jobs] streamStart error:", msg)
     send({ type: "error", message: msg })
     await failJob(JOB_PK, msg)
 
