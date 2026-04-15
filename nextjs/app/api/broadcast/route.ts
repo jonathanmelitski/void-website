@@ -7,6 +7,8 @@ import {
   getJob,
   saveJob,
   JOB_PK,
+  streamPrepare,
+  streamGoLive,
   streamStart,
   streamStop,
   streamDestroyAll,
@@ -138,15 +140,16 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  if (action !== "start" && action !== "stop" && action !== "destroy-all") {
+  const validActions = ["prepare", "go-live", "start", "stop", "destroy-all"]
+  if (!validActions.includes(action)) {
     return NextResponse.json(
-      { error: "action must be 'start', 'stop', 'destroy-all', or 'activate-overlay'" },
+      { error: `action must be one of: ${validActions.join(", ")}, activate-overlay` },
       { status: 400 }
     )
   }
 
-  if (action === "start" && !gameId) {
-    return NextResponse.json({ error: "gameId is required" }, { status: 400 })
+  if ((action === "prepare" || action === "start") && !gameId) {
+    return NextResponse.json({ error: "gameId is required for prepare/start" }, { status: 400 })
   }
 
   // If the worker Lambda is configured (production / Amplify), invoke it asynchronously
@@ -165,13 +168,9 @@ export async function POST(request: NextRequest) {
   }
 
   // Fallback: run inline via SSE (local dev — no Lambda configured).
-  // This path hits the 300s maxDuration limit on Vercel and the 29s limit on Amplify,
-  // but is sufficient for local testing.
-  if (action === "start") {
-    return makeStream(send => streamStart(gameId!, send))
-  }
-  if (action === "stop") {
-    return makeStream(send => streamStop(send))
-  }
+  if (action === "prepare")     return makeStream(send => streamPrepare(gameId!, send))
+  if (action === "go-live")     return makeStream(send => streamGoLive(send))
+  if (action === "start")       return makeStream(send => streamStart(gameId!, send))
+  if (action === "stop")        return makeStream(send => streamStop(send))
   return makeStream(send => streamDestroyAll(send))
 }

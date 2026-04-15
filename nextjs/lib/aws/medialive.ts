@@ -13,6 +13,7 @@ import {
   StopChannelCommand,
   DescribeChannelCommand,
   BatchUpdateScheduleCommand,
+  ListAlertsCommand,
 } from "@aws-sdk/client-medialive"
 
 const ROLE_ARN = "arn:aws:iam::217828988640:role/MediaLiveAccessRole"
@@ -242,6 +243,25 @@ export async function waitForChannelState(
     await new Promise(r => setTimeout(r, pollIntervalMs))
   }
   throw new Error(`Timeout waiting for channel to reach ${targetState}`)
+}
+
+// Polls MediaLive alerts until no INPUT_LOSS alert is active — meaning RTMP data is flowing.
+// The channel must be RUNNING before calling this.
+export async function waitForRtmpInput(
+  channelId: string,
+  timeoutMs = 600_000,
+  pollIntervalMs = 8_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const res = await medialive.send(new ListAlertsCommand({ ChannelId: channelId }))
+    const hasInputLoss = (res.Alerts ?? []).some(
+      a => !a.ClearedTimestamp && a.AlertType?.includes("INPUT_LOSS")
+    )
+    if (!hasInputLoss) return
+    await new Promise(r => setTimeout(r, pollIntervalMs))
+  }
+  throw new Error("Timeout waiting for RTMP input — is OBS streaming?")
 }
 
 // ---- HTML Motion Graphics Overlay ----

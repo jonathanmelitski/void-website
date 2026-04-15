@@ -155,6 +155,8 @@ export default function ScoreboardOverlay() {
 
   useEffect(() => {
     unmountedRef.current = false
+    // Fetch game data immediately on mount — don't wait for WebSocket retries to exhaust
+    startPolling()
     connect()
     return () => {
       unmountedRef.current = true
@@ -181,8 +183,6 @@ export default function ScoreboardOverlay() {
   const isFinal = game?.status === "FINAL"
   const maxScore = Math.max(game?.scoreVoid ?? 0, game?.scoreOpponent ?? 0)
   const scoreBoxW = maxScore >= 10 ? 78 : 60
-
-  if (!game) return null
 
   const showBanner = !!breakChance && !breakDisplay
 
@@ -295,7 +295,7 @@ export default function ScoreboardOverlay() {
             </div>
 
             <VoidBlock
-              score={game.scoreVoid}
+              score={game?.scoreVoid ?? 0}
               possession={possession}
               voidOnOLine={activePoint?.lineType === "O"}
               flash={scoreFlash === "VOID"}
@@ -329,8 +329,8 @@ export default function ScoreboardOverlay() {
             </div>
 
             <OppBlock
-              name={game.opponent}
-              score={game.scoreOpponent}
+              name={game?.opponent ?? ""}
+              score={game?.scoreOpponent ?? 0}
               possession={possession}
               oppOnOLine={activePoint?.lineType === "D"}
               flash={scoreFlash === "OPP"}
@@ -367,7 +367,7 @@ export default function ScoreboardOverlay() {
             borderTop: "1px solid rgba(0,0,0,0.07)",
           }}>
             <span style={{ fontSize: STRIP_FONT, color: "rgba(30,30,60,0.5)", fontWeight: 600, letterSpacing: "0.2em", textTransform: "uppercase" }}>
-              {[game.round, `Cap ${game.cap}`, "VOID Ultimate"].filter(Boolean).join("  ·  ")}
+              {[game?.round, game ? `Cap ${game.cap}` : null, "VOID Ultimate"].filter(Boolean).join("  ·  ")}
             </span>
           </div>
 

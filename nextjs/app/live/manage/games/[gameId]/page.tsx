@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/use-auth"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { StepProgress } from "@/components/ui/step-progress"
+import { LiveServerPanel } from "@/app/live/manage/LiveServerPanel"
 import type { StepDef } from "@/lib/step-types"
 import type { GameItem, GameStatus } from "@/lib/aws/games"
 import type { PlayerItem } from "@/lib/aws/players"
@@ -35,6 +36,13 @@ const EVENT_TYPE_COLORS: Record<PointEventType, string> = {
   PULL: "text-white/50",
 }
 
+type Tab = "game" | "broadcast" | "server"
+
+type ResourceStatus = {
+  broadcast: { state: string; channelId: string | null } | null
+  server: { status: string } | null
+}
+
 export default function GameManagePage() {
   const { user, isLoading } = useAuth()
   const router = useRouter()
@@ -47,6 +55,9 @@ export default function GameManagePage() {
   const [pointEvents, setPointEvents] = useState<PointEventItem[]>([])
   const [dataLoading, setDataLoading] = useState(true)
   const [error, setError] = useState("")
+  const [activeTab, setActiveTab] = useState<Tab>("game")
+  const [resourceStatus, setResourceStatus] = useState<ResourceStatus>({ broadcast: null, server: null })
+  const statusIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (!isLoading && !user) router.replace("/live/login")
@@ -92,6 +103,27 @@ export default function GameManagePage() {
 
   useEffect(() => { loadData() }, [loadData])
 
+  const fetchResourceStatus = useCallback(async () => {
+    try {
+      const [bRes, sRes] = await Promise.all([
+        fetch("/api/broadcast"),
+        fetch("/api/live-server"),
+      ])
+      const bData = bRes.ok ? await bRes.json() : null
+      const sData = sRes.ok ? await sRes.json() : null
+      setResourceStatus({
+        broadcast: bData ? { state: bData.state ?? "IDLE", channelId: bData.channelId ?? null } : null,
+        server: sData ? { status: sData.status ?? "offline" } : null,
+      })
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    fetchResourceStatus()
+    statusIntervalRef.current = setInterval(fetchResourceStatus, 10_000)
+    return () => { if (statusIntervalRef.current) clearInterval(statusIntervalRef.current) }
+  }, [fetchResourceStatus])
+
   if (isLoading || !user) {
     return <div className="flex items-center justify-center h-full"><div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" /></div>
   }
@@ -114,8 +146,23 @@ export default function GameManagePage() {
   const activePoint = points.find(p => p.status === "IN_PROGRESS") ?? null
   const completedPoints = points.filter(p => p.status === "COMPLETE").sort((a, b) => a.pointNumber - b.pointNumber)
 
+  const broadcastPill = (() => {
+    const b = resourceStatus.broadcast
+    if (!b || (!b.channelId && b.state === "IDLE")) return null
+    if (b.state === "RUNNING" || b.state === "STARTING") return { label: "LIVE", color: "bg-red-500" }
+    if (b.channelId) return { label: "Ready", color: "bg-yellow-500" }
+    return null
+  })()
+
+  const serverPill = (() => {
+    const s = resourceStatus.server
+    if (!s || s.status === "offline") return null
+    if (s.status === "online") return { label: "Server", color: "bg-green-500" }
+    return { label: "Server", color: "bg-yellow-500" }
+  })()
+
   return (
-    <div className="flex flex-col p-8 lg:px-16 gap-8 text-left max-w-4xl">
+    <div className="w-full max-w-3xl mx-auto px-4 sm:px-8 py-8 flex flex-col gap-6">
       {/* Header */}
       <div>
         <button
@@ -124,19 +171,31 @@ export default function GameManagePage() {
         >
           ← Back to Games
         </button>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-3 mb-1">
-              <h1 className="text-3xl font-black">vs {game.opponent}</h1>
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <h1 className="text-2xl sm:text-3xl font-black truncate">vs {game.opponent}</h1>
               <Badge variant={STATUS_VARIANT[game.status]}>{game.status}</Badge>
               {game.result && (
                 <span className={`text-sm font-bold ${game.result === "WIN" ? "text-green-400" : game.result === "LOSS" ? "text-red-400" : "text-yellow-400"}`}>
                   {game.result}
                 </span>
               )}
+              {broadcastPill && (
+                <span className={`flex items-center gap-1 text-xs font-bold text-white px-2 py-0.5 rounded-full ${broadcastPill.color}`}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-white/70 animate-pulse" />
+                  {broadcastPill.label}
+                </span>
+              )}
+              {serverPill && (
+                <span className={`flex items-center gap-1 text-xs font-bold text-white px-2 py-0.5 rounded-full ${serverPill.color}`}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-white/70" />
+                  {serverPill.label}
+                </span>
+              )}
             </div>
             {game.round && <p className="text-white/40 text-sm">{game.round}</p>}
-            <p className="text-white/60 font-mono text-2xl mt-2">
+            <p className="text-white/60 font-mono text-xl sm:text-2xl mt-2">
               {game.scoreVoid} – {game.scoreOpponent}
             </p>
             <p className="text-white/30 text-xs mt-1">Cap: {game.cap} · VOID {game.voidReceivingFirst ? "received" : "pulled"} first</p>
@@ -149,71 +208,92 @@ export default function GameManagePage() {
         </div>
       </div>
 
-      {/* Attending Roster */}
-      <RosterSection
-        players={players}
-        gamePlayers={gamePlayers}
-        gameId={gameId}
-        onRosterChange={setGamePlayers}
-      />
+      {/* Tabs */}
+      <div className="flex gap-1 bg-white/5 rounded-lg p-1">
+        {(["game", "broadcast", "server"] as Tab[]).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors capitalize ${
+              activeTab === tab
+                ? "bg-white/10 text-white"
+                : "text-white/40 hover:text-white/70"
+            }`}
+          >
+            {tab === "broadcast" ? "Broadcast" : tab === "server" ? "Live Server" : "Game"}
+          </button>
+        ))}
+      </div>
 
-      {/* Broadcast */}
-      <BroadcastSection game={game} />
+      {/* Tab: Game */}
+      {activeTab === "game" && (
+        <>
+          <RosterSection
+            players={players}
+            gamePlayers={gamePlayers}
+            gameId={gameId}
+            onRosterChange={setGamePlayers}
+          />
 
-      {/* Active Point */}
-      {activePoint && (
-        <ActivePointSection
-          point={activePoint}
-          attendingPlayers={attendingPlayers}
-          events={pointEvents.filter(e => e.pointId === activePoint.id)}
-          onEventAdded={e => setPointEvents(prev => [...prev, e])}
-          onEventDeleted={id => setPointEvents(prev => prev.filter(e => e.id !== id))}
-          onPointCompleted={updated => {
-            setPoints(prev => prev.map(p => p.id === updated.id ? updated : p))
-            loadData() // reload to get updated game score
-          }}
-        />
+          {activePoint && (
+            <ActivePointSection
+              point={activePoint}
+              attendingPlayers={attendingPlayers}
+              events={pointEvents.filter(e => e.pointId === activePoint.id)}
+              onEventAdded={e => setPointEvents(prev => [...prev, e])}
+              onEventDeleted={id => setPointEvents(prev => prev.filter(e => e.id !== id))}
+              onPointCompleted={updated => {
+                setPoints(prev => prev.map(p => p.id === updated.id ? updated : p))
+                loadData()
+              }}
+            />
+          )}
+
+          {!activePoint && game.status !== "FINAL" && (
+            <AddPointSection
+              game={game}
+              attendingPlayers={attendingPlayers}
+              nextPointNumber={points.length + 1}
+              completedPoints={completedPoints}
+              currentScoreVoid={game.scoreVoid}
+              currentScoreOpponent={game.scoreOpponent}
+              onPointCreated={point => {
+                setPoints(prev => [...prev, point])
+                setGame(g => g ? { ...g, status: "IN_PROGRESS" } : g)
+              }}
+            />
+          )}
+
+          {completedPoints.length > 0 && (
+            <section>
+              <h2 className="text-lg font-bold mb-3">Point Log</h2>
+              <div className="flex flex-col gap-2">
+                {completedPoints.map(point => (
+                  <CompletedPointRow
+                    key={point.id}
+                    point={point}
+                    players={players}
+                    attendingPlayers={attendingPlayers}
+                    events={pointEvents.filter(e => e.pointId === point.id)}
+                    onPointUpdated={updated => {
+                      setPoints(prev => prev.map(p => p.id === updated.id ? updated : p))
+                      loadData()
+                    }}
+                    onEventAdded={e => setPointEvents(prev => [...prev, e])}
+                    onEventDeleted={id => setPointEvents(prev => prev.filter(e => e.id !== id))}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+        </>
       )}
 
-      {/* Add Point */}
-      {!activePoint && game.status !== "FINAL" && (
-        <AddPointSection
-          game={game}
-          attendingPlayers={attendingPlayers}
-          nextPointNumber={points.length + 1}
-          completedPoints={completedPoints}
-          currentScoreVoid={game.scoreVoid}
-          currentScoreOpponent={game.scoreOpponent}
-          onPointCreated={point => {
-            setPoints(prev => [...prev, point])
-            setGame(g => g ? { ...g, status: "IN_PROGRESS" } : g)
-          }}
-        />
-      )}
+      {/* Tab: Broadcast */}
+      {activeTab === "broadcast" && <BroadcastSection game={game} />}
 
-      {/* Completed Points Log */}
-      {completedPoints.length > 0 && (
-        <section>
-          <h2 className="text-lg font-bold mb-3">Point Log</h2>
-          <div className="flex flex-col gap-2">
-            {completedPoints.map(point => (
-              <CompletedPointRow
-                key={point.id}
-                point={point}
-                players={players}
-                attendingPlayers={attendingPlayers}
-                events={pointEvents.filter(e => e.pointId === point.id)}
-                onPointUpdated={updated => {
-                  setPoints(prev => prev.map(p => p.id === updated.id ? updated : p))
-                  loadData() // refresh game score
-                }}
-                onEventAdded={e => setPointEvents(prev => [...prev, e])}
-                onEventDeleted={id => setPointEvents(prev => prev.filter(e => e.id !== id))}
-              />
-            ))}
-          </div>
-        </section>
-      )}
+      {/* Tab: Live Server */}
+      {activeTab === "server" && <LiveServerPanel />}
     </div>
   )
 }
@@ -1061,6 +1141,7 @@ function CompletedPointRow({
 // --- Broadcast Section ---
 function BroadcastSection({ game }: { game: GameItem }) {
   const [state, setState] = useState<string>("IDLE")
+  const [channelId, setChannelId] = useState<string | null>(null)
   const [rtmpUrl, setRtmpUrl] = useState<string | null>(null)
   const [steps, setSteps] = useState<StepDef[]>([])
   const [acting, setActing] = useState(false)
@@ -1073,6 +1154,7 @@ function BroadcastSection({ game }: { game: GameItem }) {
       if (!res.ok) return
       const data = await res.json()
       setState(data.state ?? "IDLE")
+      setChannelId(data.channelId ?? null)
       if (data.rtmpUrl) setRtmpUrl(data.rtmpUrl)
       return data
     } catch {}
@@ -1101,6 +1183,7 @@ function BroadcastSection({ game }: { game: GameItem }) {
         if (!res.ok) return
         const data = await res.json()
         setState(data.state ?? "IDLE")
+        setChannelId(data.channelId ?? null)
         if (data.rtmpUrl) setRtmpUrl(data.rtmpUrl)
         if (data.job?.steps) setSteps(data.job.steps)
         if (data.job?.completedAt || data.job?.errorMessage) {
@@ -1117,12 +1200,11 @@ function BroadcastSection({ game }: { game: GameItem }) {
     setActing(true)
     setSteps([])
     startPolling()
-    // Fire-and-forget — Lambda keeps running past HTTP timeout; client polls for progress
     fetch("/api/broadcast", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, ...extraBody }),
-    }).catch(() => {}) // 504 is expected for long operations; polling handles state
+    }).catch(() => {})
   }
 
   function copyUrl() {
@@ -1133,40 +1215,43 @@ function BroadcastSection({ game }: { game: GameItem }) {
     })
   }
 
-  const isRunning = state === "RUNNING"
-  const canStart = !acting && state === "IDLE" && game.status !== "FINAL"
-  const canStop = !acting && (isRunning || state === "STARTING")
+  const isPrepared = !!channelId && state === "IDLE"
+  const isRunning  = state === "RUNNING" || state === "STARTING"
+  const canPrepare = !acting && !channelId && game.status !== "FINAL"
+  const canGoLive  = !acting && isPrepared && game.status !== "FINAL"
+  const canStop    = !acting && (isRunning || isPrepared)
 
-  const badgeStyle: React.CSSProperties = isRunning
-    ? { background: "#16a34a", color: "#fff", border: "none" }
-    : {}
+  const stateLabel = acting ? "…" : isRunning ? "LIVE" : isPrepared ? "Ready" : "Idle"
+  const badgeVariant = isRunning ? "default" : acting ? "secondary" : "outline"
+  const badgeStyle: React.CSSProperties = isRunning ? { background: "#dc2626", color: "#fff", border: "none" } : {}
 
   return (
-    <section className="flex flex-col gap-3">
+    <section className="flex flex-col gap-4">
       <div className="flex items-center gap-3">
         <h2 className="text-lg font-bold">Broadcast</h2>
-        <Badge
-          variant={acting ? "secondary" : isRunning ? "default" : "outline"}
-          style={!acting ? badgeStyle : {}}
-          className="flex items-center gap-1"
-        >
-          {acting && (
-            <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" />
-          )}
-          {acting ? "…" : state}
+        <Badge variant={badgeVariant} style={badgeStyle} className="flex items-center gap-1.5">
+          {acting && <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" />}
+          {stateLabel}
         </Badge>
       </div>
 
+      {/* Phase callout when prepared but not live */}
+      {isPrepared && !isRunning && !acting && (
+        <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 px-4 py-3 text-sm text-yellow-200/80">
+          Resources are ready. Configure OBS with the RTMP URL below, start streaming, then click <strong>Go Live</strong>.
+        </div>
+      )}
+
       {rtmpUrl && (
-        <div className="flex flex-col gap-1">
-          <p className="text-white/40 text-xs">RTMP Ingest URL (OBS → Settings → Stream)</p>
+        <div className="flex flex-col gap-1.5">
+          <p className="text-white/40 text-xs">RTMP Ingest URL — OBS → Settings → Stream → Custom</p>
           <div className="flex items-center gap-2">
-            <code className="text-xs font-mono text-white/80 bg-white/5 px-3 py-1.5 rounded border border-white/10 flex-1 truncate">
+            <code className="text-xs font-mono text-white/80 bg-white/5 px-3 py-2 rounded border border-white/10 flex-1 truncate">
               {rtmpUrl}
             </code>
             <button
               onClick={copyUrl}
-              className="text-xs text-white/40 hover:text-white/70 transition-colors shrink-0 px-2 py-1.5"
+              className="text-xs text-white/40 hover:text-white/70 transition-colors shrink-0 px-2 py-2"
             >
               {copied ? "Copied" : "Copy"}
             </button>
@@ -1176,27 +1261,41 @@ function BroadcastSection({ game }: { game: GameItem }) {
 
       {steps.length > 0 && <StepProgress steps={steps} />}
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Phase 1: Prepare */}
         <Button
           variant="outline"
           size="sm"
-          onClick={() => runAction("start", { gameId: game.id })}
-          disabled={!canStart}
+          onClick={() => runAction("prepare", { gameId: game.id })}
+          disabled={!canPrepare}
         >
-          Start Broadcast
+          Prepare
         </Button>
+
+        {/* Phase 2: Go Live */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => runAction("go-live")}
+          disabled={!canGoLive}
+          className={canGoLive ? "border-green-500/50 text-green-400 hover:bg-green-500/10" : ""}
+        >
+          Go Live
+        </Button>
+
         <Button
           variant="destructive"
           size="sm"
           onClick={() => runAction("stop")}
           disabled={!canStop}
         >
-          Stop Broadcast
+          Stop
         </Button>
+
         <button
           onClick={() => runAction("destroy-all")}
           disabled={acting}
-          className="text-xs text-white/20 hover:text-red-400 transition-colors disabled:opacity-50 ml-2"
+          className="text-xs text-white/20 hover:text-red-400 transition-colors disabled:opacity-50 ml-1"
         >
           Destroy All
         </button>

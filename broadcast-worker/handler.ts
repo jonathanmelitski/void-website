@@ -1,10 +1,14 @@
 import {
+  streamPrepare,
+  streamGoLive,
   streamStart,
   streamStop,
   streamDestroyAll,
 } from "../nextjs/lib/aws/broadcast-jobs"
 
 type WorkerEvent =
+  | { action: "prepare"; gameId: string }
+  | { action: "go-live" }
   | { action: "start"; gameId: string }
   | { action: "stop" }
   | { action: "destroy-all" }
@@ -15,16 +19,19 @@ const noop = () => {}
 export const handler = async (event: WorkerEvent): Promise<void> => {
   console.log("[broadcast-worker] event:", JSON.stringify(event))
   switch (event.action) {
+    case "prepare":
+      await streamPrepare(event.gameId, noop)
+      break
+    case "go-live":
+      await streamGoLive(noop)
+      break
     case "start":
-      console.log("[broadcast-worker] starting stream for gameId:", (event as { action: "start"; gameId: string }).gameId)
-      await streamStart((event as { action: "start"; gameId: string }).gameId, noop)
+      await streamStart(event.gameId, noop)
       break
     case "stop":
-      console.log("[broadcast-worker] stopping stream")
       await streamStop(noop)
       break
     case "destroy-all":
-      console.log("[broadcast-worker] destroying all")
       await streamDestroyAll(noop)
       break
     default:

@@ -26,6 +26,7 @@ import {
   startChannel,
   stopChannel,
   waitForChannelState,
+  waitForRtmpInput,
   scheduleGraphicsOverlay,
   deactivateGraphicsOverlay,
   listVoidChannels,
@@ -212,24 +213,22 @@ export function mkStep(pk: string, send: (e: StreamEvent) => void) {
   }
 }
 
-// ---- Start ----
+// ---- Prepare (phase 1 of 2) ----
+// Creates all resources and updates DNS so OBS can connect.
+// Does NOT start the channel or connect to YouTube.
 
-export async function streamStart(gameId: string, send: (e: StreamEvent) => void): Promise<void> {
-  console.log("[broadcast-jobs] streamStart called, gameId:", gameId)
-  console.log("[broadcast-jobs] env check — VOID_REGION:", process.env.VOID_REGION, "DYNAMO_BROADCAST_TABLE:", process.env.DYNAMO_BROADCAST_TABLE, "ROUTE53_HOSTED_ZONE_ID:", process.env.ROUTE53_HOSTED_ZONE_ID)
+export async function streamPrepare(gameId: string, send: (e: StreamEvent) => void): Promise<void> {
+  console.log("[broadcast-jobs] streamPrepare called, gameId:", gameId)
   const steps: StepDef[] = [
-    { id: "create-sg",        label: "Create input security group",    status: "pending" },
-    { id: "create-input",     label: "Create RTMP input",              status: "pending" },
-    { id: "create-channel",   label: "Create channel",                 status: "pending" },
-    { id: "wait-idle",        label: "Wait for channel to initialize", status: "pending" },
-    { id: "start-channel",    label: "Start channel",                  status: "pending" },
-    { id: "wait-running",     label: "Wait for channel to start",      status: "pending" },
-    { id: "schedule-overlay", label: "Schedule scoreboard overlay",    status: "pending" },
-    { id: "update-dns",       label: "Update DNS",                     status: "pending" },
-    { id: "save-state",       label: "Save broadcast state",           status: "pending" },
+    { id: "create-sg",      label: "Create input security group",    status: "pending" },
+    { id: "create-input",   label: "Create RTMP input",              status: "pending" },
+    { id: "create-channel", label: "Create channel",                 status: "pending" },
+    { id: "wait-idle",      label: "Wait for channel to initialize", status: "pending" },
+    { id: "update-dns",     label: "Update DNS",                     status: "pending" },
+    { id: "save-state",     label: "Save broadcast state",           status: "pending" },
   ]
   send({ type: "init", steps })
-  await saveJob(JOB_PK, "start", steps)
+  await saveJob(JOB_PK, "prepare", steps)
   const step = mkStep(JOB_PK, send)
 
   const allocated = {
@@ -259,18 +258,6 @@ export async function streamStart(gameId: string, send: (e: StreamEvent) => void
     await waitForChannelState(channelId, "IDLE", 120_000)
     await step("wait-idle", "done")
 
-    await step("start-channel", "running")
-    await startChannel(channelId)
-    await step("start-channel", "done")
-
-    await step("wait-running", "running")
-    await waitForChannelState(channelId, "RUNNING", 200_000)
-    await step("wait-running", "done")
-
-    await step("schedule-overlay", "running")
-    await scheduleGraphicsOverlay(channelId, gameId)
-    await step("schedule-overlay", "done")
-
     await step("update-dns", "running")
     await upsertStreamDns(endpointIp)
     allocated.dnsSet = true
@@ -281,25 +268,80 @@ export async function streamStart(gameId: string, send: (e: StreamEvent) => void
     await step("save-state", "done")
 
     Object.assign(allocated, { securityGroupId: null, inputId: null, channelId: null, dnsSet: false })
-
     send({ type: "done" })
     await completeJob(JOB_PK)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.log("[broadcast-jobs] streamStart error:", msg)
+    console.log("[broadcast-jobs] streamPrepare error:", msg)
     send({ type: "error", message: msg })
     await failJob(JOB_PK, msg)
 
     if (allocated.dnsSet) { try { await deleteStreamDns() } catch {} }
     if (allocated.channelId) {
-      try { await stopChannel(allocated.channelId) } catch {}
-      try { await waitForChannelState(allocated.channelId, "IDLE", 60_000) } catch {}
       try { await deleteChannel(allocated.channelId) } catch {}
       try { await waitForChannelState(allocated.channelId, "DELETED", 60_000) } catch {}
     }
     if (allocated.inputId) { try { await deleteInput(allocated.inputId) } catch {} }
     if (allocated.securityGroupId) { try { await deleteInputSecurityGroup(allocated.securityGroupId) } catch {} }
   }
+}
+
+// ---- Go Live (phase 2 of 2) ----
+// Starts the channel and schedules the overlay. OBS should already be streaming
+// to the RTMP endpoint before calling this so YouTube gets live video from the first frame.
+
+export async function streamGoLive(send: (e: StreamEvent) => void): Promise<void> {
+  console.log("[broadcast-jobs] streamGoLive called")
+  const broadcastState = await getBroadcastState()
+  if (!broadcastState) {
+    const msg = "No prepared broadcast state found — run Prepare first"
+    send({ type: "error", message: msg })
+    return
+  }
+
+  const steps: StepDef[] = [
+    { id: "start-channel",    label: "Start channel",                    status: "pending" },
+    { id: "wait-running",     label: "Wait for channel to start",        status: "pending" },
+    { id: "wait-rtmp",        label: "Waiting for live video stream…",   status: "pending" },
+    { id: "schedule-overlay", label: "Schedule scoreboard overlay",      status: "pending" },
+  ]
+  send({ type: "init", steps })
+  await saveJob(JOB_PK, "go-live", steps)
+  const step = mkStep(JOB_PK, send)
+
+  try {
+    await step("start-channel", "running")
+    await startChannel(broadcastState.channelId)
+    await step("start-channel", "done")
+
+    await step("wait-running", "running")
+    await waitForChannelState(broadcastState.channelId, "RUNNING", 200_000)
+    await step("wait-running", "done")
+
+    await step("wait-rtmp", "running")
+    await waitForRtmpInput(broadcastState.channelId)
+    await step("wait-rtmp", "done")
+
+    await step("schedule-overlay", "running")
+    await scheduleGraphicsOverlay(broadcastState.channelId, broadcastState.gameId)
+    await step("schedule-overlay", "done")
+
+    send({ type: "done" })
+    await completeJob(JOB_PK)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.log("[broadcast-jobs] streamGoLive error:", msg)
+    send({ type: "error", message: msg })
+    await failJob(JOB_PK, msg)
+  }
+}
+
+// ---- Start (prepare + go-live combined, kept for backward compat) ----
+
+export async function streamStart(gameId: string, send: (e: StreamEvent) => void): Promise<void> {
+  await streamPrepare(gameId, send)
+  const state = await getBroadcastState()
+  if (state) await streamGoLive(send)
 }
 
 // ---- Stop ----
