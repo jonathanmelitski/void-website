@@ -3,6 +3,7 @@ import type { NextConfig } from "next"
 const s3BaseUrl = process.env.NEXT_PUBLIC_S3_BASE_URL ?? ""
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "picsum.photos" },
