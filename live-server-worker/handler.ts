@@ -2,7 +2,7 @@ import {
   streamStart,
   streamStop,
   streamDestroyAll,
-} from "../nextjs/lib/aws/live-server-jobs"
+} from "../lib/aws/live-server-jobs"
 
 type WorkerEvent =
   | { action: "start" }

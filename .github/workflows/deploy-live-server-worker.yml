@@ -5,8 +5,8 @@ on:
     branches: [main]
     paths:
       - "live-server-worker/**"
-      - "nextjs/lib/aws/live-server-jobs.ts"
-      - "nextjs/lib/step-types.ts"
+      - "lib/aws/live-server-jobs.ts"
+      - "lib/step-types.ts"
       - ".github/workflows/deploy-live-server-worker.yml"
 
 jobs:

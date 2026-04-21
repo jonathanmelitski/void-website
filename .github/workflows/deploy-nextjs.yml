@@ -4,7 +4,18 @@ on:
   push:
     branches: [main]
     paths:
-      - "nextjs/**"
+      - "app/**"
+      - "amplify/**"
+      - "components/**"
+      - "hooks/**"
+      - "lib/**"
+      - "middleware.ts"
+      - "models/**"
+      - "public/**"
+      - "styles/**"
+      - "next.config.ts"
+      - "package.json"
+      - "package-lock.json"
       - "amplify.yml"
       - ".github/workflows/deploy-nextjs.yml"
 

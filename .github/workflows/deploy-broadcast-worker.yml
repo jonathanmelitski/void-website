@@ -5,9 +5,9 @@ on:
     branches: [main]
     paths:
       - "broadcast-worker/**"
-      - "nextjs/lib/aws/broadcast-jobs.ts"
-      - "nextjs/lib/aws/medialive.ts"
-      - "nextjs/lib/step-types.ts"
+      - "lib/aws/broadcast-jobs.ts"
+      - "lib/aws/medialive.ts"
+      - "lib/step-types.ts"
       - ".github/workflows/deploy-broadcast-worker.yml"
 
 jobs:
