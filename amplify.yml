@@ -40,8 +40,9 @@ applications:
             - echo "BROADCAST_WORKER_FUNCTION_NAME=$BROADCAST_WORKER_FUNCTION_NAME" >> .env
             - echo "LIVE_SERVER_WORKER_FUNCTION_NAME=$LIVE_SERVER_WORKER_FUNCTION_NAME" >> .env
             - npm run build
-            - cp -r .next/static .next/standalone/.next/static
-            - cp -r public .next/standalone/public
+            - mkdir -p .next/standalone/.next/static .next/standalone/public
+            - cp -r .next/static/. .next/standalone/.next/static/
+            - cp -r public/. .next/standalone/public/
       artifacts:
         baseDirectory: .next/standalone
         files:
