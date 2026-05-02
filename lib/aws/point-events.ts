@@ -10,15 +10,17 @@ import { dynamo } from "./dynamo"
 // GSI 2: GameIdIndex  — PK: gameId,  SK: sortOrder (number, projects all)
 const TABLE = () => process.env.DYNAMO_POINT_EVENTS_TABLE!
 
-export type PointEventType = "GOAL" | "ASSIST" | "TURNOVER" | "BLOCK" | "PULL"
+export type PointEventType = "GOAL" | "ASSIST" | "TURNOVER" | "BLOCK" | "PULL" | "SUBSTITUTION" | "TIMEOUT"
 
 export type PointEventItem = {
   id: string
-  pointId: string         // FK → PointItem
-  gameId: string          // denormalized FK → GameItem (for single-query game-level aggregation)
+  pointId: string
+  gameId: string
   eventType: PointEventType
-  playerId: string        // VOID player who performed the action
-  sortOrder: number       // chronological sequence within the point (1, 2, 3…)
+  playerId: string        // acting player (player going OUT for SUBSTITUTION, "" for TIMEOUT)
+  playerInId?: string     // SUBSTITUTION only: player coming in
+  team?: "VOID" | "OPP"  // TIMEOUT only: which team called it
+  sortOrder: number
   createdAt: string
 }
 

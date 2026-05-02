@@ -26,6 +26,8 @@ const EVENT_TYPE_LABELS: Record<PointEventType, string> = {
   TURNOVER: "Turnover",
   BLOCK: "Block",
   PULL: "Pull",
+  SUBSTITUTION: "Sub",
+  TIMEOUT: "Timeout",
 }
 
 const EVENT_TYPE_COLORS: Record<PointEventType, string> = {
@@ -34,7 +36,16 @@ const EVENT_TYPE_COLORS: Record<PointEventType, string> = {
   TURNOVER: "text-red-400",
   BLOCK: "text-yellow-400",
   PULL: "text-white/50",
+  SUBSTITUTION: "text-purple-400",
+  TIMEOUT: "text-orange-400",
 }
+
+type LogStep =
+  | null
+  | { type: "GOAL" | "ASSIST" | "TURNOVER" | "BLOCK" | "PULL" }
+  | { type: "TIMEOUT" }
+  | { type: "SUBSTITUTION"; phase: "out" }
+  | { type: "SUBSTITUTION"; phase: "in"; playerOutId: string }
 
 type Tab = "game" | "broadcast" | "server"
 
@@ -386,10 +397,16 @@ function GameStatusControl({
   async function setStatus(status: GameStatus) {
     setSaving(true)
     try {
+      const body: Record<string, unknown> = { status }
+      if (status === "FINAL") {
+        body.result = game.scoreVoid > game.scoreOpponent ? "WIN"
+          : game.scoreVoid < game.scoreOpponent ? "LOSS"
+          : "TIE"
+      }
       const res = await fetch(`/api/games/${game.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(body),
       })
       if (res.ok) onUpdate(await res.json())
     } finally {
@@ -457,6 +474,18 @@ function RosterSection({
     debounceRef.current = setTimeout(flush, 800)
   }
 
+  function selectAll() {
+    const activePlayers = players.filter(p => p.is_active)
+    const allSelected = activePlayers.every(p => pendingIdsRef.current.has(p.id))
+    const next = allSelected
+      ? new Set<string>()
+      : new Set(activePlayers.map(p => p.id))
+    setPendingIds(next)
+    setSaveStatus("pending")
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(flush, 800)
+  }
+
   async function flush() {
     const latest = pendingIdsRef.current
     const committed = committedRef.current
@@ -518,6 +547,12 @@ function RosterSection({
       <div className="flex items-center gap-3 mb-3">
         <h2 className="text-lg font-bold">Attending Roster</h2>
         <span className="text-white/30 font-normal text-sm">({pendingIds.size} players)</span>
+        <button
+          onClick={selectAll}
+          className="text-xs text-white/30 hover:text-white/60 transition-colors"
+        >
+          {players.filter(p => p.is_active).every(p => pendingIds.has(p.id)) ? "Deselect all" : "Select all"}
+        </button>
         {SAVE_STATUS_LABEL[saveStatus] && (
           <span className={`text-xs ml-auto ${SAVE_STATUS_COLOR[saveStatus]}`}>
             {SAVE_STATUS_LABEL[saveStatus]}
@@ -566,7 +601,7 @@ function ActivePointSection({
   onPointCompleted: (updated: PointItem) => void
   onLineUpdated: (updated: PointItem) => void
 }) {
-  const [logStep, setLogStep] = useState<null | { type: PointEventType }>(null)
+  const [logStep, setLogStep] = useState<LogStep>(null)
   const [addingEvent, setAddingEvent] = useState(false)
   const [completing, setCompleting] = useState(false)
   const [eventError, setEventError] = useState("")
@@ -593,7 +628,18 @@ function ActivePointSection({
     return p ? `${p.first_name} ${p.last_name}` : "Unknown"
   }
 
-  async function handleAddEvent(eventType: PointEventType, playerId: string) {
+  function getEventDetail(ev: PointEventItem): string {
+    if (ev.eventType === "TIMEOUT") return ev.team === "VOID" ? "VOID" : "Opp"
+    if (ev.eventType === "SUBSTITUTION") {
+      return `${getPlayerName(ev.playerId)} → ${ev.playerInId ? getPlayerName(ev.playerInId) : "?"}`
+    }
+    return getPlayerName(ev.playerId)
+  }
+
+  async function handleAddEvent(
+    eventType: PointEventType,
+    opts: { playerId?: string; playerInId?: string; team?: "VOID" | "OPP" }
+  ) {
     setAddingEvent(true)
     setEventError("")
     try {
@@ -604,16 +650,26 @@ function ActivePointSection({
           pointId: point.id,
           gameId: point.gameId,
           eventType,
-          playerId,
+          playerId: opts.playerId ?? "",
+          ...(opts.playerInId ? { playerInId: opts.playerInId } : {}),
+          ...(opts.team ? { team: opts.team } : {}),
           sortOrder: sortedEvents.length + 1,
         }),
       })
       if (res.ok) {
         onEventAdded(await res.json())
+        if (eventType === "SUBSTITUTION" && opts.playerId && opts.playerInId) {
+          const newIds = point.playerIds.filter(id => id !== opts.playerId).concat(opts.playerInId)
+          const pr = await fetch(`/api/points/${point.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ playerIds: newIds }),
+          })
+          if (pr.ok) onLineUpdated(await pr.json())
+        }
         setLogStep(null)
       } else {
-        const data = await res.json()
-        setEventError(data.error ?? "Failed to add event")
+        setEventError((await res.json()).error ?? "Failed to add event")
       }
     } finally {
       setAddingEvent(false)
@@ -728,7 +784,7 @@ function ActivePointSection({
             <div key={ev.id} className="flex items-center gap-3 text-sm group">
               <span className="text-white/20 font-mono text-xs w-4 text-right">{i + 1}</span>
               <span className={`font-medium ${EVENT_TYPE_COLORS[ev.eventType]}`}>{EVENT_TYPE_LABELS[ev.eventType]}</span>
-              <span className="text-white/60">{getPlayerName(ev.playerId)}</span>
+              <span className="text-white/60">{getEventDetail(ev)}</span>
               <button
                 onClick={() => handleDeleteEvent(ev.id)}
                 className="ml-auto text-white/20 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
@@ -742,15 +798,18 @@ function ActivePointSection({
 
       {/* Two-click event logging */}
       <div className="mb-4">
-        {logStep === null ? (
+        {logStep === null && (
           <div>
             <p className="text-xs text-white/40 mb-2">Log event</p>
-            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
               {(Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).map(type => (
                 <button
                   key={type}
                   type="button"
-                  onClick={() => setLogStep({ type })}
+                  onClick={() => {
+                  if (type === "SUBSTITUTION") setLogStep({ type: "SUBSTITUTION", phase: "out" })
+                  else setLogStep({ type: type as "GOAL" | "ASSIST" | "TURNOVER" | "BLOCK" | "PULL" | "TIMEOUT" })
+                }}
                   disabled={addingEvent}
                   className={[
                     "py-2.5 rounded-lg border border-white/15 bg-white/5 text-sm font-medium transition-colors hover:bg-white/10 active:scale-95 disabled:opacity-50",
@@ -762,26 +821,73 @@ function ActivePointSection({
               ))}
             </div>
           </div>
-        ) : (
+        )}
+
+        {logStep !== null && logStep.type === "TIMEOUT" && (
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <button
-                type="button"
-                onClick={() => setLogStep(null)}
-                className="text-white/30 hover:text-white/60 text-xs transition-colors"
-              >
-                ← Back
-              </button>
-              <p className={`text-sm font-medium ${EVENT_TYPE_COLORS[logStep.type]}`}>
-                {EVENT_TYPE_LABELS[logStep.type]} — select player
-              </p>
+              <button type="button" onClick={() => setLogStep(null)} className="text-white/30 hover:text-white/60 text-xs transition-colors">← Back</button>
+              <p className="text-sm font-medium text-orange-400">Timeout — select team</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {(["VOID", "OPP"] as const).map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => handleAddEvent("TIMEOUT", { team: t })}
+                  disabled={addingEvent}
+                  className="py-2.5 rounded-lg border border-white/15 bg-white/5 text-sm font-medium text-white transition-colors hover:bg-white/10 active:scale-95 disabled:opacity-50"
+                >
+                  {t === "VOID" ? "VOID" : "Opponent"}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {logStep !== null && logStep.type === "SUBSTITUTION" && logStep.phase === "out" && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <button type="button" onClick={() => setLogStep(null)} className="text-white/30 hover:text-white/60 text-xs transition-colors">← Back</button>
+              <p className="text-sm font-medium text-purple-400">Sub/Injury — player going out</p>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {linePlayerPool.map(p => (
                 <button
                   key={p.id}
                   type="button"
-                  onClick={() => handleAddEvent(logStep.type, p.id)}
+                  onClick={() => setLogStep({ type: "SUBSTITUTION", phase: "in", playerOutId: p.id })}
+                  disabled={addingEvent}
+                  className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/15 bg-white/5 text-sm transition-colors hover:bg-white/10 active:scale-95 text-left"
+                >
+                  <span className="font-mono text-xs text-white/40 shrink-0">#{p.number}</span>
+                  <span className="text-white truncate">{p.first_name} {p.last_name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {logStep !== null && logStep.type === "SUBSTITUTION" && logStep.phase === "in" && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <button
+                type="button"
+                onClick={() => setLogStep({ type: "SUBSTITUTION", phase: "out" })}
+                className="text-white/30 hover:text-white/60 text-xs transition-colors"
+              >
+                ← Back
+              </button>
+              <p className="text-sm font-medium text-purple-400">
+                Sub — replacing {getPlayerName(logStep.playerOutId)}, player coming in
+              </p>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {attendingPlayers.filter(p => !point.playerIds.includes(p.id)).map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => handleAddEvent("SUBSTITUTION", { playerId: logStep.playerOutId, playerInId: p.id })}
                   disabled={addingEvent}
                   className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/15 bg-white/5 text-sm transition-colors hover:bg-white/10 active:scale-95 text-left disabled:opacity-50"
                 >
@@ -793,6 +899,33 @@ function ActivePointSection({
             {addingEvent && <p className="text-white/30 text-xs mt-2">Logging…</p>}
           </div>
         )}
+
+        {logStep !== null && logStep.type !== "SUBSTITUTION" && logStep.type !== "TIMEOUT" && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <button type="button" onClick={() => setLogStep(null)} className="text-white/30 hover:text-white/60 text-xs transition-colors">← Back</button>
+              <p className={`text-sm font-medium ${EVENT_TYPE_COLORS[logStep.type]}`}>
+                {EVENT_TYPE_LABELS[logStep.type]} — select player
+              </p>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {linePlayerPool.map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => handleAddEvent(logStep.type, { playerId: p.id })}
+                  disabled={addingEvent}
+                  className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/15 bg-white/5 text-sm transition-colors hover:bg-white/10 active:scale-95 text-left disabled:opacity-50"
+                >
+                  <span className="font-mono text-xs text-white/40 shrink-0">#{p.number}</span>
+                  <span className="text-white truncate">{p.first_name} {p.last_name}</span>
+                </button>
+              ))}
+            </div>
+            {addingEvent && <p className="text-white/30 text-xs mt-2">Logging…</p>}
+          </div>
+        )}
+
         {eventError && <p className="text-red-400 text-xs mt-2">{eventError}</p>}
       </div>
 
@@ -1023,7 +1156,7 @@ function CompletedPointRow({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState("")
 
-  const [logStep, setLogStep] = useState<null | { type: PointEventType }>(null)
+  const [logStep, setLogStep] = useState<LogStep>(null)
   const [addingEvent, setAddingEvent] = useState(false)
   const [eventError, setEventError] = useState("")
 
@@ -1041,6 +1174,14 @@ function CompletedPointRow({
   function getPlayerName(id: string) {
     const p = players.find(p => p.id === id)
     return p ? `${p.first_name} ${p.last_name}` : "Unknown"
+  }
+
+  function getEventDetail(ev: PointEventItem): string {
+    if (ev.eventType === "TIMEOUT") return ev.team === "VOID" ? "VOID" : "Opp"
+    if (ev.eventType === "SUBSTITUTION") {
+      return `${getPlayerName(ev.playerId)} → ${ev.playerInId ? getPlayerName(ev.playerInId) : "?"}`
+    }
+    return getPlayerName(ev.playerId)
   }
 
   const linePlayerNames = point.playerIds
@@ -1089,7 +1230,10 @@ function CompletedPointRow({
     setEditing(false)
   }
 
-  async function handleAddEvent(eventType: PointEventType, playerId: string) {
+  async function handleAddEvent(
+    eventType: PointEventType,
+    opts: { playerId?: string; playerInId?: string; team?: "VOID" | "OPP" }
+  ) {
     setAddingEvent(true)
     setEventError("")
     try {
@@ -1100,16 +1244,27 @@ function CompletedPointRow({
           pointId: point.id,
           gameId: point.gameId,
           eventType,
-          playerId,
+          playerId: opts.playerId ?? "",
+          ...(opts.playerInId ? { playerInId: opts.playerInId } : {}),
+          ...(opts.team ? { team: opts.team } : {}),
           sortOrder: sortedEvents.length + 1,
         }),
       })
       if (res.ok) {
         onEventAdded(await res.json())
+        if (eventType === "SUBSTITUTION" && opts.playerId && opts.playerInId) {
+          const newIds = point.playerIds.filter(id => id !== opts.playerId).concat(opts.playerInId)
+          setEditPlayerIds(newIds)
+          const pr = await fetch(`/api/points/${point.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ playerIds: newIds }),
+          })
+          if (pr.ok) onPointUpdated(await pr.json())
+        }
         setLogStep(null)
       } else {
-        const data = await res.json()
-        setEventError(data.error ?? "Failed to add event")
+        setEventError((await res.json()).error ?? "Failed to add event")
       }
     } finally {
       setAddingEvent(false)
@@ -1248,7 +1403,7 @@ function CompletedPointRow({
                       <div key={ev.id} className="flex items-center gap-3 text-sm group">
                         <span className="text-white/20 font-mono text-xs w-4 text-right">{i + 1}</span>
                         <span className={`font-medium ${EVENT_TYPE_COLORS[ev.eventType]}`}>{EVENT_TYPE_LABELS[ev.eventType]}</span>
-                        <span className="text-white/60">{getPlayerName(ev.playerId)}</span>
+                        <span className="text-white/60">{getEventDetail(ev)}</span>
                         <button
                           onClick={() => handleDeleteEvent(ev.id)}
                           className="ml-auto text-white/20 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1264,15 +1419,18 @@ function CompletedPointRow({
 
                 {/* Two-click add event */}
                 <div>
-                  {logStep === null ? (
+                  {logStep === null && (
                     <div>
                       <p className="text-xs text-white/40 mb-1.5">Add event</p>
-                      <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
                         {(Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).map(type => (
                           <button
                             key={type}
                             type="button"
-                            onClick={() => setLogStep({ type })}
+                            onClick={() => {
+                              if (type === "SUBSTITUTION") setLogStep({ type: "SUBSTITUTION", phase: "out" })
+                              else setLogStep({ type: type as "GOAL" | "ASSIST" | "TURNOVER" | "BLOCK" | "PULL" | "TIMEOUT" })
+                            }}
                             disabled={addingEvent}
                             className={[
                               "py-2 rounded-md border border-white/15 bg-white/5 text-xs font-medium transition-colors hover:bg-white/10 active:scale-95 disabled:opacity-50",
@@ -1284,29 +1442,56 @@ function CompletedPointRow({
                         ))}
                       </div>
                     </div>
-                  ) : (
+                  )}
+
+                  {logStep !== null && logStep.type === "TIMEOUT" && (
                     <div>
                       <div className="flex items-center gap-2 mb-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setLogStep(null)}
-                          className="text-white/30 hover:text-white/60 text-xs transition-colors"
-                        >
-                          ← Back
-                        </button>
-                        <p className={`text-xs font-medium ${EVENT_TYPE_COLORS[logStep.type]}`}>
-                          {EVENT_TYPE_LABELS[logStep.type]} — select player
-                        </p>
+                        <button type="button" onClick={() => setLogStep(null)} className="text-white/30 hover:text-white/60 text-xs transition-colors">← Back</button>
+                        <p className="text-xs font-medium text-orange-400">Timeout — select team</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {(["VOID", "OPP"] as const).map(t => (
+                          <button key={t} type="button" onClick={() => handleAddEvent("TIMEOUT", { team: t })} disabled={addingEvent}
+                            className="py-2 rounded-md border border-white/15 bg-white/5 text-xs font-medium text-white transition-colors hover:bg-white/10 active:scale-95 disabled:opacity-50">
+                            {t === "VOID" ? "VOID" : "Opponent"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {logStep !== null && logStep.type === "SUBSTITUTION" && logStep.phase === "out" && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <button type="button" onClick={() => setLogStep(null)} className="text-white/30 hover:text-white/60 text-xs transition-colors">← Back</button>
+                        <p className="text-xs font-medium text-purple-400">Sub — player going out</p>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                         {linePlayerPool.map(p => (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onClick={() => handleAddEvent(logStep.type, p.id)}
+                          <button key={p.id} type="button"
+                            onClick={() => setLogStep({ type: "SUBSTITUTION", phase: "in", playerOutId: p.id })}
+                            className="flex items-center gap-2 px-2.5 py-2 rounded-md border border-white/15 bg-white/5 text-xs transition-colors hover:bg-white/10 active:scale-95 text-left">
+                            <span className="font-mono text-white/30 shrink-0">#{p.number}</span>
+                            <span className="text-white truncate">{p.first_name} {p.last_name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {logStep !== null && logStep.type === "SUBSTITUTION" && logStep.phase === "in" && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <button type="button" onClick={() => setLogStep({ type: "SUBSTITUTION", phase: "out" })} className="text-white/30 hover:text-white/60 text-xs transition-colors">← Back</button>
+                        <p className="text-xs font-medium text-purple-400">Sub — replacing {getPlayerName(logStep.playerOutId)}, player coming in</p>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                        {attendingPlayers.filter(p => !point.playerIds.includes(p.id)).map(p => (
+                          <button key={p.id} type="button"
+                            onClick={() => handleAddEvent("SUBSTITUTION", { playerId: logStep.playerOutId, playerInId: p.id })}
                             disabled={addingEvent}
-                            className="flex items-center gap-2 px-2.5 py-2 rounded-md border border-white/15 bg-white/5 text-xs transition-colors hover:bg-white/10 active:scale-95 text-left disabled:opacity-50"
-                          >
+                            className="flex items-center gap-2 px-2.5 py-2 rounded-md border border-white/15 bg-white/5 text-xs transition-colors hover:bg-white/10 active:scale-95 text-left disabled:opacity-50">
                             <span className="font-mono text-white/30 shrink-0">#{p.number}</span>
                             <span className="text-white truncate">{p.first_name} {p.last_name}</span>
                           </button>
@@ -1315,6 +1500,30 @@ function CompletedPointRow({
                       {addingEvent && <p className="text-white/30 text-xs mt-1">Logging…</p>}
                     </div>
                   )}
+
+                  {logStep !== null && logStep.type !== "SUBSTITUTION" && logStep.type !== "TIMEOUT" && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <button type="button" onClick={() => setLogStep(null)} className="text-white/30 hover:text-white/60 text-xs transition-colors">← Back</button>
+                        <p className={`text-xs font-medium ${EVENT_TYPE_COLORS[logStep.type]}`}>
+                          {EVENT_TYPE_LABELS[logStep.type]} — select player
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                        {linePlayerPool.map(p => (
+                          <button key={p.id} type="button"
+                            onClick={() => handleAddEvent(logStep.type, { playerId: p.id })}
+                            disabled={addingEvent}
+                            className="flex items-center gap-2 px-2.5 py-2 rounded-md border border-white/15 bg-white/5 text-xs transition-colors hover:bg-white/10 active:scale-95 text-left disabled:opacity-50">
+                            <span className="font-mono text-white/30 shrink-0">#{p.number}</span>
+                            <span className="text-white truncate">{p.first_name} {p.last_name}</span>
+                          </button>
+                        ))}
+                      </div>
+                      {addingEvent && <p className="text-white/30 text-xs mt-1">Logging…</p>}
+                    </div>
+                  )}
+
                   {eventError && <p className="text-red-400 text-xs mt-1">{eventError}</p>}
                 </div>
               </div>

@@ -39,18 +39,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
-  const { pointId, gameId, eventType, playerId, sortOrder } = await request.json()
+  const { pointId, gameId, eventType, playerId, playerInId, team, sortOrder } = await request.json()
 
-  if (!pointId || !gameId || !eventType || !playerId || sortOrder === undefined) {
+  const VALID_TYPES = ["GOAL", "ASSIST", "TURNOVER", "BLOCK", "PULL", "SUBSTITUTION", "TIMEOUT"]
+  if (!pointId || !gameId || !eventType || sortOrder === undefined) {
     return NextResponse.json(
-      { error: "pointId, gameId, eventType, playerId, and sortOrder are required" },
+      { error: "pointId, gameId, eventType, and sortOrder are required" },
       { status: 400 }
     )
   }
-
-  const VALID_TYPES = ["GOAL", "ASSIST", "TURNOVER", "BLOCK", "PULL"]
   if (!VALID_TYPES.includes(eventType)) {
     return NextResponse.json({ error: `eventType must be one of: ${VALID_TYPES.join(", ")}` }, { status: 400 })
+  }
+  if (eventType !== "TIMEOUT" && !playerId) {
+    return NextResponse.json({ error: "playerId is required for this event type" }, { status: 400 })
   }
 
   const item = {
@@ -58,7 +60,9 @@ export async function POST(request: NextRequest) {
     pointId,
     gameId,
     eventType,
-    playerId,
+    playerId: playerId ?? "",
+    ...(playerInId ? { playerInId } : {}),
+    ...(team ? { team } : {}),
     sortOrder,
     createdAt: new Date().toISOString(),
   }

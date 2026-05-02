@@ -20,6 +20,8 @@ const EVENT_LABELS: Record<PointEventType, string> = {
   TURNOVER: "Turnover",
   BLOCK: "Block",
   PULL: "Pull",
+  SUBSTITUTION: "Sub",
+  TIMEOUT: "Timeout",
 }
 
 const EVENT_COLORS: Record<PointEventType, string> = {
@@ -28,6 +30,8 @@ const EVENT_COLORS: Record<PointEventType, string> = {
   TURNOVER: "text-red-400",
   BLOCK: "text-yellow-400",
   PULL: "text-white/40",
+  SUBSTITUTION: "text-purple-400",
+  TIMEOUT: "text-orange-400",
 }
 
 // Possession is determined by line type at the start of the point
@@ -355,7 +359,13 @@ export default function LiveWatchPage() {
                   <span className={`font-medium shrink-0 ${EVENT_COLORS[ev.eventType]}`}>
                     {EVENT_LABELS[ev.eventType]}
                   </span>
-                  <span className="text-white/60 truncate">{getPlayerName(ev.playerId)}</span>
+                  <span className="text-white/60 truncate">
+                    {ev.eventType === "TIMEOUT"
+                      ? (ev.team === "VOID" ? "VOID" : "Opp")
+                      : ev.eventType === "SUBSTITUTION"
+                        ? `${getPlayerName(ev.playerId)} → ${ev.playerInId ? getPlayerName(ev.playerInId) : "?"}`
+                        : getPlayerName(ev.playerId)}
+                  </span>
                 </div>
               )
             })}
@@ -504,7 +514,7 @@ function FieldView({
                       ? "text-green-400 bg-green-400/15 border border-green-400/25"
                       : "text-white/35 bg-white/5 border border-white/10"
                   }`}>
-                    {voidOnOffense ? "OFFENSE" : "DEFENSE"}
+                    {voidOnOffense ? "O-line" : "D-line"}
                   </div>
                   {linePlayers.slice(0, 7).map(p => (
                     <div

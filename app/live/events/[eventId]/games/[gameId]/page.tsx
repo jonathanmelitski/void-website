@@ -21,6 +21,8 @@ const EVENT_TYPE_LABELS: Record<PointEventType, string> = {
   TURNOVER: "Turnover",
   BLOCK: "Block",
   PULL: "Pull",
+  SUBSTITUTION: "Sub",
+  TIMEOUT: "Timeout",
 }
 
 const EVENT_TYPE_COLORS: Record<PointEventType, string> = {
@@ -29,6 +31,8 @@ const EVENT_TYPE_COLORS: Record<PointEventType, string> = {
   TURNOVER: "text-red-400",
   BLOCK: "text-yellow-400",
   PULL: "text-white/50",
+  SUBSTITUTION: "text-purple-400",
+  TIMEOUT: "text-orange-400",
 }
 
 type PlayerStat = {
