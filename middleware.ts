@@ -8,18 +8,28 @@ function getJWKS() {
 
 export async function middleware(request: NextRequest) {
   const token = request.cookies.get("access_token")?.value
+  const hasRefreshToken = !!request.cookies.get("refresh_token")?.value
 
-  if (!token) {
-    return NextResponse.redirect(new URL("/live/login", request.url))
+  if (token) {
+    try {
+      const issuer = `https://cognito-idp.${process.env.VOID_REGION}.amazonaws.com/${process.env.COGNITO_USER_POOL_ID}`
+      await jwtVerify(token, getJWKS(), { issuer })
+      return NextResponse.next()
+    } catch {
+      // Token expired or invalid — fall through to refresh
+    }
   }
 
-  try {
-    const issuer = `https://cognito-idp.${process.env.VOID_REGION}.amazonaws.com/${process.env.COGNITO_USER_POOL_ID}`
-    await jwtVerify(token, getJWKS(), { issuer })
-    return NextResponse.next()
-  } catch {
-    return NextResponse.redirect(new URL("/live/login", request.url))
+  if (hasRefreshToken) {
+    const refreshUrl = new URL("/api/auth/refresh", request.url)
+    refreshUrl.searchParams.set(
+      "redirect",
+      request.nextUrl.pathname + request.nextUrl.search
+    )
+    return NextResponse.redirect(refreshUrl)
   }
+
+  return NextResponse.redirect(new URL("/live/login", request.url))
 }
 
 export const config = {

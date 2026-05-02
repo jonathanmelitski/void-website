@@ -57,6 +57,10 @@ export default function GameManagePage() {
   const [error, setError] = useState("")
   const [activeTab, setActiveTab] = useState<Tab>("game")
   const [resourceStatus, setResourceStatus] = useState<ResourceStatus>({ broadcast: null, server: null })
+  const [savingReceiving, setSavingReceiving] = useState(false)
+  const [editingOpponent, setEditingOpponent] = useState(false)
+  const [opponentDraft, setOpponentDraft] = useState("")
+  const [savingOpponent, setSavingOpponent] = useState(false)
   const statusIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
@@ -124,6 +128,37 @@ export default function GameManagePage() {
     return () => { if (statusIntervalRef.current) clearInterval(statusIntervalRef.current) }
   }, [fetchResourceStatus])
 
+  async function handleSaveOpponent() {
+    const trimmed = opponentDraft.trim()
+    if (!trimmed || !game) return
+    setSavingOpponent(true)
+    try {
+      const res = await fetch(`/api/games/${game.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opponent: trimmed }),
+      })
+      if (res.ok) { setGame(await res.json()); setEditingOpponent(false) }
+    } finally {
+      setSavingOpponent(false)
+    }
+  }
+
+  async function handleToggleReceiving() {
+    if (!game || savingReceiving) return
+    setSavingReceiving(true)
+    try {
+      const res = await fetch(`/api/games/${game.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voidReceivingFirst: !game.voidReceivingFirst }),
+      })
+      if (res.ok) setGame(await res.json())
+    } finally {
+      setSavingReceiving(false)
+    }
+  }
+
   if (isLoading || !user) {
     return <div className="flex items-center justify-center h-full"><div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" /></div>
   }
@@ -174,7 +209,33 @@ export default function GameManagePage() {
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2 mb-1">
-              <h1 className="text-2xl sm:text-3xl font-black truncate">vs {game.opponent}</h1>
+              {editingOpponent ? (
+                <form
+                  onSubmit={e => { e.preventDefault(); handleSaveOpponent() }}
+                  className="flex items-center gap-2"
+                >
+                  <span className="text-2xl sm:text-3xl font-black text-white/40">vs</span>
+                  <input
+                    autoFocus
+                    value={opponentDraft}
+                    onChange={e => setOpponentDraft(e.target.value)}
+                    className="text-2xl sm:text-3xl font-black bg-transparent border-b border-white/40 focus:border-white outline-none text-white w-40"
+                  />
+                  <button type="submit" disabled={savingOpponent} className="text-xs text-white/50 hover:text-white transition-colors">
+                    {savingOpponent ? "…" : "Save"}
+                  </button>
+                  <button type="button" onClick={() => setEditingOpponent(false)} className="text-xs text-white/30 hover:text-white/60 transition-colors">
+                    Cancel
+                  </button>
+                </form>
+              ) : (
+                <button
+                  onClick={() => { setOpponentDraft(game.opponent); setEditingOpponent(true) }}
+                  className="text-2xl sm:text-3xl font-black truncate hover:text-white/70 transition-colors text-left"
+                >
+                  vs {game.opponent}
+                </button>
+              )}
               <Badge variant={STATUS_VARIANT[game.status]}>{game.status}</Badge>
               {game.result && (
                 <span className={`text-sm font-bold ${game.result === "WIN" ? "text-green-400" : game.result === "LOSS" ? "text-red-400" : "text-yellow-400"}`}>
@@ -198,7 +259,18 @@ export default function GameManagePage() {
             <p className="text-white/60 font-mono text-xl sm:text-2xl mt-2">
               {game.scoreVoid} – {game.scoreOpponent}
             </p>
-            <p className="text-white/30 text-xs mt-1">Cap: {game.cap} · VOID {game.voidReceivingFirst ? "received" : "pulled"} first</p>
+            {game.status !== "FINAL" ? (
+              <button
+                onClick={handleToggleReceiving}
+                disabled={savingReceiving}
+                className="text-white/30 text-xs mt-1 hover:text-white/60 transition-colors disabled:opacity-50 text-left"
+              >
+                Cap: {game.cap} · VOID {game.voidReceivingFirst ? "received" : "pulled"} first
+                <span className="ml-1 text-white/20">(tap to change)</span>
+              </button>
+            ) : (
+              <p className="text-white/30 text-xs mt-1">Cap: {game.cap} · VOID {game.voidReceivingFirst ? "received" : "pulled"} first</p>
+            )}
           </div>
           <GameStatusControl
             game={game}
@@ -246,6 +318,7 @@ export default function GameManagePage() {
                 setPoints(prev => prev.map(p => p.id === updated.id ? updated : p))
                 loadData()
               }}
+              onLineUpdated={updated => setPoints(prev => prev.map(p => p.id === updated.id ? updated : p))}
             />
           )}
 
@@ -483,6 +556,7 @@ function ActivePointSection({
   onEventAdded,
   onEventDeleted,
   onPointCompleted,
+  onLineUpdated,
 }: {
   point: PointItem
   attendingPlayers: PlayerItem[]
@@ -490,24 +564,36 @@ function ActivePointSection({
   onEventAdded: (e: PointEventItem) => void
   onEventDeleted: (id: string) => void
   onPointCompleted: (updated: PointItem) => void
+  onLineUpdated: (updated: PointItem) => void
 }) {
-  const [selectedPlayer, setSelectedPlayer] = useState("")
-  const [selectedType, setSelectedType] = useState<PointEventType>("GOAL")
+  const [logStep, setLogStep] = useState<null | { type: PointEventType }>(null)
   const [addingEvent, setAddingEvent] = useState(false)
   const [completing, setCompleting] = useState(false)
   const [eventError, setEventError] = useState("")
 
+  const [editingLine, setEditingLine] = useState(false)
+  const [editPlayerIds, setEditPlayerIds] = useState<string[]>([])
+  const [savingLine, setSavingLine] = useState(false)
+  const [lineError, setLineError] = useState("")
+
   const sortedEvents = [...events].sort((a, b) => a.sortOrder - b.sortOrder)
   const hasGoal = sortedEvents.some(e => e.eventType === "GOAL")
+
+  const playerIdsWithEvents = new Set(events.map(e => e.playerId))
+  const removedWithEvents = point.playerIds.filter(
+    id => !editPlayerIds.includes(id) && playerIdsWithEvents.has(id)
+  )
+
+  const linePlayerPool = point.playerIds.length > 0
+    ? attendingPlayers.filter(p => point.playerIds.includes(p.id))
+    : attendingPlayers
 
   function getPlayerName(id: string) {
     const p = attendingPlayers.find(p => p.id === id)
     return p ? `${p.first_name} ${p.last_name}` : "Unknown"
   }
 
-  async function handleAddEvent(e: React.FormEvent) {
-    e.preventDefault()
-    if (!selectedPlayer) { setEventError("Select a player"); return }
+  async function handleAddEvent(eventType: PointEventType, playerId: string) {
     setAddingEvent(true)
     setEventError("")
     try {
@@ -517,14 +603,14 @@ function ActivePointSection({
         body: JSON.stringify({
           pointId: point.id,
           gameId: point.gameId,
-          eventType: selectedType,
-          playerId: selectedPlayer,
+          eventType,
+          playerId,
           sortOrder: sortedEvents.length + 1,
         }),
       })
       if (res.ok) {
         onEventAdded(await res.json())
-        setSelectedPlayer("")
+        setLogStep(null)
       } else {
         const data = await res.json()
         setEventError(data.error ?? "Failed to add event")
@@ -540,7 +626,6 @@ function ActivePointSection({
   }
 
   async function handleCompletePoint(voidScored: boolean) {
-    // HOLD = O-line scores (expected); BREAK = D-line scores (unexpected)
     const outcome = voidScored
       ? (point.lineType === "O" ? "HOLD" : "BREAK")
       : (point.lineType === "O" ? "BREAK" : "HOLD")
@@ -557,22 +642,84 @@ function ActivePointSection({
     }
   }
 
+  async function handleSaveLine() {
+    setSavingLine(true)
+    setLineError("")
+    try {
+      const res = await fetch(`/api/points/${point.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ playerIds: editPlayerIds }),
+      })
+      if (!res.ok) { setLineError((await res.json()).error ?? "Failed to save"); return }
+      onLineUpdated(await res.json())
+      setEditingLine(false)
+    } finally {
+      setSavingLine(false)
+    }
+  }
+
   return (
     <section className="border border-white/20 rounded-xl p-5 bg-white/3">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
         <div>
           <h2 className="text-lg font-bold">Point {point.pointNumber} — In Progress</h2>
-          <p className="text-white/40 text-sm mt-0.5">
-            {point.lineType === "O" ? "O-line (VOID on offense)" : "D-line (VOID on defense)"}
-            {point.playerIds.length > 0 && (
-              <span className="ml-2">
-                · {point.playerIds.map(id => attendingPlayers.find(p => p.id === id)).filter(Boolean).map(p => p!.first_name).join(", ")}
-              </span>
-            )}
-          </p>
+          <div className="flex flex-wrap items-center gap-2 mt-0.5">
+            <p className="text-white/40 text-sm">
+              {point.lineType === "O" ? "O-line (VOID on offense)" : "D-line (VOID on defense)"}
+              {point.playerIds.length > 0 && (
+                <span className="ml-2">
+                  · {point.playerIds.map(id => attendingPlayers.find(p => p.id === id)).filter(Boolean).map(p => p!.first_name).join(", ")}
+                </span>
+              )}
+            </p>
+            <button
+              onClick={() => { setEditPlayerIds(point.playerIds); setEditingLine(true); setLogStep(null) }}
+              className="text-white/30 hover:text-white/60 text-xs transition-colors"
+            >
+              Edit line
+            </button>
+          </div>
         </div>
-        <div className="text-white/30 text-sm font-mono">{point.voidScoreBefore} – {point.opponentScoreBefore}</div>
+        <div className="text-white/30 text-sm font-mono shrink-0">{point.voidScoreBefore} – {point.opponentScoreBefore}</div>
       </div>
+
+      {/* Edit line panel */}
+      {editingLine && (
+        <div className="mb-4 p-3 rounded-lg bg-white/5 border border-white/10">
+          <p className="text-xs text-white/40 mb-2">Edit line ({editPlayerIds.length} players)</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 mb-3">
+            {attendingPlayers.map(p => {
+              const selected = editPlayerIds.includes(p.id)
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setEditPlayerIds(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id])}
+                  className={[
+                    "flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-xs transition-colors text-left",
+                    selected ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/40 hover:text-white/60",
+                  ].join(" ")}
+                >
+                  <span className="font-mono text-white/30 shrink-0">#{p.number}</span>
+                  <span className="truncate">{p.first_name} {p.last_name}</span>
+                </button>
+              )
+            })}
+          </div>
+          {removedWithEvents.length > 0 && (
+            <p className="text-amber-400 text-xs mb-2">
+              Warning: {removedWithEvents.map(id => attendingPlayers.find(x => x.id === id)?.first_name ?? "Unknown").join(", ")}
+              {" "}{removedWithEvents.length === 1 ? "has" : "have"} events logged on this point.
+            </p>
+          )}
+          {lineError && <p className="text-red-400 text-xs mb-2">{lineError}</p>}
+          <div className="flex gap-2">
+            <Button size="sm" onClick={handleSaveLine} disabled={savingLine}>{savingLine ? "Saving…" : "Save"}</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setEditingLine(false); setLineError("") }}>Cancel</Button>
+          </div>
+        </div>
+      )}
 
       {/* Event log */}
       {sortedEvents.length > 0 && (
@@ -593,44 +740,71 @@ function ActivePointSection({
         </div>
       )}
 
-      {/* Add event form */}
-      <form onSubmit={handleAddEvent} className="flex items-end gap-2 mb-4">
-        <select
-          value={selectedType}
-          onChange={e => setSelectedType(e.target.value as PointEventType)}
-          className="bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white focus:outline-none"
-        >
-          {(Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).map(t => (
-            <option key={t} value={t} className="bg-neutral-900">{EVENT_TYPE_LABELS[t]}</option>
-          ))}
-        </select>
-        <select
-          value={selectedPlayer}
-          onChange={e => setSelectedPlayer(e.target.value)}
-          className="bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white focus:outline-none flex-1"
-        >
-          <option value="" className="bg-neutral-900">Select player…</option>
-          {attendingPlayers.map(p => (
-            <option key={p.id} value={p.id} className="bg-neutral-900">
-              #{p.number} {p.first_name} {p.last_name}
-            </option>
-          ))}
-        </select>
-        <Button type="submit" size="sm" variant="outline" disabled={addingEvent}>
-          {addingEvent ? "…" : "Log"}
-        </Button>
-      </form>
-      {eventError && <p className="text-red-400 text-xs mb-3">{eventError}</p>}
+      {/* Two-click event logging */}
+      <div className="mb-4">
+        {logStep === null ? (
+          <div>
+            <p className="text-xs text-white/40 mb-2">Log event</p>
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+              {(Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).map(type => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setLogStep({ type })}
+                  disabled={addingEvent}
+                  className={[
+                    "py-2.5 rounded-lg border border-white/15 bg-white/5 text-sm font-medium transition-colors hover:bg-white/10 active:scale-95 disabled:opacity-50",
+                    EVENT_TYPE_COLORS[type],
+                  ].join(" ")}
+                >
+                  {EVENT_TYPE_LABELS[type]}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <button
+                type="button"
+                onClick={() => setLogStep(null)}
+                className="text-white/30 hover:text-white/60 text-xs transition-colors"
+              >
+                ← Back
+              </button>
+              <p className={`text-sm font-medium ${EVENT_TYPE_COLORS[logStep.type]}`}>
+                {EVENT_TYPE_LABELS[logStep.type]} — select player
+              </p>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {linePlayerPool.map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => handleAddEvent(logStep.type, p.id)}
+                  disabled={addingEvent}
+                  className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/15 bg-white/5 text-sm transition-colors hover:bg-white/10 active:scale-95 text-left disabled:opacity-50"
+                >
+                  <span className="font-mono text-xs text-white/40 shrink-0">#{p.number}</span>
+                  <span className="text-white truncate">{p.first_name} {p.last_name}</span>
+                </button>
+              ))}
+            </div>
+            {addingEvent && <p className="text-white/30 text-xs mt-2">Logging…</p>}
+          </div>
+        )}
+        {eventError && <p className="text-red-400 text-xs mt-2">{eventError}</p>}
+      </div>
 
       {/* Complete point */}
-      <div className="flex items-center gap-3 pt-4 border-t border-white/10">
-        <span className="text-white/40 text-sm">Complete point:</span>
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-4 border-t border-white/10">
+        <span className="text-white/40 text-sm shrink-0">Complete point:</span>
         <Button
           size="sm"
           variant="outline"
           onClick={() => handleCompletePoint(true)}
           disabled={completing || !hasGoal}
-          className="text-green-400 border-green-400/30 hover:bg-green-400/10"
+          className="w-full sm:w-auto text-green-400 border-green-400/30 hover:bg-green-400/10"
         >
           VOID Scored — {point.lineType === "O" ? "Hold" : "Break!"}
         </Button>
@@ -639,7 +813,7 @@ function ActivePointSection({
           variant="outline"
           onClick={() => handleCompletePoint(false)}
           disabled={completing}
-          className="text-red-400 border-red-400/30 hover:bg-red-400/10"
+          className="w-full sm:w-auto text-red-400 border-red-400/30 hover:bg-red-400/10"
         >
           Opp Scored — {point.lineType === "O" ? "Break" : "Hold"}
         </Button>
@@ -849,13 +1023,20 @@ function CompletedPointRow({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState("")
 
-  // Add-event form state
-  const [selectedPlayer, setSelectedPlayer] = useState("")
-  const [selectedType, setSelectedType] = useState<PointEventType>("GOAL")
+  const [logStep, setLogStep] = useState<null | { type: PointEventType }>(null)
   const [addingEvent, setAddingEvent] = useState(false)
   const [eventError, setEventError] = useState("")
 
   const sortedEvents = [...events].sort((a, b) => a.sortOrder - b.sortOrder)
+
+  const eventPlayerIds = new Set(events.map(e => e.playerId))
+  const removedWithEvents = point.playerIds.filter(
+    id => !editPlayerIds.includes(id) && eventPlayerIds.has(id)
+  )
+
+  const linePlayerPool = point.playerIds.length > 0
+    ? attendingPlayers.filter(p => point.playerIds.includes(p.id))
+    : attendingPlayers
 
   function getPlayerName(id: string) {
     const p = players.find(p => p.id === id)
@@ -904,12 +1085,11 @@ function CompletedPointRow({
     setEditLineType(point.lineType)
     setEditPlayerIds(point.playerIds)
     setSaveError("")
+    setLogStep(null)
     setEditing(false)
   }
 
-  async function handleAddEvent(e: React.FormEvent) {
-    e.preventDefault()
-    if (!selectedPlayer) { setEventError("Select a player"); return }
+  async function handleAddEvent(eventType: PointEventType, playerId: string) {
     setAddingEvent(true)
     setEventError("")
     try {
@@ -919,14 +1099,14 @@ function CompletedPointRow({
         body: JSON.stringify({
           pointId: point.id,
           gameId: point.gameId,
-          eventType: selectedType,
-          playerId: selectedPlayer,
+          eventType,
+          playerId,
           sortOrder: sortedEvents.length + 1,
         }),
       })
       if (res.ok) {
         onEventAdded(await res.json())
-        setSelectedPlayer("")
+        setLogStep(null)
       } else {
         const data = await res.json()
         setEventError(data.error ?? "Failed to add event")
@@ -1051,6 +1231,12 @@ function CompletedPointRow({
                     )
                   })}
                 </div>
+                {removedWithEvents.length > 0 && (
+                  <p className="text-amber-400 text-xs mt-2">
+                    Warning: {removedWithEvents.map(id => attendingPlayers.find(x => x.id === id)?.first_name ?? getPlayerName(id)).join(", ")}
+                    {" "}{removedWithEvents.length === 1 ? "has" : "have"} events logged on this point.
+                  </p>
+                )}
               </div>
 
               {/* Event log with delete */}
@@ -1076,34 +1262,61 @@ function CompletedPointRow({
                   <p className="text-white/20 text-xs mb-3">No events logged.</p>
                 )}
 
-                {/* Add event form */}
-                <form onSubmit={handleAddEvent} className="flex items-center gap-2">
-                  <select
-                    value={selectedType}
-                    onChange={e => setSelectedType(e.target.value as PointEventType)}
-                    className="bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-xs text-white focus:outline-none"
-                  >
-                    {(Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).map(t => (
-                      <option key={t} value={t} className="bg-neutral-900">{EVENT_TYPE_LABELS[t]}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={selectedPlayer}
-                    onChange={e => setSelectedPlayer(e.target.value)}
-                    className="bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-xs text-white focus:outline-none flex-1"
-                  >
-                    <option value="" className="bg-neutral-900">Select player…</option>
-                    {attendingPlayers.map(p => (
-                      <option key={p.id} value={p.id} className="bg-neutral-900">
-                        #{p.number} {p.first_name} {p.last_name}
-                      </option>
-                    ))}
-                  </select>
-                  <Button type="submit" size="sm" variant="outline" disabled={addingEvent} className="text-xs h-7 px-2">
-                    {addingEvent ? "…" : "+ Log"}
-                  </Button>
-                </form>
-                {eventError && <p className="text-red-400 text-xs mt-1">{eventError}</p>}
+                {/* Two-click add event */}
+                <div>
+                  {logStep === null ? (
+                    <div>
+                      <p className="text-xs text-white/40 mb-1.5">Add event</p>
+                      <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+                        {(Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).map(type => (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => setLogStep({ type })}
+                            disabled={addingEvent}
+                            className={[
+                              "py-2 rounded-md border border-white/15 bg-white/5 text-xs font-medium transition-colors hover:bg-white/10 active:scale-95 disabled:opacity-50",
+                              EVENT_TYPE_COLORS[type],
+                            ].join(" ")}
+                          >
+                            {EVENT_TYPE_LABELS[type]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setLogStep(null)}
+                          className="text-white/30 hover:text-white/60 text-xs transition-colors"
+                        >
+                          ← Back
+                        </button>
+                        <p className={`text-xs font-medium ${EVENT_TYPE_COLORS[logStep.type]}`}>
+                          {EVENT_TYPE_LABELS[logStep.type]} — select player
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                        {linePlayerPool.map(p => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => handleAddEvent(logStep.type, p.id)}
+                            disabled={addingEvent}
+                            className="flex items-center gap-2 px-2.5 py-2 rounded-md border border-white/15 bg-white/5 text-xs transition-colors hover:bg-white/10 active:scale-95 text-left disabled:opacity-50"
+                          >
+                            <span className="font-mono text-white/30 shrink-0">#{p.number}</span>
+                            <span className="text-white truncate">{p.first_name} {p.last_name}</span>
+                          </button>
+                        ))}
+                      </div>
+                      {addingEvent && <p className="text-white/30 text-xs mt-1">Logging…</p>}
+                    </div>
+                  )}
+                  {eventError && <p className="text-red-400 text-xs mt-1">{eventError}</p>}
+                </div>
               </div>
 
               {/* Save / Cancel */}

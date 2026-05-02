@@ -460,7 +460,7 @@ function FieldView({
           }`}>
             <span className="text-white/50 text-[10px] font-bold tracking-wider rotate-[-90deg] select-none whitespace-nowrap">VOID</span>
             {isActive && (
-              <span className={`absolute bottom-2 text-[8px] font-bold tracking-widest rotate-[-90deg] whitespace-nowrap ${
+              <span className={`absolute bottom-2 text-[8px] font-bold tracking-widest whitespace-nowrap ${
                 leftIsAttack ? "text-green-400/60" : "text-white/25"
               }`}>
                 {leftIsAttack ? "ATTACK" : "DEFEND"}
@@ -530,7 +530,7 @@ function FieldView({
               {opponent.toUpperCase()}
             </span>
             {isActive && (
-              <span className={`absolute bottom-2 text-[8px] font-bold tracking-widest rotate-[90deg] whitespace-nowrap ${
+              <span className={`absolute bottom-2 text-[8px] font-bold tracking-widest whitespace-nowrap ${
                 rightIsAttack ? "text-green-400/60" : "text-white/25"
               }`}>
                 {rightIsAttack ? "ATTACK" : "DEFEND"}

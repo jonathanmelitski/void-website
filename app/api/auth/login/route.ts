@@ -57,6 +57,10 @@ export async function POST(request: NextRequest) {
       ...cookieOptions,
       maxAge: 30 * 24 * 60 * 60,
     })
+    response.cookies.set("cognito_username", email, {
+      ...cookieOptions,
+      maxAge: 30 * 24 * 60 * 60,
+    })
 
     return response
   } catch (err: unknown) {
