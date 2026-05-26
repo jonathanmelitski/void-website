@@ -1,10 +1,20 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
+import dynamic from "next/dynamic"
 import { useAuth } from "@/lib/use-auth"
+import { usePrefetchIntent } from "@/hooks/use-prefetch-intent"
+import { useFilmClips } from "@/hooks/use-film-clips"
 import type { GameItem } from "@/lib/aws/games"
+import type { FilmClipItem } from "@/lib/aws/film-clips"
+import type { FilmAnnotationItem } from "@/lib/aws/film-annotations"
+
+const FilmViewer = dynamic(
+  () => import("@/components/film/FilmViewer").then(m => m.FilmViewer),
+  { ssr: false }
+)
 
 const RESULT_COLORS: Record<string, string> = {
   WIN: "text-green-400",
@@ -12,9 +22,252 @@ const RESULT_COLORS: Record<string, string> = {
   TIE: "text-yellow-400",
 }
 
-function GamesList({ eventId }: { eventId: string }) {
-  const params = useParams<{ eventId: string }>()
+function GameRow({ game, eventId }: { game: GameItem; eventId: string }) {
   const router = useRouter()
+  const href = `/live/events/${eventId}/games/${game.id}`
+
+  const handleMouseEnter = useCallback(() => {
+    router.prefetch(href)
+    fetch(`/api/games/${game.id}`, { priority: "low" }).catch(() => {})
+    fetch(`/api/points?gameId=${game.id}`, { priority: "low" }).catch(() => {})
+    fetch(`/api/point-events?gameId=${game.id}`, { priority: "low" }).catch(() => {})
+  }, [router, href, game.id])
+
+  return (
+    <button
+      onClick={() => router.push(href)}
+      onMouseEnter={handleMouseEnter}
+      className="flex items-center gap-4 px-4 py-3 rounded-lg border border-white/10 hover:border-white/20 hover:bg-white/3 transition-colors text-left group"
+    >
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-sm">vs {game.opponent}</span>
+          {game.round && <span className="text-white/30 text-xs">{game.round}</span>}
+        </div>
+      </div>
+      <div className="flex items-center gap-3 shrink-0">
+        {game.status !== "SCHEDULED" && (
+          <span className="font-mono text-sm">
+            <span className={game.result === "WIN" ? "text-green-400" : game.result === "LOSS" ? "text-red-400" : ""}>{game.scoreVoid}</span>
+            {" – "}
+            <span className={game.result === "LOSS" ? "text-green-400" : game.result === "WIN" ? "text-red-400" : ""}>{game.scoreOpponent}</span>
+          </span>
+        )}
+        {game.result && (
+          <span className={`text-xs font-bold ${RESULT_COLORS[game.result] ?? ""}`}>{game.result}</span>
+        )}
+        {game.status === "SCHEDULED" && (
+          <span className="text-white/30 text-xs">Scheduled</span>
+        )}
+        {game.status === "IN_PROGRESS" && (
+          <span className="text-yellow-400/70 text-xs font-medium">Live</span>
+        )}
+      </div>
+      <span className="text-white/20 group-hover:text-white/40 text-xs transition-colors">→</span>
+    </button>
+  )
+}
+
+function GameClipList({
+  game,
+  isCoachOrAdmin,
+  onWatch,
+}: {
+  game: GameItem
+  isCoachOrAdmin: boolean
+  onWatch: (clips: FilmClipItem[], annotations: FilmAnnotationItem[]) => void
+}) {
+  const { clips, phases, loading, upload, resumeUpload, cancelUpload, deleteClip } = useFilmClips(game.id)
+  const resumeInputRef = useRef<HTMLInputElement | null>(null)
+  const [resumingClipId, setResumingClipId] = useState<string | null>(null)
+
+  const handleWatchAll = async () => {
+    const readyClips = clips.filter(c => c.status === "READY")
+    if (readyClips.length === 0) return
+    const annArrays = await Promise.all(
+      readyClips.map(c =>
+        fetch(`/api/film/annotations?clipId=${c.id}`).then(r => r.ok ? r.json() : [])
+      )
+    )
+    onWatch(readyClips, (annArrays as FilmAnnotationItem[][]).flat())
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = ""
+    if (files.length > 0) upload(files)
+  }
+
+  if (loading) {
+    return <div className="w-3 h-3 border border-white/20 border-t-white/60 rounded-full animate-spin ml-1" />
+  }
+
+  const readyCount = clips.filter(c => c.status === "READY").length
+
+  return (
+    <div className="flex flex-col gap-2">
+      {clips.length === 0 && !isCoachOrAdmin && (
+        <p className="text-white/30 text-xs pl-1">No film uploaded for this game.</p>
+      )}
+      {readyCount > 0 && (
+        <button
+          onClick={handleWatchAll}
+          className="text-xs text-white/50 hover:text-white/80 transition-colors text-left pl-1"
+        >
+          Watch Game Film → {readyCount > 1 ? `(${readyCount} clips)` : ""}
+        </button>
+      )}
+      {clips.map(clip => {
+        const phase = phases[clip.id]
+        return (
+          <div key={clip.id} className="flex flex-col gap-1.5 px-3 py-2.5 rounded-lg border border-white/10 text-sm group">
+            <div className="flex items-center gap-3">
+              <span className="flex-1 text-white/80 truncate">{clip.title ?? "Game Film"}</span>
+              {phase?.tag === "interrupted" && isCoachOrAdmin && (
+                <button
+                  onClick={() => { setResumingClipId(clip.id); resumeInputRef.current?.click() }}
+                  className="text-xs text-white/50 hover:text-white/80 transition-colors"
+                >
+                  Resume
+                </button>
+              )}
+              {phase?.tag === "error" && isCoachOrAdmin && (
+                <span className="text-xs text-white/30">Delete and re-upload to retry</span>
+              )}
+              {phase?.tag === "uploading" && (
+                <button onClick={() => cancelUpload(clip.id)} className="text-xs text-white/30 hover:text-red-400 transition-colors">
+                  Cancel
+                </button>
+              )}
+              {isCoachOrAdmin && (
+                <button
+                  onClick={() => { if (confirm(`Delete "${clip.title ?? "Game Film"}"?`)) deleteClip(clip.id) }}
+                  className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-400 transition-all text-xs p-1"
+                  aria-label="Delete clip"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            {phase?.tag === "uploading" && (
+              <div className="flex flex-col gap-1">
+                <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-white/50 rounded-full transition-[width] duration-300"
+                    style={{ width: `${phase.percent}%` }}
+                  />
+                </div>
+                <span className="text-xs text-white/40 tabular-nums">{phase.percent}%</span>
+              </div>
+            )}
+            {phase?.tag === "interrupted" && (
+              <span className="text-xs text-white/30 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                Upload interrupted — select the file again to resume
+              </span>
+            )}
+            {phase?.tag === "transcoding" && (
+              <span className="text-xs text-blue-400 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                Processing…
+              </span>
+            )}
+            {phase?.tag === "error" && (
+              <span className="text-xs text-red-400/80">{phase.message ?? "Error"}</span>
+            )}
+          </div>
+        )
+      })}
+      {isCoachOrAdmin && (
+        <>
+          <label className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-white/15 hover:border-white/30 transition-colors cursor-pointer text-xs text-white/40 hover:text-white/60">
+            + Upload film
+            <input type="file" accept="video/*" multiple className="hidden" onChange={handleFileChange} />
+          </label>
+          <input
+            ref={resumeInputRef}
+            type="file"
+            accept="video/*"
+            className="hidden"
+            onChange={e => {
+              const file = e.target.files?.[0]
+              e.target.value = ""
+              if (file && resumingClipId) resumeUpload(resumingClipId, file)
+              setResumingClipId(null)
+            }}
+          />
+        </>
+      )}
+    </div>
+  )
+}
+
+function EventFilmSection({
+  eventId,
+  isCoachOrAdmin,
+  onWatch,
+}: {
+  eventId: string
+  isCoachOrAdmin: boolean
+  onWatch: (clips: FilmClipItem[], annotations: FilmAnnotationItem[]) => void
+}) {
+  const [games, setGames] = useState<GameItem[] | null>(null)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    fetch(`/api/games?eventId=${eventId}`)
+      .then(r => r.ok ? r.json() : [])
+      .then((data: GameItem[]) => {
+        const sorted = Array.isArray(data)
+          ? [...data].sort((a, b) => (a.scheduledTime && b.scheduledTime ? new Date(a.scheduledTime).getTime() - new Date(b.scheduledTime).getTime() : 0))
+          : []
+        setGames(sorted)
+      })
+      .catch(() => setGames([]))
+  }, [eventId])
+
+  const toggle = (gameId: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(gameId)) next.delete(gameId); else next.add(gameId)
+      return next
+    })
+  }
+
+  if (games === null) {
+    return <div className="w-4 h-4 border border-white/20 border-t-white/60 rounded-full animate-spin" />
+  }
+
+  if (games.length === 0) {
+    return <p className="text-white/30 text-sm">No games logged for this event yet.</p>
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {games.map(game => (
+        <div key={game.id} className="flex flex-col gap-2">
+          <button
+            onClick={() => toggle(game.id)}
+            className="flex items-center gap-2 text-sm text-left group"
+          >
+            <span className="text-white/30 text-xs transition-transform" style={{ transform: expanded.has(game.id) ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+            <span className="font-medium text-white/80 group-hover:text-white transition-colors">
+              vs {game.opponent}
+              {game.round && <span className="text-white/40 font-normal ml-1.5">{game.round}</span>}
+            </span>
+          </button>
+          {expanded.has(game.id) && (
+            <div className="pl-5">
+              <GameClipList game={game} isCoachOrAdmin={isCoachOrAdmin} onWatch={onWatch} />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function GamesList({ eventId }: { eventId: string }) {
   const [games, setGames] = useState<GameItem[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -39,37 +292,7 @@ function GamesList({ eventId }: { eventId: string }) {
   return (
     <div className="flex flex-col gap-2">
       {sorted.map(game => (
-        <button
-          key={game.id}
-          onClick={() => router.push(`/live/events/${eventId}/games/${game.id}`)}
-          className="flex items-center gap-4 px-4 py-3 rounded-lg border border-white/10 hover:border-white/20 hover:bg-white/3 transition-colors text-left group"
-        >
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-sm">vs {game.opponent}</span>
-              {game.round && <span className="text-white/30 text-xs">{game.round}</span>}
-            </div>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            {game.status !== "SCHEDULED" && (
-              <span className="font-mono text-sm">
-                <span className={game.result === "WIN" ? "text-green-400" : game.result === "LOSS" ? "text-red-400" : ""}>{game.scoreVoid}</span>
-                {" – "}
-                <span className={game.result === "LOSS" ? "text-green-400" : game.result === "WIN" ? "text-red-400" : ""}>{game.scoreOpponent}</span>
-              </span>
-            )}
-            {game.result && (
-              <span className={`text-xs font-bold ${RESULT_COLORS[game.result] ?? ""}`}>{game.result}</span>
-            )}
-            {game.status === "SCHEDULED" && (
-              <span className="text-white/30 text-xs">Scheduled</span>
-            )}
-            {game.status === "IN_PROGRESS" && (
-              <span className="text-yellow-400/70 text-xs font-medium">Live</span>
-            )}
-          </div>
-          <span className="text-white/20 group-hover:text-white/40 text-xs transition-colors">→</span>
-        </button>
+        <GameRow key={game.id} game={game} eventId={eventId} />
       ))}
     </div>
   )
@@ -92,6 +315,8 @@ export default function LiveEventPage() {
   const [event, setEvent] = useState<EventItem | null>(null)
   const [eventLoading, setEventLoading] = useState(true)
   const [error, setError] = useState("")
+  const [filmViewer, setFilmViewer] = useState<{ clips: FilmClipItem[]; annotations: FilmAnnotationItem[] } | null>(null)
+  const isCoachOrAdmin = !!(user?.groups?.includes("COACH") || user?.groups?.includes("ADMIN"))
 
   useEffect(() => {
     if (!isLoading && !user) router.replace("/live/login")
@@ -186,9 +411,37 @@ export default function LiveEventPage() {
         {/* Film */}
         <section>
           <h2 className="text-lg font-bold mb-3">Film</h2>
-          <p className="text-white/30 text-sm">Film review coming soon.</p>
+          <EventFilmSection
+            eventId={event.id}
+            isCoachOrAdmin={isCoachOrAdmin}
+            onWatch={(clips, annotations) => setFilmViewer({ clips, annotations })}
+          />
         </section>
       </div>
+
+      {/* Film viewer overlay */}
+      {filmViewer && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col">
+          <div className="flex items-center gap-4 px-6 py-4 border-b border-white/10">
+            <button
+              onClick={() => setFilmViewer(null)}
+              className="text-white/40 hover:text-white/70 text-sm transition-colors"
+            >
+              ← Back
+            </button>
+            <span className="text-sm text-white/60">
+              {filmViewer.clips.length > 1 ? `Game Film (${filmViewer.clips.length} clips)` : (filmViewer.clips[0]?.title ?? "Game Film")}
+            </span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6">
+            <FilmViewer
+              clips={filmViewer.clips}
+              initialAnnotations={filmViewer.annotations}
+              canAnnotate={isCoachOrAdmin}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

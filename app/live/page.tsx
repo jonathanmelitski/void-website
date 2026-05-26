@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/use-auth"
+import { usePrefetchIntent } from "@/hooks/use-prefetch-intent"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EventCard } from "@/components/gallery/EventCard"
@@ -33,6 +34,7 @@ interface EventItem {
 export default function LivePage() {
   const { user, isLoading, signOut } = useAuth()
   const router = useRouter()
+  const managePrefetch = usePrefetchIntent("/live/manage")
   const [events, setEvents] = useState<GalleryEvent[]>([])
   const [eventsLoading, setEventsLoading] = useState(true)
   const [eventsError, setEventsError] = useState<string | null>(null)
@@ -85,6 +87,7 @@ export default function LivePage() {
             size="sm"
             className="text-white/40 hover:text-white hover:bg-white/10"
             onClick={() => router.push("/live/manage")}
+            onMouseEnter={managePrefetch.onMouseEnter}
           >
             Manage
           </Button>

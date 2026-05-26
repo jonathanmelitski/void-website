@@ -1,0 +1,1023 @@
+"use client"
+
+import { useRef, useState, useCallback, useEffect, useMemo } from "react"
+import { Play, Pause, Volume2, VolumeX, Maximize, Minimize } from "lucide-react"
+import { MediaPlayer, MediaProvider } from "@vidstack/react"
+import type { MediaPlayerInstance } from "@vidstack/react"
+import { AnnotationMarker } from "./AnnotationMarker"
+import type { FilmClipItem } from "@/lib/aws/film-clips"
+import type { FilmAnnotationItem } from "@/lib/aws/film-annotations"
+import type { FilmAnnotationMessage } from "@/lib/ws-push"
+import type { PointItem } from "@/lib/aws/points"
+import type { PlayerItem } from "@/lib/aws/players"
+
+interface FilmViewerProps {
+  clips: FilmClipItem[]
+  initialAnnotations: FilmAnnotationItem[]
+  canAnnotate: boolean
+}
+
+type PointEntry = {
+  kind: "point"
+  point: PointItem
+  markerAnn: FilmAnnotationItem | null
+  textAnns: FilmAnnotationItem[]
+}
+type OtherEntry = { kind: "other"; ann: FilmAnnotationItem }
+type SidebarEntry = PointEntry | OtherEntry
+
+function formatTime(ms: number) {
+  const s = Math.floor(ms / 1000)
+  const m = Math.floor(s / 60)
+  const ss = s % 60
+  return `${m}:${ss.toString().padStart(2, "0")}`
+}
+
+const POINT_COLORS: Record<string, string> = {
+  "O-HOLD": "bg-blue-500",
+  "O-BREAK": "bg-orange-500",
+  "D-HOLD": "bg-green-500",
+  "D-BREAK": "bg-red-500",
+}
+
+function getPointColor(lineType: string, outcome: string) {
+  return POINT_COLORS[`${lineType}-${outcome}`] ?? "bg-white/20"
+}
+
+function suggestNextScore(points: PointItem[]): { voidScore: number; oppScore: number } {
+  if (points.length === 0) return { voidScore: 0, oppScore: 0 }
+  const last = [...points].sort((a, b) => b.pointNumber - a.pointNumber)[0]
+  if (last.outcome === "IN_PROGRESS") return { voidScore: last.voidScoreBefore, oppScore: last.opponentScoreBefore }
+  const voidScored =
+    (last.outcome === "HOLD" && last.lineType === "O") ||
+    (last.outcome === "BREAK" && last.lineType === "D")
+  return {
+    voidScore: last.voidScoreBefore + (voidScored ? 1 : 0),
+    oppScore: last.opponentScoreBefore + (voidScored ? 0 : 1),
+  }
+}
+
+export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewerProps) {
+  const playerRef = useRef<MediaPlayerInstance>(null)
+  const isPlayingRef = useRef(false)
+  const activeClipIdxRef = useRef(0)
+  const pendingSeekRef = useRef<number | null>(null)
+  const lastDisplayUpdateRef = useRef(0)
+
+  const currentMsRef = useRef(0)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const timelineRef = useRef<HTMLDivElement | null>(null)
+  const isDraggingRef = useRef(false)
+  const playheadRef = useRef<HTMLDivElement>(null)
+  const progressRef = useRef<HTMLDivElement>(null)
+  const timecodeRef = useRef<HTMLSpanElement>(null)
+
+  const [activeClipIdx, setActiveClipIdx] = useState(0)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [playerReady, setPlayerReady] = useState(false)
+  const [isPaused, setIsPaused] = useState(true)
+  const [isMuted, setIsMuted] = useState(false)
+  const [displayMs, setDisplayMs] = useState(0)
+
+  const activeClip = clips[activeClipIdx]
+  const activeSrc = activeClip?.youtubeVideoId ? `youtube/${activeClip.youtubeVideoId}` : ""
+
+  // Keep activeClipIdxRef in sync for use inside Vidstack callbacks
+  useEffect(() => { activeClipIdxRef.current = activeClipIdx }, [activeClipIdx])
+
+  // Reset display state on clip switch
+  useEffect(() => {
+    setIsPaused(true)
+    setDisplayMs(0)
+    currentMsRef.current = 0
+    setPlayerReady(false)
+  }, [activeClipIdx])
+
+  const [localDurations, setLocalDurations] = useState<number[]>(
+    () => clips.map(c => (c.durationSeconds ?? 0) * 1000)
+  )
+
+  const clipOffsets = useMemo(() => {
+    const result: number[] = []
+    let acc = 0
+    for (const dur of localDurations) {
+      result.push(acc)
+      acc += dur
+    }
+    return result
+  }, [localDurations])
+
+  const totalDurationMs = useMemo(() => localDurations.reduce((a, b) => a + b, 0), [localDurations])
+  const globalMs = (clipOffsets[activeClipIdx] ?? 0) + displayMs
+
+  const [annotations, setAnnotations] = useState<FilmAnnotationItem[]>(initialAnnotations)
+  const [newText, setNewText] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const [points, setPoints] = useState<PointItem[]>([])
+  const [players, setPlayers] = useState<PlayerItem[]>([])
+  const [activePointId, setActivePointId] = useState<string | null>(null)
+
+  const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
+  const [showPointPicker, setShowPointPicker] = useState(false)
+
+  const [showNewPointForm, setShowNewPointForm] = useState(false)
+  const [npNumber, setNpNumber] = useState(1)
+  const [npVoid, setNpVoid] = useState(0)
+  const [npOpp, setNpOpp] = useState(0)
+  const [npLine, setNpLine] = useState<"O" | "D">("O")
+  const [npOutcome, setNpOutcome] = useState<"HOLD" | "BREAK" | "—">("—")
+  const [showPlayerPicker, setShowPlayerPicker] = useState(false)
+  const [npPlayerIds, setNpPlayerIds] = useState<string[]>([])
+  const [creatingPoint, setCreatingPoint] = useState(false)
+
+  const gameId = activeClip?.gameId ?? ""
+
+  useEffect(() => {
+    if (!gameId) return
+    fetch(`/api/points?gameId=${gameId}`)
+      .then(r => r.ok ? r.json() : [])
+      .then((data: PointItem[]) => {
+        if (Array.isArray(data)) setPoints(data.sort((a, b) => a.pointNumber - b.pointNumber))
+      })
+      .catch(() => {})
+    fetch("/api/players")
+      .then(r => r.ok ? r.json() : [])
+      .then((data: PlayerItem[]) => { if (Array.isArray(data)) setPlayers(data) })
+      .catch(() => {})
+  }, [gameId])
+
+  const markerMap = useMemo(() => {
+    const map = new Map<string, FilmAnnotationItem>()
+    for (const ann of annotations) {
+      if (ann.pointId && !map.has(ann.pointId)) map.set(ann.pointId, ann)
+    }
+    for (const ann of annotations) {
+      if (ann.pointId && !ann.text) map.set(ann.pointId, ann)
+    }
+    return map
+  }, [annotations])
+
+  const getGlobalMs = useCallback((ann: FilmAnnotationItem): number => {
+    const clipIdx = clips.findIndex(c => c.id === ann.clipId)
+    return clipIdx >= 0 ? (clipOffsets[clipIdx] ?? 0) + ann.videoTimestampMs : ann.videoTimestampMs
+  }, [clips, clipOffsets])
+
+  const globalAnnotations = useMemo(() =>
+    annotations.map(ann => ({ ...ann, videoTimestampMs: getGlobalMs(ann) })),
+    [annotations, getGlobalMs]
+  )
+
+  const globalMetaSegments = useMemo(() => {
+    const markers = [...points]
+      .map(point => {
+        const markerAnn = markerMap.get(point.id)
+        if (!markerAnn) return null
+        const clipIdx = clips.findIndex(c => c.id === markerAnn.clipId)
+        if (clipIdx < 0) return null
+        return { point, markerAnn, globalStart: (clipOffsets[clipIdx] ?? 0) + markerAnn.videoTimestampMs }
+      })
+      .filter((m): m is NonNullable<typeof m> => m !== null)
+      .sort((a, b) => a.globalStart - b.globalStart)
+    return markers.map((m, i) => ({
+      ...m,
+      segEnd: markers[i + 1]?.globalStart ?? totalDurationMs,
+    }))
+  }, [points, markerMap, clips, clipOffsets, totalDurationMs])
+
+  const sidebarEntries = useMemo((): SidebarEntry[] => {
+    const sortedPoints = [...points].sort((a, b) => a.pointNumber - b.pointNumber)
+    const pointEntries: SidebarEntry[] = sortedPoints.map(point => {
+      const allPointAnns = annotations
+        .filter(a => a.pointId === point.id)
+        .sort((a, b) => getGlobalMs(a) - getGlobalMs(b))
+      const markerAnn = markerMap.get(point.id) ?? null
+      const textAnns = allPointAnns.filter(a => a.text)
+      return { kind: "point", point, markerAnn, textAnns }
+    })
+    const otherEntries: SidebarEntry[] = annotations
+      .filter(a => !a.pointId)
+      .sort((a, b) => getGlobalMs(a) - getGlobalMs(b))
+      .map(ann => ({ kind: "other" as const, ann }))
+    return [...pointEntries, ...otherEntries]
+  }, [points, annotations, markerMap, getGlobalMs])
+
+  const seekGlobal = useCallback((targetMs: number) => {
+    let remaining = Math.max(0, targetMs)
+    for (let i = 0; i < clips.length; i++) {
+      const dur = localDurations[i]
+      if (remaining <= dur || i === clips.length - 1) {
+        const startSec = remaining / 1000
+        if (i !== activeClipIdx) {
+          // Changing src — apply seek in onCanPlay
+          pendingSeekRef.current = startSec
+          setActiveClipIdx(i)
+        } else {
+          if (playerRef.current) playerRef.current.currentTime = startSec
+        }
+        break
+      }
+      remaining -= dur
+    }
+  }, [clips, localDurations, activeClipIdx])
+
+  const openNewPointForm = useCallback((pts: PointItem[]) => {
+    const { voidScore, oppScore } = suggestNextScore(pts)
+    const maxNum = pts.reduce((m, p) => Math.max(m, p.pointNumber), 0)
+    setNpNumber(maxNum + 1)
+    setNpVoid(voidScore)
+    setNpOpp(oppScore)
+    setNpLine("O")
+    setNpOutcome("—")
+    setNpPlayerIds([])
+    setShowPlayerPicker(false)
+    setShowNewPointForm(true)
+  }, [])
+
+  const jumpToAnnotation = useCallback((ann: FilmAnnotationItem) => {
+    setActivePointId(ann.pointId ?? null)
+    const targetIdx = clips.findIndex(c => c.id === ann.clipId)
+    if (targetIdx === -1) return
+    const startSec = ann.videoTimestampMs / 1000
+    if (targetIdx === activeClipIdx) {
+      currentMsRef.current = ann.videoTimestampMs
+      if (playerRef.current) playerRef.current.currentTime = startSec
+    } else {
+      pendingSeekRef.current = startSec
+      setActiveClipIdx(targetIdx)
+    }
+  }, [clips, activeClipIdx])
+
+  const addPointTag = useCallback(async (point: PointItem) => {
+    if (!activeClip) return
+    const res = await fetch("/api/film/annotations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clipId: activeClip.id,
+        videoTimestampMs: Math.round(currentMsRef.current),
+        text: "",
+        pointId: point.id,
+      }),
+    })
+    if (res.ok) {
+      const annotation: FilmAnnotationItem = await res.json()
+      setAnnotations(prev => [...prev, annotation])
+      setActivePointId(point.id)
+    }
+  }, [activeClip])
+
+  // RAF loop — smooth 60fps playhead + timecode, bypasses React render cycle
+  useEffect(() => {
+    let rafId: number
+    const tick = () => {
+      if (!isDraggingRef.current && playerRef.current) {
+        try {
+          const ct = playerRef.current.currentTime * 1000
+          currentMsRef.current = ct
+          const gms = (clipOffsets[activeClipIdx] ?? 0) + ct
+          if (totalDurationMs > 0) {
+            const pct = Math.min(100, Math.max(0, (gms / totalDurationMs) * 100))
+            if (playheadRef.current) playheadRef.current.style.left = `${pct}%`
+            if (progressRef.current) progressRef.current.style.width = `${pct}%`
+            if (timecodeRef.current) timecodeRef.current.textContent = `${formatTime(gms)} / ${formatTime(totalDurationMs)}`
+          }
+          // Throttle React state update to ~4Hz to avoid excess re-renders
+          const now = Date.now()
+          if (now - lastDisplayUpdateRef.current > 250) {
+            lastDisplayUpdateRef.current = now
+            setDisplayMs(ct)
+          }
+        } catch {
+          // Player not ready yet — skip
+        }
+      }
+      rafId = requestAnimationFrame(tick)
+    }
+    rafId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafId)
+  }, [clipOffsets, activeClipIdx, totalDurationMs])
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener("fullscreenchange", onChange)
+    return () => document.removeEventListener("fullscreenchange", onChange)
+  }, [])
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen()
+    } else {
+      document.exitFullscreen()
+    }
+  }, [])
+
+  const handleTimelineMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    isDraggingRef.current = true
+
+    const getMs = (clientX: number) => {
+      const rect = timelineRef.current?.getBoundingClientRect()
+      if (!rect || totalDurationMs === 0) return 0
+      return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * totalDurationMs
+    }
+    const updateVisual = (clientX: number) => {
+      const rect = timelineRef.current?.getBoundingClientRect()
+      if (!rect || totalDurationMs === 0) return
+      const pct = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100))
+      if (playheadRef.current) playheadRef.current.style.left = `${pct}%`
+      if (progressRef.current) progressRef.current.style.width = `${pct}%`
+      if (timecodeRef.current) timecodeRef.current.textContent = `${formatTime((pct / 100) * totalDurationMs)} / ${formatTime(totalDurationMs)}`
+    }
+    updateVisual(e.clientX)
+
+    const onMove = (ev: MouseEvent) => updateVisual(ev.clientX)
+    const onUp = (ev: MouseEvent) => {
+      isDraggingRef.current = false
+      seekGlobal(getMs(ev.clientX))
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+  }, [seekGlobal, totalDurationMs])
+
+  const wsRef = useRef<WebSocket | null>(null)
+  const unmountedRef = useRef(false)
+  const attemptsRef = useRef(0)
+  const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clipId = activeClip?.id
+
+  const connect = useCallback(() => {
+    if (unmountedRef.current || attemptsRef.current >= 3 || !clipId) return
+    try {
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:"
+      const wsHost = process.env.NEXT_PUBLIC_WS_HOST ?? location.host
+      const ws = new WebSocket(`${protocol}//${wsHost}/ws/film/${clipId}`)
+      wsRef.current = ws
+      ws.onopen = () => { attemptsRef.current = 0 }
+      ws.onmessage = e => {
+        try {
+          const msg = JSON.parse(e.data) as FilmAnnotationMessage
+          setAnnotations(prev => {
+            if (msg.type === "ANNOTATION_CREATED") {
+              if (prev.some(a => a.id === msg.annotation.id)) return prev
+              return [...prev, msg.annotation]
+            }
+            if (msg.type === "ANNOTATION_UPDATED") {
+              return prev.map(a => a.id === msg.annotation.id ? msg.annotation : a)
+            }
+            if (msg.type === "ANNOTATION_DELETED") {
+              return prev.filter(a => a.id !== msg.annotation.id)
+            }
+            return prev
+          })
+        } catch { /* ignore */ }
+      }
+      ws.onclose = e => {
+        wsRef.current = null
+        if (e.code === 1000 || unmountedRef.current) return
+        const delay = Math.min(1_000 * Math.pow(2, attemptsRef.current++), 30_000)
+        reconnectRef.current = setTimeout(connect, delay)
+      }
+      ws.onerror = () => ws.close()
+    } catch { attemptsRef.current++ }
+  }, [clipId])
+
+  useEffect(() => {
+    unmountedRef.current = false
+    attemptsRef.current = 0
+    connect()
+    return () => {
+      unmountedRef.current = true
+      if (reconnectRef.current) clearTimeout(reconnectRef.current)
+      wsRef.current?.close(1000)
+      wsRef.current = null
+    }
+  }, [connect])
+
+  // [ / ] keyboard navigation through tagged points
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.key !== "[" && e.key !== "]") return
+      const navigable = [...points]
+        .sort((a, b) => a.pointNumber - b.pointNumber)
+        .filter(p => markerMap.has(p.id))
+      const currentIdx = activePointId
+        ? navigable.findIndex(p => p.id === activePointId)
+        : -1
+      if (e.key === "[" && currentIdx > 0) {
+        jumpToAnnotation(markerMap.get(navigable[currentIdx - 1].id)!)
+      } else if (e.key === "]") {
+        if (currentIdx === -1 && navigable.length > 0) {
+          jumpToAnnotation(markerMap.get(navigable[0].id)!)
+        } else if (currentIdx >= 0 && currentIdx < navigable.length - 1) {
+          jumpToAnnotation(markerMap.get(navigable[currentIdx + 1].id)!)
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKey)
+    return () => window.removeEventListener("keydown", handleKey)
+  }, [points, markerMap, activePointId, jumpToAnnotation])
+
+  // Vidstack event handlers
+  const handleCanPlay = useCallback(() => {
+    setPlayerReady(true)
+    if (pendingSeekRef.current !== null && playerRef.current) {
+      playerRef.current.currentTime = pendingSeekRef.current
+      pendingSeekRef.current = null
+    }
+    // Resume playback if we were playing when the clip switch happened
+    if (isPlayingRef.current) {
+      playerRef.current?.play()
+    }
+    // Capture accurate float duration from player
+    const dur = playerRef.current?.duration ?? 0
+    if (dur > 0) {
+      const ci = activeClipIdxRef.current
+      setLocalDurations(prev => {
+        const next = [...prev]; next[ci] = dur * 1000; return next
+      })
+    }
+  }, [])
+
+  const handleEnd = useCallback(() => {
+    const ci = activeClipIdxRef.current
+    // getCurrentTime at end gives true float duration
+    const trueMs = (playerRef.current?.currentTime ?? 0) * 1000
+    if (trueMs > 0) {
+      setLocalDurations(prev => { const next = [...prev]; next[ci] = trueMs; return next })
+    }
+    const nextIdx = ci + 1
+    if (nextIdx < clips.length && clips[nextIdx].youtubeVideoId) {
+      // Keep isPlayingRef true so onCanPlay auto-plays the next clip
+      pendingSeekRef.current = 0
+      setActiveClipIdx(nextIdx)
+    } else {
+      isPlayingRef.current = false
+      setIsPaused(true)
+    }
+  }, [clips])
+
+  const createAndTagPoint = useCallback(async () => {
+    if (creatingPoint || !activeClip) return
+    setCreatingPoint(true)
+    try {
+      const pointRes = await fetch("/api/points", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gameId: activeClip.gameId,
+          pointNumber: npNumber,
+          voidScoreBefore: npVoid,
+          opponentScoreBefore: npOpp,
+          lineType: npLine,
+          ...(npOutcome !== "—" ? { outcome: npOutcome } : {}),
+          playerIds: npPlayerIds,
+        }),
+      })
+      if (!pointRes.ok) return
+      const point: PointItem = await pointRes.json()
+
+      const annRes = await fetch("/api/film/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clipId: activeClip.id,
+          videoTimestampMs: Math.round(currentMsRef.current),
+          text: "",
+          pointId: point.id,
+        }),
+      })
+      if (annRes.ok) {
+        const annotation: FilmAnnotationItem = await annRes.json()
+        setAnnotations(prev => [...prev, annotation])
+        setActivePointId(point.id)
+      }
+
+      setPoints(prev => [...prev, point].sort((a, b) => a.pointNumber - b.pointNumber))
+      setShowNewPointForm(false)
+    } finally {
+      setCreatingPoint(false)
+    }
+  }, [activeClip, creatingPoint, npNumber, npVoid, npOpp, npLine, npOutcome, npPlayerIds])
+
+  const addAnnotation = useCallback(async () => {
+    const trimmed = newText.trim()
+    if ((!trimmed && !selectedPointId) || submitting || !activeClip) return
+    setSubmitting(true)
+
+    const tempId = `temp_${Date.now()}`
+    const capturedMs = Math.round(currentMsRef.current)
+    const tempAnnotation: FilmAnnotationItem = {
+      id: tempId,
+      clipId: activeClip.id,
+      gameId: activeClip.gameId,
+      videoTimestampMs: capturedMs,
+      text: trimmed,
+      authorUsername: "",
+      authorDisplayName: "You",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...(selectedPointId ? { pointId: selectedPointId } : {}),
+    }
+
+    setAnnotations(prev => [...prev, tempAnnotation])
+    const capturedText = trimmed
+    const capturedPointId = selectedPointId
+    setNewText("")
+    setSelectedPointId(null)
+    setShowPointPicker(false)
+
+    try {
+      const res = await fetch("/api/film/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clipId: activeClip.id,
+          videoTimestampMs: capturedMs,
+          text: capturedText,
+          ...(capturedPointId ? { pointId: capturedPointId } : {}),
+        }),
+      })
+      if (res.ok) {
+        const confirmed: FilmAnnotationItem = await res.json()
+        setAnnotations(prev => prev.map(a => a.id === tempId ? confirmed : a))
+      } else {
+        setAnnotations(prev => prev.filter(a => a.id !== tempId))
+        setNewText(capturedText)
+      }
+    } catch {
+      setAnnotations(prev => prev.filter(a => a.id !== tempId))
+      setNewText(capturedText)
+    } finally {
+      setSubmitting(false)
+    }
+  }, [activeClip, newText, selectedPointId, submitting])
+
+  const pointMap = useMemo(() => Object.fromEntries(points.map(p => [p.id, p])), [points])
+  const taggedPointIds = useMemo(
+    () => new Set(annotations.filter(a => a.pointId && !a.id.startsWith("temp_")).map(a => a.pointId!)),
+    [annotations]
+  )
+  const untaggedPoints = useMemo(() => points.filter(p => !taggedPointIds.has(p.id)), [points, taggedPointIds])
+  const selectedPoint = selectedPointId ? pointMap[selectedPointId] : null
+
+  const toggleBtn = (active: boolean) =>
+    `px-2.5 py-1 rounded text-xs font-medium transition-colors ${active ? "bg-white/20 text-white" : "text-white/40 hover:text-white/70"}`
+
+  if (!activeClip) {
+    return <div className="text-white/30 text-sm p-4">No clips available.</div>
+  }
+
+  const togglePlayPause = () => {
+    if (isPaused) playerRef.current?.play()
+    else playerRef.current?.pause()
+  }
+
+  const toggleMute = () => {
+    if (!playerRef.current) return
+    const next = !isMuted
+    playerRef.current.muted = next
+    setIsMuted(next)
+  }
+
+  const controlsArea = totalDurationMs > 0 && (
+    <div className={isFullscreen
+      ? "absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 pb-4 pt-12 flex flex-col gap-2"
+      : "flex flex-col gap-2"
+    }>
+      {/* Point segment strip */}
+      {globalMetaSegments.length > 0 && (
+        <div className="flex h-5 rounded-lg overflow-hidden border border-white/10">
+          {globalMetaSegments.map(({ point, markerAnn, globalStart, segEnd }) => {
+            const widthPct = ((segEnd - globalStart) / totalDurationMs) * 100
+            return (
+              <button
+                key={markerAnn.id}
+                onClick={() => seekGlobal(globalStart)}
+                className={`${getPointColor(point.lineType, point.outcome)} opacity-70 hover:opacity-100 transition-opacity text-[9px] font-mono text-white/90 flex items-center justify-center overflow-hidden shrink-0`}
+                style={{ width: `${widthPct}%` }}
+                title={`P${point.pointNumber} · ${point.lineType}-line · ${point.outcome} · ${point.voidScoreBefore}–${point.opponentScoreBefore}`}
+              >
+                {widthPct > 6 ? `P${point.pointNumber} ${point.lineType}` : ""}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Global timeline scrubber */}
+      <div
+        ref={timelineRef}
+        className="relative h-8 select-none cursor-pointer"
+        onMouseDown={handleTimelineMouseDown}
+      >
+        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1.5 rounded-full bg-white/8 overflow-hidden">
+          <div
+            className="absolute top-0 h-full bg-white/12 pointer-events-none"
+            style={{
+              left: `${((clipOffsets[activeClipIdx] ?? 0) / totalDurationMs) * 100}%`,
+              width: `${((localDurations[activeClipIdx] ?? 0) / totalDurationMs) * 100}%`,
+            }}
+          />
+          <div ref={progressRef} className="absolute top-0 left-0 h-full bg-white/35 pointer-events-none" style={{ width: "0%" }} />
+        </div>
+        {clipOffsets.slice(1).map((offset, i) => (
+          <div
+            key={i}
+            className="absolute top-1 bottom-1 w-px bg-white/40 pointer-events-none"
+            style={{ left: `${(offset / totalDurationMs) * 100}%` }}
+          />
+        ))}
+        {globalAnnotations.map(a => (
+          <AnnotationMarker
+            key={a.id}
+            annotation={a}
+            durationMs={totalDurationMs}
+            onSeek={(ms) => seekGlobal(ms)}
+            pointData={a.pointId ? pointMap[a.pointId] : undefined}
+          />
+        ))}
+        <div ref={playheadRef} className="absolute top-0 bottom-0 pointer-events-none" style={{ left: "0%" }}>
+          <div className="absolute inset-y-0 left-0 w-px bg-white" />
+          <div className="absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white shadow-lg" />
+        </div>
+      </div>
+
+      {/* Control bar */}
+      <div className="flex items-center gap-2 px-0.5" onClick={e => e.stopPropagation()}>
+        <button
+          onClick={togglePlayPause}
+          className="text-white hover:text-white/70 transition-colors shrink-0"
+          aria-label={isPaused ? "Play" : "Pause"}
+        >
+          {isPaused ? <Play size={16} fill="currentColor" /> : <Pause size={16} fill="currentColor" />}
+        </button>
+        <span ref={timecodeRef} className="text-[11px] font-mono text-white/50 tabular-nums shrink-0 min-w-[80px]">
+          {formatTime(globalMs)} / {formatTime(totalDurationMs)}
+        </span>
+        <div className="flex-1 flex items-center justify-center gap-1 flex-wrap">
+          {clips.length > 1 && clips.map((clip, i) => (
+            <button
+              key={clip.id}
+              onClick={() => seekGlobal(clipOffsets[i] ?? 0)}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                i === activeClipIdx ? "bg-white/20 text-white" : "bg-white/5 text-white/40 hover:text-white/60 hover:bg-white/10"
+              }`}
+            >
+              {i === activeClipIdx && <span className="w-1.5 h-1.5 rounded-full bg-white/60 shrink-0" />}
+              {clip.title ?? `Clip ${i + 1}`}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={toggleMute}
+          className="text-white/50 hover:text-white transition-colors shrink-0"
+          aria-label={isMuted ? "Unmute" : "Mute"}
+        >
+          {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+        </button>
+        <button
+          onClick={toggleFullscreen}
+          className="text-white/50 hover:text-white transition-colors shrink-0"
+          aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+        >
+          {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+        </button>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="flex flex-col md:flex-row gap-4">
+      {/* Left: video + controls */}
+      <div className="flex-1 min-w-0 flex flex-col gap-2">
+        <div
+          ref={containerRef}
+          className={isFullscreen ? "relative flex flex-col bg-black" : "relative flex flex-col gap-2"}
+        >
+          {/* Video area — click to play/pause */}
+          <div
+            className={isFullscreen ? "flex-1 relative overflow-hidden min-h-0 cursor-pointer" : "cursor-pointer"}
+            onClick={togglePlayPause}
+          >
+            <div
+              className={isFullscreen
+                ? "absolute inset-0 w-full h-full"
+                : "w-full aspect-video rounded-xl overflow-hidden bg-black relative"
+              }
+            >
+              <MediaPlayer
+                ref={playerRef}
+                src={activeSrc}
+                className="absolute inset-0 w-full h-full"
+                keyDisabled
+                onCanPlay={handleCanPlay}
+                onPlay={() => { isPlayingRef.current = true; setIsPaused(false) }}
+                onPause={() => { isPlayingRef.current = false; setIsPaused(true) }}
+                onEnd={handleEnd}
+              >
+                <MediaProvider />
+              </MediaPlayer>
+              {!playerReady && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-6 h-6 border border-white/20 border-t-white/60 rounded-full animate-spin" />
+                </div>
+              )}
+            </div>
+          </div>
+          {controlsArea}
+        </div>
+      </div>
+
+      {/* Right: sidebar */}
+      <div className="w-full md:w-80 shrink-0 flex flex-col border border-white/10 rounded-xl overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10 shrink-0">
+          <span className="text-sm font-semibold">Game Film</span>
+          {points.length > 0 && (
+            <span className="text-xs bg-white/10 rounded-full px-2 py-0.5 font-mono tabular-nums">
+              {points.length} pts
+            </span>
+          )}
+          <span className="ml-auto text-[10px] text-white/25 font-mono">[ ] nav</span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-0.5 min-h-0 max-h-[50vh] md:max-h-none">
+          {sidebarEntries.length === 0 ? (
+            <p className="text-white/30 text-sm text-center py-6">No points or notes yet.</p>
+          ) : (
+            sidebarEntries.map(entry => {
+              if (entry.kind === "point") {
+                const { point, markerAnn, textAnns } = entry
+                const isActive = activePointId === point.id
+                const isTagged = !!markerAnn
+                const clipIdx = markerAnn ? clips.findIndex(c => c.id === markerAnn.clipId) : -1
+                const showClipBadge = isTagged && clipIdx !== activeClipIdx
+
+                return (
+                  <div
+                    key={point.id}
+                    className={`rounded-lg border transition-colors ${isActive ? "border-white/20 bg-white/5" : "border-transparent"}`}
+                  >
+                    <button
+                      onClick={isTagged ? () => jumpToAnnotation(markerAnn!) : undefined}
+                      disabled={!isTagged}
+                      className={`w-full flex items-center gap-2 px-3 py-2 text-left rounded-lg transition-colors ${
+                        isTagged ? "hover:bg-white/5 cursor-pointer" : "cursor-default opacity-50"
+                      }`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-sm shrink-0 ${
+                          isTagged ? getPointColor(point.lineType, point.outcome) : "border border-white/20"
+                        }`}
+                      />
+                      <span className="text-xs font-mono text-white/70 shrink-0">P{point.pointNumber}</span>
+                      <span className="text-xs text-white/50">{point.lineType}-line</span>
+                      {point.outcome !== "IN_PROGRESS" && (
+                        <span className="text-xs text-white/40">{point.outcome}</span>
+                      )}
+                      <span className="text-xs text-white/30 font-mono ml-auto shrink-0">
+                        {point.voidScoreBefore}–{point.opponentScoreBefore}
+                      </span>
+                      {showClipBadge && (
+                        <span className="text-[9px] bg-white/10 rounded px-1 py-0.5 text-white/40 shrink-0">
+                          Clip {clipIdx + 1}
+                        </span>
+                      )}
+                      {isTagged && markerAnn && (
+                        <span className="text-[10px] font-mono text-purple-400/60 shrink-0">
+                          {formatTime(getGlobalMs(markerAnn))}
+                        </span>
+                      )}
+                    </button>
+
+                    {!isTagged && canAnnotate && (
+                      <div className="px-4 pb-1.5">
+                        <button
+                          onClick={() => addPointTag(point)}
+                          className="text-[10px] text-white/30 hover:text-white/60 transition-colors"
+                        >
+                          + Tag at {formatTime(globalMs)}
+                        </button>
+                      </div>
+                    )}
+
+                    {textAnns.map(ann => (
+                      <button
+                        key={ann.id}
+                        onClick={() => jumpToAnnotation(ann)}
+                        className={`w-full flex items-start gap-3 px-4 py-1.5 text-left hover:bg-white/3 transition-colors rounded-b-lg ${ann.id.startsWith("temp_") ? "opacity-60" : ""}`}
+                      >
+                        <span className="text-[10px] font-mono text-purple-400/50 shrink-0 mt-0.5 min-w-[36px]">
+                          {formatTime(getGlobalMs(ann))}
+                        </span>
+                        <p className="text-xs text-white/60 flex-1 min-w-0">{ann.text}</p>
+                      </button>
+                    ))}
+                  </div>
+                )
+              }
+
+              const { ann } = entry
+              const isTemp = ann.id.startsWith("temp_")
+              const annClipIdx = clips.findIndex(c => c.id === ann.clipId)
+              const showAnnClipBadge = annClipIdx !== activeClipIdx
+
+              return (
+                <button
+                  key={ann.id}
+                  onClick={() => jumpToAnnotation(ann)}
+                  className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border border-white/5 hover:border-white/15 hover:bg-white/3 text-left transition-colors ${isTemp ? "opacity-60" : ""}`}
+                >
+                  <span className="text-[10px] font-mono text-purple-400 shrink-0 mt-0.5 min-w-[36px]">
+                    {formatTime(getGlobalMs(ann))}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-white/80">{ann.text}</p>
+                    <p className="text-xs text-white/30 mt-0.5 flex items-center gap-1.5">
+                      {ann.authorDisplayName}
+                      {showAnnClipBadge && (
+                        <span className="text-[9px] bg-white/10 rounded px-1 py-0.5 text-white/40">
+                          Clip {annClipIdx + 1}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </button>
+              )
+            })
+          )}
+        </div>
+
+        {canAnnotate && (
+          <div className="border-t border-white/10 p-3 flex flex-col gap-2 shrink-0">
+            {selectedPoint && (
+              <div className="flex items-center gap-2 text-xs bg-white/5 rounded-lg px-2 py-1.5">
+                <span className={`w-2 h-2 rounded-sm shrink-0 ${getPointColor(selectedPoint.lineType, selectedPoint.outcome)}`} />
+                <span className="text-white/60">Tagging Point {selectedPoint.pointNumber}</span>
+                <button
+                  onClick={() => setSelectedPointId(null)}
+                  className="ml-auto text-white/30 hover:text-white/60 transition-colors"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
+            <div className="flex gap-2 items-center">
+              <span className="text-xs text-white/30 font-mono shrink-0">{formatTime(globalMs)}</span>
+              <input
+                value={newText}
+                onChange={e => setNewText(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addAnnotation() } }}
+                placeholder={selectedPoint ? `Note for Point ${selectedPoint.pointNumber}…` : "Add note…"}
+                maxLength={500}
+                className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/20"
+              />
+              <button
+                onClick={addAnnotation}
+                disabled={(!newText.trim() && !selectedPointId) || submitting}
+                className="px-3 py-2 bg-white/10 hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm text-white transition-colors shrink-0"
+              >
+                {selectedPoint && !newText.trim() ? "Mark" : "Add"}
+              </button>
+            </div>
+
+            <div className="border-t border-white/5 my-0.5" />
+
+            <button
+              onClick={() => showNewPointForm ? setShowNewPointForm(false) : openNewPointForm(points)}
+              className="text-xs text-white/40 hover:text-white/70 transition-colors text-left flex items-center gap-1"
+            >
+              <span className="text-white/25">{showNewPointForm ? "▼" : "▶"}</span>
+              + New Point
+            </button>
+
+            {showNewPointForm && (
+              <div className="flex flex-col gap-2 bg-white/3 rounded-lg p-2.5 border border-white/8">
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] text-white/40 w-10 shrink-0">Point</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={npNumber}
+                    onChange={e => setNpNumber(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-12 bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white text-center focus:outline-none focus:border-white/25"
+                  />
+                  <span className="text-white/20 text-xs ml-auto">Void</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={npVoid}
+                    onChange={e => setNpVoid(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-10 bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white text-center focus:outline-none focus:border-white/25"
+                  />
+                  <span className="text-white/20 text-xs">–</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={npOpp}
+                    onChange={e => setNpOpp(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-10 bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white text-center focus:outline-none focus:border-white/25"
+                  />
+                  <span className="text-white/20 text-xs">Opp</span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] text-white/40 w-10 shrink-0">Line</label>
+                  <div className="flex gap-1">
+                    <button onClick={() => setNpLine("O")} className={toggleBtn(npLine === "O")}>O</button>
+                    <button onClick={() => setNpLine("D")} className={toggleBtn(npLine === "D")}>D</button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] text-white/40 w-10 shrink-0">Result</label>
+                  <div className="flex gap-1">
+                    <button onClick={() => setNpOutcome("HOLD")} className={toggleBtn(npOutcome === "HOLD")}>HOLD</button>
+                    <button onClick={() => setNpOutcome("BREAK")} className={toggleBtn(npOutcome === "BREAK")}>BREAK</button>
+                    <button onClick={() => setNpOutcome("—")} className={toggleBtn(npOutcome === "—")}>—</button>
+                  </div>
+                </div>
+
+                {players.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <button
+                      onClick={() => setShowPlayerPicker(p => !p)}
+                      className="text-[10px] text-white/35 hover:text-white/60 transition-colors text-left"
+                    >
+                      {showPlayerPicker ? "▼" : "▶"} Players {npPlayerIds.length > 0 ? `(${npPlayerIds.length})` : "(optional)"}
+                    </button>
+                    {showPlayerPicker && (
+                      <div className="flex flex-col gap-0.5 max-h-32 overflow-y-auto">
+                        {players
+                          .filter(p => p.is_active)
+                          .sort((a, b) => a.number - b.number)
+                          .map(p => {
+                            const selected = npPlayerIds.includes(p.id)
+                            return (
+                              <button
+                                key={p.id}
+                                onClick={() =>
+                                  setNpPlayerIds(prev =>
+                                    selected ? prev.filter(id => id !== p.id) : [...prev, p.id]
+                                  )
+                                }
+                                className={`flex items-center gap-2 px-2 py-1 rounded text-xs text-left transition-colors ${selected ? "bg-white/10 text-white" : "text-white/50 hover:bg-white/5"}`}
+                              >
+                                <span className="font-mono text-white/30 w-6 text-right">{p.number}</span>
+                                <span>{p.first_name} {p.last_name}</span>
+                                {selected && <span className="ml-auto text-white/40">✓</span>}
+                              </button>
+                            )
+                          })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  onClick={createAndTagPoint}
+                  disabled={creatingPoint}
+                  className="mt-0.5 w-full py-1.5 bg-white/10 hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs text-white transition-colors"
+                >
+                  {creatingPoint ? "Creating…" : `Create & Tag at ${formatTime(globalMs)}`}
+                </button>
+              </div>
+            )}
+
+            {untaggedPoints.length > 0 && (
+              <>
+                <button
+                  onClick={() => setShowPointPicker(p => !p)}
+                  className="text-xs text-white/30 hover:text-white/60 transition-colors text-left"
+                >
+                  {showPointPicker ? "↑ Hide" : "↓ Tag existing point…"}
+                </button>
+                {showPointPicker && (
+                  <div className="flex flex-col gap-0.5 max-h-36 overflow-y-auto border border-white/10 rounded-lg p-1 bg-black/40">
+                    {untaggedPoints.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => { setSelectedPointId(p.id); setShowPointPicker(false) }}
+                        className="flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left hover:bg-white/5 transition-colors"
+                      >
+                        <span className={`w-2 h-2 rounded-sm shrink-0 ${getPointColor(p.lineType, p.outcome)}`} />
+                        <span className="font-mono text-white/70">P{p.pointNumber}</span>
+                        <span className="text-white/40">{p.lineType}-line</span>
+                        {p.outcome !== "IN_PROGRESS" && <span className="text-white/40">{p.outcome}</span>}
+                        <span className="text-white/30 font-mono ml-auto">{p.voidScoreBefore}–{p.opponentScoreBefore}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

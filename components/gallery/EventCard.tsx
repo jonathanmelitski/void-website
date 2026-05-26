@@ -1,7 +1,7 @@
 'use client'
 
-import Link from "next/link"
 import Image from "next/image"
+import { PrefetchLink } from "@/components/prefetch-link"
 import type { GalleryEvent } from "@/models/GalleryModels"
 
 interface EventCardProps {
@@ -23,7 +23,7 @@ export function EventCard({ event, href }: EventCardProps) {
 
   if (!coverUrl) {
     return (
-      <Link href={href ?? `/gallery/${event.id}`} className="block group">
+      <PrefetchLink href={href ?? `/gallery/${event.id}`} apiPrefetchUrls={[`/api/events/${event.id}`]} className="block group">
         <div className="bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden">
           <div className="relative aspect-[4/3] flex items-center justify-center text-white/40 text-sm">
             No cover photo
@@ -34,12 +34,12 @@ export function EventCard({ event, href }: EventCardProps) {
             </div>
           </div>
         </div>
-      </Link>
+      </PrefetchLink>
     )
   }
 
   return (
-    <Link href={href ?? `/gallery/${event.id}`} className="block group">
+    <PrefetchLink href={href ?? `/gallery/${event.id}`} apiPrefetchUrls={[`/api/events/${event.id}`]} className="block group">
       <div className="bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden">
         <div className="relative aspect-[4/3] hover:scale-[1.02] transition-transform">
           <Image
@@ -65,6 +65,6 @@ export function EventCard({ event, href }: EventCardProps) {
           </div>
         </div>
       </div>
-    </Link>
+    </PrefetchLink>
   )
 }

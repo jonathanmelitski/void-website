@@ -1,5 +1,7 @@
 import type { Metadata } from "next"
 import "./globals.css"
+import "@vidstack/react/player/styles/default/theme.css"
+import "@vidstack/react/player/styles/default/layouts/video.css"
 import { ThemeProvider } from "@/components/void-live-theme-provider";
 import { AuthProvider } from "@/lib/auth-context";
 import { RootShell } from "@/components/root-shell";

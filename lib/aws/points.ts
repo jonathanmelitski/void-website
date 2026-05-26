@@ -4,6 +4,7 @@ import {
   DeleteCommand,
   QueryCommand,
   UpdateCommand,
+  ScanCommand,
 } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
 
@@ -40,6 +41,18 @@ export async function listPointsByGame(gameId: string): Promise<PointItem[]> {
     })
   )
   return (result.Items ?? []) as PointItem[]
+}
+
+// TODO: add PlayerIdIndex GSI to VoidPoints when roster grows significantly
+export async function listPointsByPlayer(playerId: string): Promise<PointItem[]> {
+  const result = await dynamo.send(
+    new ScanCommand({
+      TableName: TABLE(),
+      FilterExpression: "contains(playerIds, :playerId)",
+      ExpressionAttributeValues: { ":playerId": playerId },
+    })
+  )
+  return ((result.Items ?? []) as PointItem[]).sort((a, b) => a.pointNumber - b.pointNumber)
 }
 
 export async function getPoint(id: string): Promise<PointItem | null> {

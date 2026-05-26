@@ -1,15 +1,35 @@
 import { NextRequest, NextResponse } from "next/server"
 import { verifyToken } from "@/lib/aws/cognito"
-import { listPointsByGame, createPoint } from "@/lib/aws/points"
+import { listPointsByGame, listPointsByPlayer, createPoint } from "@/lib/aws/points"
 import { randomUUID } from "crypto"
 
 export async function GET(request: NextRequest) {
   const gameId = request.nextUrl.searchParams.get("gameId")
-  if (!gameId) {
-    return NextResponse.json({ error: "gameId query param is required" }, { status: 400 })
+  const playerId = request.nextUrl.searchParams.get("playerId")
+
+  if (!gameId && !playerId) {
+    return NextResponse.json({ error: "gameId or playerId query param is required" }, { status: 400 })
   }
+
+  if (playerId) {
+    const token = request.cookies.get("access_token")?.value
+    if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
+    try {
+      await verifyToken(token)
+    } catch {
+      return NextResponse.json({ error: "Invalid token" }, { status: 401 })
+    }
+    try {
+      const points = await listPointsByPlayer(playerId)
+      return NextResponse.json(points)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to fetch points"
+      return NextResponse.json({ error: message }, { status: 500 })
+    }
+  }
+
   try {
-    const points = await listPointsByGame(gameId)
+    const points = await listPointsByGame(gameId!)
     return NextResponse.json(points)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to fetch points"

@@ -50,6 +50,9 @@ const port = parseInt(process.env.PORT ?? "3000", 10)
 // Per-game subscriber sets
 const gameSubscribers = new Map<string, Set<ExtWebSocket>>()
 
+// Per-clip subscriber sets (film annotation rooms)
+const clipSubscribers = new Map<string, Set<ExtWebSocket>>()
+
 // --- Fetch full game state from DynamoDB ---
 
 async function fetchGameState(gameId: string): Promise<LiveGameMessage | null> {
@@ -83,6 +86,31 @@ const server = createServer((req, res) => {
     const subscriberCount = [...gameSubscribers.values()].reduce((n, s) => n + s.size, 0)
     res.writeHead(200, { "Content-Type": "application/json" })
     res.end(JSON.stringify({ status: "ok", games: gameCount, subscribers: subscriberCount }))
+    return
+  }
+
+  // POST /internal/push/film/:clipId
+  const filmPushMatch = pathname?.match(/^\/internal\/push\/film\/([^/]+)$/)
+  if (req.method === "POST" && filmPushMatch) {
+    const secret = req.headers["authorization"]?.replace("Bearer ", "")
+    if (secret !== process.env.WS_INTERNAL_SECRET) {
+      res.writeHead(401); res.end(); return
+    }
+    const clipId = filmPushMatch[1]
+    const subs = clipSubscribers.get(clipId)
+    if (!subs || subs.size === 0) { res.writeHead(204); res.end(); return }
+
+    let body = ""
+    req.on("data", (chunk: Buffer) => { body += chunk.toString() })
+    req.on("end", () => {
+      const dead: ExtWebSocket[] = []
+      subs.forEach(ws => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(body)
+        else dead.push(ws)
+      })
+      dead.forEach(ws => subs.delete(ws))
+      res.writeHead(204); res.end()
+    })
     return
   }
 
@@ -128,14 +156,35 @@ const wss = new WebSocketServer({ noServer: true })
 
 // --- WebSocket connection handler ---
 
-wss.on("connection", (ws: ExtWebSocket, _req: IncomingMessage, gameId: string) => {
+wss.on("connection", (ws: ExtWebSocket, _req: IncomingMessage, gameId: string | undefined, clipId: string | undefined) => {
+  ws.isAlive = true
+  ws.on("pong", () => { ws.isAlive = true })
+
+  if (clipId) {
+    // Film annotation room
+    if (!clipSubscribers.has(clipId)) clipSubscribers.set(clipId, new Set())
+    clipSubscribers.get(clipId)!.add(ws)
+    console.log(`[WS] Client connected to clip ${clipId} (${clipSubscribers.get(clipId)!.size} total)`)
+
+    ws.on("close", () => {
+      const subs = clipSubscribers.get(clipId)
+      if (subs) {
+        subs.delete(ws)
+        if (subs.size === 0) {
+          clipSubscribers.delete(clipId)
+          console.log(`[WS] Last subscriber left clip ${clipId}`)
+        }
+      }
+    })
+    // Clients fetch initial annotations via REST on mount; no initial push needed
+    return
+  }
+
+  // Game state room
+  if (!gameId) { ws.close(1008, "Missing room"); return }
   if (!gameSubscribers.has(gameId)) gameSubscribers.set(gameId, new Set())
   gameSubscribers.get(gameId)!.add(ws)
-  ws.isAlive = true
-
   console.log(`[WS] Client connected to game ${gameId} (${gameSubscribers.get(gameId)!.size} total)`)
-
-  ws.on("pong", () => { ws.isAlive = true })
 
   ws.on("close", () => {
     const subs = gameSubscribers.get(gameId)
@@ -163,18 +212,27 @@ wss.on("connection", (ws: ExtWebSocket, _req: IncomingMessage, gameId: string) =
 
 server.on("upgrade", (request: IncomingMessage, socket, head) => {
   const { pathname } = parse(request.url ?? "")
-  const match = pathname?.match(/^\/ws\/game\/([^/]+)$/)
 
-  if (!match) {
-    socket.write("HTTP/1.1 404 Not Found\r\n\r\n")
-    socket.destroy()
+  const gameMatch = pathname?.match(/^\/ws\/game\/([^/]+)$/)
+  if (gameMatch) {
+    const gameId = gameMatch[1]
+    wss.handleUpgrade(request, socket, head, ws => {
+      wss.emit("connection", ws, request, gameId, undefined)
+    })
     return
   }
 
-  const gameId = match[1]
-  wss.handleUpgrade(request, socket, head, ws => {
-    wss.emit("connection", ws, request, gameId)
-  })
+  const filmMatch = pathname?.match(/^\/ws\/film\/([^/]+)$/)
+  if (filmMatch) {
+    const clipId = filmMatch[1]
+    wss.handleUpgrade(request, socket, head, ws => {
+      wss.emit("connection", ws, request, undefined, clipId)
+    })
+    return
+  }
+
+  socket.write("HTTP/1.1 404 Not Found\r\n\r\n")
+  socket.destroy()
 })
 
 // --- Heartbeat: detect dead connections ---
