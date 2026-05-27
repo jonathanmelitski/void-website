@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState, useCallback, useEffect, useMemo } from "react"
+import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } from "react"
 import { Play, Pause, Volume2, VolumeX, Maximize, Minimize } from "lucide-react"
 import { MediaPlayer, MediaProvider } from "@vidstack/react"
 import type { MediaPlayerInstance } from "@vidstack/react"
@@ -57,6 +57,7 @@ function suggestNextScore(points: PointItem[]): { voidScore: number; oppScore: n
   }
 }
 
+
 export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewerProps) {
   const playerRef = useRef<MediaPlayerInstance>(null)
   const isPlayingRef = useRef(false)
@@ -71,6 +72,13 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
   const playheadRef = useRef<HTMLDivElement>(null)
   const progressRef = useRef<HTMLDivElement>(null)
   const timecodeRef = useRef<HTMLSpanElement>(null)
+  const hoverLineRef = useRef<HTMLDivElement>(null)
+  const hoverTooltipRef = useRef<HTMLSpanElement>(null)
+  // True while a programmatic clip change is in-flight — prevents onPause from clearing isPlayingRef
+  const transitioningRef = useRef(false)
+  // Mirror memos into refs so the RAF loop can read the latest values without a stale closure
+  const clipOffsetsRef = useRef<number[]>([])
+  const totalDurationMsRef = useRef(0)
 
   const [activeClipIdx, setActiveClipIdx] = useState(0)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -78,37 +86,42 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
   const [isPaused, setIsPaused] = useState(true)
   const [isMuted, setIsMuted] = useState(false)
   const [displayMs, setDisplayMs] = useState(0)
+  const [playerError, setPlayerError] = useState<string | null>(null)
 
   const activeClip = clips[activeClipIdx]
-  const activeSrc = activeClip?.youtubeVideoId ? `youtube/${activeClip.youtubeVideoId}` : ""
+  const activeSrc = activeClip
+    ? activeClip.sourceType === "YOUTUBE"
+      ? `youtube/${activeClip.youtubeVideoId}`
+      : (activeClip.cloudfrontHlsUrl ?? "")
+    : ""
 
-  // Keep activeClipIdxRef in sync for use inside Vidstack callbacks
-  useEffect(() => { activeClipIdxRef.current = activeClipIdx }, [activeClipIdx])
+  // Keep activeClipIdxRef in sync before paint so the RAF never reads a stale value
+  useLayoutEffect(() => { activeClipIdxRef.current = activeClipIdx }, [activeClipIdx])
 
-  // Reset display state on clip switch
+  // Reset display state on clip switch — don't touch isPaused during auto-advance transitions
   useEffect(() => {
-    setIsPaused(true)
+    if (!transitioningRef.current) setIsPaused(true)
     setDisplayMs(0)
     currentMsRef.current = 0
     setPlayerReady(false)
+    setPlayerError(null)
   }, [activeClipIdx])
 
-  const [localDurations, setLocalDurations] = useState<number[]>(
-    () => clips.map(c => (c.durationSeconds ?? 0) * 1000)
-  )
-
+  // Clip durations come from MediaConvert metadata — never updated dynamically.
+  // The boundary line is computed once from these and never moves during playback.
+  const clipDurationsMs = useMemo(() => clips.map(c => (c.durationSeconds ?? 0) * 1000), [clips])
   const clipOffsets = useMemo(() => {
     const result: number[] = []
     let acc = 0
-    for (const dur of localDurations) {
-      result.push(acc)
-      acc += dur
-    }
+    for (const dur of clipDurationsMs) { result.push(acc); acc += dur }
     return result
-  }, [localDurations])
-
-  const totalDurationMs = useMemo(() => localDurations.reduce((a, b) => a + b, 0), [localDurations])
+  }, [clipDurationsMs])
+  const totalDurationMs = useMemo(() => clipDurationsMs.reduce((a, b) => a + b, 0), [clipDurationsMs])
   const globalMs = (clipOffsets[activeClipIdx] ?? 0) + displayMs
+
+  // Keep offset/duration refs in sync before paint so the RAF reads fresh values on every frame
+  useLayoutEffect(() => { clipOffsetsRef.current = clipOffsets }, [clipOffsets])
+  useLayoutEffect(() => { totalDurationMsRef.current = totalDurationMs }, [totalDurationMs])
 
   const [annotations, setAnnotations] = useState<FilmAnnotationItem[]>(initialAnnotations)
   const [newText, setNewText] = useState("")
@@ -204,13 +217,16 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
   const seekGlobal = useCallback((targetMs: number) => {
     let remaining = Math.max(0, targetMs)
     for (let i = 0; i < clips.length; i++) {
-      const dur = localDurations[i]
+      const dur = clipDurationsMs[i]
       if (remaining <= dur || i === clips.length - 1) {
         const startSec = remaining / 1000
         if (i !== activeClipIdx) {
-          // Changing src — apply seek in onCanPlay
+          transitioningRef.current = true
           pendingSeekRef.current = startSec
           setActiveClipIdx(i)
+        } else if (transitioningRef.current) {
+          // Clip is buffering — update the pending seek so handleCanPlay uses this position
+          pendingSeekRef.current = startSec
         } else {
           if (playerRef.current) playerRef.current.currentTime = startSec
         }
@@ -218,7 +234,7 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
       }
       remaining -= dur
     }
-  }, [clips, localDurations, activeClipIdx])
+  }, [clips, clipDurationsMs, activeClipIdx])
 
   const openNewPointForm = useCallback((pts: PointItem[]) => {
     const { voidScore, oppScore } = suggestNextScore(pts)
@@ -242,6 +258,7 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
       currentMsRef.current = ann.videoTimestampMs
       if (playerRef.current) playerRef.current.currentTime = startSec
     } else {
+      transitioningRef.current = true
       pendingSeekRef.current = startSec
       setActiveClipIdx(targetIdx)
     }
@@ -266,20 +283,24 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
     }
   }, [activeClip])
 
-  // RAF loop — smooth 60fps playhead + timecode, bypasses React render cycle
+  // RAF loop — smooth 60fps playhead + timecode, bypasses React render cycle.
+  // Reads all changing values from refs so it never restarts on clip switch (no stale-closure flash).
   useEffect(() => {
     let rafId: number
     const tick = () => {
       if (!isDraggingRef.current && playerRef.current) {
         try {
-          const ct = playerRef.current.currentTime * 1000
+          // During a clip transition the player still has the previous clip's src loaded.
+          // Use 0 so the playhead shows the start of the incoming clip, not the old end position.
+          const ct = transitioningRef.current ? 0 : playerRef.current.currentTime * 1000
           currentMsRef.current = ct
-          const gms = (clipOffsets[activeClipIdx] ?? 0) + ct
-          if (totalDurationMs > 0) {
-            const pct = Math.min(100, Math.max(0, (gms / totalDurationMs) * 100))
+          const total = totalDurationMsRef.current
+          const gms = (clipOffsetsRef.current[activeClipIdxRef.current] ?? 0) + ct
+          if (total > 0) {
+            const pct = Math.min(100, Math.max(0, (gms / total) * 100))
             if (playheadRef.current) playheadRef.current.style.left = `${pct}%`
             if (progressRef.current) progressRef.current.style.width = `${pct}%`
-            if (timecodeRef.current) timecodeRef.current.textContent = `${formatTime(gms)} / ${formatTime(totalDurationMs)}`
+            if (timecodeRef.current) timecodeRef.current.textContent = `${formatTime(gms)} / ${formatTime(total)}`
           }
           // Throttle React state update to ~4Hz to avoid excess re-renders
           const now = Date.now()
@@ -295,7 +316,8 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
     }
     rafId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(rafId)
-  }, [clipOffsets, activeClipIdx, totalDurationMs])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // empty — everything is read from refs kept in sync by useLayoutEffect
 
   useEffect(() => {
     const onChange = () => setIsFullscreen(!!document.fullscreenElement)
@@ -314,6 +336,7 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
   const handleTimelineMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault()
     isDraggingRef.current = true
+    if (hoverLineRef.current) hoverLineRef.current.style.opacity = "0"
 
     const getMs = (clientX: number) => {
       const rect = timelineRef.current?.getBoundingClientRect()
@@ -333,12 +356,57 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
     const onMove = (ev: MouseEvent) => updateVisual(ev.clientX)
     const onUp = (ev: MouseEvent) => {
       isDraggingRef.current = false
+      if (hoverLineRef.current) hoverLineRef.current.style.opacity = "1"
       seekGlobal(getMs(ev.clientX))
       document.removeEventListener("mousemove", onMove)
       document.removeEventListener("mouseup", onUp)
     }
     document.addEventListener("mousemove", onMove)
     document.addEventListener("mouseup", onUp)
+  }, [seekGlobal, totalDurationMs])
+
+  const handleTimelineMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (isDraggingRef.current || !timelineRef.current || totalDurationMs === 0) return
+    const rect = timelineRef.current.getBoundingClientRect()
+    const pct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100))
+    if (hoverLineRef.current) hoverLineRef.current.style.left = `${pct}%`
+    if (hoverTooltipRef.current) hoverTooltipRef.current.textContent = formatTime((pct / 100) * totalDurationMs)
+  }, [totalDurationMs])
+
+  const handleTimelineMouseEnter = useCallback(() => {
+    if (totalDurationMs > 0 && hoverLineRef.current) hoverLineRef.current.style.opacity = "1"
+  }, [totalDurationMs])
+
+  const handleTimelineMouseLeave = useCallback(() => {
+    if (hoverLineRef.current) hoverLineRef.current.style.opacity = "0"
+  }, [])
+
+  const handleTimelineTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    isDraggingRef.current = true
+    const getMs = (clientX: number) => {
+      const rect = timelineRef.current?.getBoundingClientRect()
+      if (!rect || totalDurationMs === 0) return 0
+      return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * totalDurationMs
+    }
+    const updateVisual = (clientX: number) => {
+      const rect = timelineRef.current?.getBoundingClientRect()
+      if (!rect || totalDurationMs === 0) return
+      const pct = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100))
+      if (playheadRef.current) playheadRef.current.style.left = `${pct}%`
+      if (progressRef.current) progressRef.current.style.width = `${pct}%`
+      if (timecodeRef.current) timecodeRef.current.textContent = `${formatTime((pct / 100) * totalDurationMs)} / ${formatTime(totalDurationMs)}`
+    }
+    updateVisual(e.touches[0].clientX)
+    const onMove = (ev: TouchEvent) => updateVisual(ev.touches[0].clientX)
+    const onEnd = (ev: TouchEvent) => {
+      isDraggingRef.current = false
+      seekGlobal(getMs(ev.changedTouches[0].clientX))
+      document.removeEventListener("touchmove", onMove)
+      document.removeEventListener("touchend", onEnd)
+    }
+    document.addEventListener("touchmove", onMove, { passive: false })
+    document.addEventListener("touchend", onEnd)
   }, [seekGlobal, totalDurationMs])
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -422,36 +490,35 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
   }, [points, markerMap, activePointId, jumpToAnnotation])
 
   // Vidstack event handlers
+  const handleError = useCallback((detail: { message: string } | unknown) => {
+    const message = (detail && typeof detail === "object" && "message" in detail)
+      ? String((detail as { message: string }).message)
+      : "Failed to load video"
+    transitioningRef.current = false
+    setPlayerError(message)
+    setPlayerReady(false)
+    isPlayingRef.current = false
+    setIsPaused(true)
+  }, [])
+
   const handleCanPlay = useCallback(() => {
+    transitioningRef.current = false
     setPlayerReady(true)
+    setPlayerError(null)
     if (pendingSeekRef.current !== null && playerRef.current) {
       playerRef.current.currentTime = pendingSeekRef.current
       pendingSeekRef.current = null
     }
-    // Resume playback if we were playing when the clip switch happened
-    if (isPlayingRef.current) {
-      playerRef.current?.play()
-    }
-    // Capture accurate float duration from player
-    const dur = playerRef.current?.duration ?? 0
-    if (dur > 0) {
-      const ci = activeClipIdxRef.current
-      setLocalDurations(prev => {
-        const next = [...prev]; next[ci] = dur * 1000; return next
-      })
-    }
+    if (isPlayingRef.current) playerRef.current?.play()
   }, [])
 
   const handleEnd = useCallback(() => {
-    const ci = activeClipIdxRef.current
-    // getCurrentTime at end gives true float duration
-    const trueMs = (playerRef.current?.currentTime ?? 0) * 1000
-    if (trueMs > 0) {
-      setLocalDurations(prev => { const next = [...prev]; next[ci] = trueMs; return next })
-    }
-    const nextIdx = ci + 1
-    if (nextIdx < clips.length && clips[nextIdx].youtubeVideoId) {
-      // Keep isPlayingRef true so onCanPlay auto-plays the next clip
+    const nextIdx = activeClipIdxRef.current + 1
+    const hasNext = nextIdx < clips.length && (clips[nextIdx].cloudfrontHlsUrl || clips[nextIdx].youtubeVideoId)
+    if (hasNext) {
+      // onPause fires before onEnd — restore isPlayingRef so handleCanPlay auto-plays the next clip
+      isPlayingRef.current = true
+      transitioningRef.current = true
       pendingSeekRef.current = 0
       setActiveClipIdx(nextIdx)
     } else {
@@ -583,55 +650,71 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
     setIsMuted(next)
   }
 
-  const controlsArea = totalDurationMs > 0 && (
+  const controlsArea = (
     <div className={isFullscreen
       ? "absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 pb-4 pt-12 flex flex-col gap-2"
       : "flex flex-col gap-2"
     }>
-      {/* Point segment strip */}
-      {globalMetaSegments.length > 0 && (
-        <div className="flex h-5 rounded-lg overflow-hidden border border-white/10">
+      {/* Point segment strip — visible once duration is known */}
+      {totalDurationMs > 0 && globalMetaSegments.length > 0 && (
+        <div className="flex h-4 rounded-md overflow-hidden gap-px">
           {globalMetaSegments.map(({ point, markerAnn, globalStart, segEnd }) => {
             const widthPct = ((segEnd - globalStart) / totalDurationMs) * 100
             return (
               <button
                 key={markerAnn.id}
                 onClick={() => seekGlobal(globalStart)}
-                className={`${getPointColor(point.lineType, point.outcome)} opacity-70 hover:opacity-100 transition-opacity text-[9px] font-mono text-white/90 flex items-center justify-center overflow-hidden shrink-0`}
+                className={`${getPointColor(point.lineType, point.outcome)} opacity-60 hover:opacity-95 transition-opacity text-[9px] font-mono text-white/90 flex items-center justify-center overflow-hidden shrink-0`}
                 style={{ width: `${widthPct}%` }}
                 title={`P${point.pointNumber} · ${point.lineType}-line · ${point.outcome} · ${point.voidScoreBefore}–${point.opponentScoreBefore}`}
               >
-                {widthPct > 6 ? `P${point.pointNumber} ${point.lineType}` : ""}
+                {widthPct > 5 ? `P${point.pointNumber}` : ""}
               </button>
             )
           })}
         </div>
       )}
 
-      {/* Global timeline scrubber */}
+      {/* Global timeline scrubber — always rendered so controls are visible while loading */}
       <div
         ref={timelineRef}
-        className="relative h-8 select-none cursor-pointer"
-        onMouseDown={handleTimelineMouseDown}
+        className={`relative h-9 select-none ${totalDurationMs > 0 ? "cursor-pointer" : "cursor-default"}`}
+        onMouseDown={totalDurationMs > 0 ? handleTimelineMouseDown : undefined}
+        onMouseMove={handleTimelineMouseMove}
+        onMouseEnter={handleTimelineMouseEnter}
+        onMouseLeave={handleTimelineMouseLeave}
+        onTouchStart={totalDurationMs > 0 ? handleTimelineTouchStart : undefined}
       >
-        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1.5 rounded-full bg-white/8 overflow-hidden">
-          <div
-            className="absolute top-0 h-full bg-white/12 pointer-events-none"
-            style={{
-              left: `${((clipOffsets[activeClipIdx] ?? 0) / totalDurationMs) * 100}%`,
-              width: `${((localDurations[activeClipIdx] ?? 0) / totalDurationMs) * 100}%`,
-            }}
-          />
-          <div ref={progressRef} className="absolute top-0 left-0 h-full bg-white/35 pointer-events-none" style={{ width: "0%" }} />
+        {/* Track */}
+        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-0.5 rounded-full overflow-hidden"
+          style={{ backgroundColor: "rgba(255,255,255,0.08)" }}
+        >
+          {/* Active clip region highlight */}
+          {totalDurationMs > 0 && (
+            <div
+              className="absolute top-0 h-full pointer-events-none"
+              style={{
+                backgroundColor: "rgba(255,255,255,0.12)",
+                left: `${((clipOffsets[activeClipIdx] ?? 0) / totalDurationMs) * 100}%`,
+                width: `${((clipDurationsMs[activeClipIdx] ?? 0) / totalDurationMs) * 100}%`,
+              }}
+            />
+          )}
+          {/* Played progress */}
+          <div ref={progressRef} className="absolute top-0 left-0 h-full bg-white pointer-events-none" style={{ width: "0%" }} />
         </div>
-        {clipOffsets.slice(1).map((offset, i) => (
+
+        {/* Clip boundary markers */}
+        {totalDurationMs > 0 && clipOffsets.slice(1).map((offset, i) => (
           <div
             key={i}
-            className="absolute top-1 bottom-1 w-px bg-white/40 pointer-events-none"
-            style={{ left: `${(offset / totalDurationMs) * 100}%` }}
+            className="absolute top-0 bottom-0 w-px pointer-events-none"
+            style={{ left: `${(offset / totalDurationMs) * 100}%`, backgroundColor: "rgba(255,255,255,0.45)", boxShadow: "0 0 3px rgba(255,255,255,0.2)" }}
           />
         ))}
-        {globalAnnotations.map(a => (
+
+        {/* Annotation markers */}
+        {totalDurationMs > 0 && globalAnnotations.map(a => (
           <AnnotationMarker
             key={a.id}
             annotation={a}
@@ -640,9 +723,28 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
             pointData={a.pointId ? pointMap[a.pointId] : undefined}
           />
         ))}
+
+        {/* Hover preview line + tooltip — opacity toggled directly via ref */}
+        <div
+          ref={hoverLineRef}
+          className="absolute top-0 bottom-0 pointer-events-none"
+          style={{ left: "0%", opacity: 0 }}
+        >
+          <div className="absolute inset-y-0 left-0 w-px" style={{ backgroundColor: "rgba(255,255,255,0.25)" }} />
+          <span
+            ref={hoverTooltipRef}
+            className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 text-[10px] font-mono whitespace-nowrap px-1.5 py-0.5 rounded pointer-events-none"
+            style={{ backgroundColor: "rgba(0,0,0,0.75)", color: "rgba(255,255,255,0.7)" }}
+          />
+        </div>
+
+        {/* Playhead */}
         <div ref={playheadRef} className="absolute top-0 bottom-0 pointer-events-none" style={{ left: "0%" }}>
           <div className="absolute inset-y-0 left-0 w-px bg-white" />
-          <div className="absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white shadow-lg" />
+          <div
+            className="absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white"
+            style={{ boxShadow: "0 0 0 2px rgba(255,255,255,0.15), 0 0 8px rgba(255,255,255,0.3)" }}
+          />
         </div>
       </div>
 
@@ -656,15 +758,17 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
           {isPaused ? <Play size={16} fill="currentColor" /> : <Pause size={16} fill="currentColor" />}
         </button>
         <span ref={timecodeRef} className="text-[11px] font-mono text-white/50 tabular-nums shrink-0 min-w-[80px]">
-          {formatTime(globalMs)} / {formatTime(totalDurationMs)}
+          {formatTime(globalMs)} / {totalDurationMs > 0 ? formatTime(totalDurationMs) : "--:--"}
         </span>
         <div className="flex-1 flex items-center justify-center gap-1 flex-wrap">
           {clips.length > 1 && clips.map((clip, i) => (
             <button
               key={clip.id}
-              onClick={() => seekGlobal(clipOffsets[i] ?? 0)}
+              onClick={() => totalDurationMs > 0 && seekGlobal(clipOffsets[i] ?? 0)}
               className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                i === activeClipIdx ? "bg-white/20 text-white" : "bg-white/5 text-white/40 hover:text-white/60 hover:bg-white/10"
+                i === activeClipIdx
+                  ? "bg-white/20 text-white"
+                  : "bg-white/5 text-white/40 hover:text-white/60 hover:bg-white/10"
               }`}
             >
               {i === activeClipIdx && <span className="w-1.5 h-1.5 rounded-full bg-white/60 shrink-0" />}
@@ -716,12 +820,20 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
                 keyDisabled
                 onCanPlay={handleCanPlay}
                 onPlay={() => { isPlayingRef.current = true; setIsPaused(false) }}
-                onPause={() => { isPlayingRef.current = false; setIsPaused(true) }}
+                onPause={() => {
+                  // Ignore pause events fired by Vidstack during a programmatic src change
+                  if (!transitioningRef.current) { isPlayingRef.current = false; setIsPaused(true) }
+                }}
                 onEnd={handleEnd}
+                onError={handleError}
               >
                 <MediaProvider />
               </MediaPlayer>
-              {!playerReady && (
+              {playerError ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+                  <p className="text-sm text-red-400/80 text-center px-6">{playerError}</p>
+                </div>
+              ) : !playerReady && (
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="w-6 h-6 border border-white/20 border-t-white/60 rounded-full animate-spin" />
                 </div>

@@ -7,8 +7,12 @@ export type ClipPhase =
   | { tag: "uploading"; percent: number }
   | { tag: "transcoding" }
   | { tag: "ready" }
-  | { tag: "interrupted" }
-  | { tag: "error"; message?: string }
+  | { tag: "error"; message?: string; retryable?: boolean }
+
+const PART_SIZE = 10 * 1024 * 1024 // 10 MB — each part well within the 1-hour presign expiry
+const MAX_PART_RETRIES = 3
+
+function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
 
 export function useFilmClips(gameId: string | null) {
   const [clips, setClips] = useState<FilmClipItem[]>([])
@@ -16,8 +20,8 @@ export function useFilmClips(gameId: string | null) {
   const [loading, setLoading] = useState(true)
 
   const pollTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  // One active XHR per clip (current in-flight part)
   const xhrsRef = useRef<Map<string, XMLHttpRequest>>(new Map())
-  const pendingClipIds = useRef<Set<string>>(new Set())
 
   const setPhase = useCallback((clipId: string, phase: ClipPhase) => {
     setPhases(prev => ({ ...prev, [clipId]: phase }))
@@ -47,7 +51,7 @@ export function useFilmClips(gameId: string | null) {
         pollTimers.current[clipId] = setTimeout(tick, 10_000)
       }
     }
-    pollTimers.current[clipId] = setTimeout(tick, 10_000)
+    pollTimers.current[clipId] = setTimeout(tick, 3_000)
   }, [setPhase, stopPolling])
 
   useEffect(() => {
@@ -72,7 +76,8 @@ export function useFilmClips(gameId: string | null) {
           } else if (clip.status === "ERROR") {
             initial[clip.id] = { tag: "error", message: clip.errorMessage }
           } else {
-            initial[clip.id] = { tag: "interrupted" }
+            // UPLOADING without active XHR — multipart is open in S3, user must re-select file
+            initial[clip.id] = { tag: "error", message: "Upload interrupted — click Retry to re-upload", retryable: true }
           }
         }
         setPhases(initial)
@@ -87,165 +92,134 @@ export function useFilmClips(gameId: string | null) {
   const deleteClip = useCallback(async (clipId: string) => {
     await fetch(`/api/film/clips/${clipId}`, { method: "DELETE" })
     stopPolling(clipId)
+    xhrsRef.current.get(clipId)?.abort()
+    xhrsRef.current.delete(clipId)
     setPhases(prev => { const n = { ...prev }; delete n[clipId]; return n })
     setClips(prev => prev.filter(c => c.id !== clipId))
   }, [stopPolling])
 
   const cancelUpload = useCallback((clipId: string) => {
-    const xhr = xhrsRef.current.get(clipId)
-    if (xhr) { xhr.abort(); xhrsRef.current.delete(clipId) }
-    pendingClipIds.current.delete(clipId)
+    xhrsRef.current.get(clipId)?.abort()
+    xhrsRef.current.delete(clipId)
     setPhases(prev => { const n = { ...prev }; delete n[clipId]; return n })
     setClips(prev => prev.filter(c => c.id !== clipId))
+    // Server DELETE aborts the multipart upload and removes the DB record
     fetch(`/api/film/clips/${clipId}`, { method: "DELETE" }).catch(() => {})
   }, [])
 
-  const finishAndPoll = useCallback(async (clipId: string, youtubeVideoId: string) => {
-    setPhase(clipId, { tag: "transcoding" })
-    const patchRes = await fetch(`/api/film/clips/${clipId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ youtubeVideoId }),
-    })
-    if (patchRes.ok) {
-      setClips(prev => prev.map(c => c.id === clipId ? { ...c, status: "TRANSCODING", youtubeVideoId } : c))
+  // Core upload logic — shared by first upload and retry
+  const runUpload = useCallback(async (clipId: string, file: File) => {
+    try {
+      // 1. Get multipart presigned URLs (server aborts any orphaned multipart from prior attempt)
+      setPhase(clipId, { tag: "uploading", percent: 0 })
+      const presignRes = await fetch(`/api/film/clips/${clipId}/presign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contentType: file.type || "video/mp4", filename: file.name, fileSize: file.size }),
+      })
+      if (!presignRes.ok) throw new Error("Failed to start upload")
+      const { uploadId, s3Key, parts } = await presignRes.json() as {
+        uploadId: string
+        s3Key: string
+        parts: { partNumber: number; uploadUrl: string }[]
+      }
+
+      // 2. Upload each part with per-part retry
+      let bytesUploaded = 0
+      for (const { partNumber, uploadUrl } of parts) {
+        const start = (partNumber - 1) * PART_SIZE
+        const end = Math.min(start + PART_SIZE, file.size)
+        const chunk = file.slice(start, end)
+        let lastError: Error | null = null
+
+        for (let attempt = 0; attempt < MAX_PART_RETRIES; attempt++) {
+          if (attempt > 0) {
+            await sleep(1000 * Math.pow(2, attempt - 1)) // 1s, 2s backoff
+          }
+
+          const bytesBeforeThisPart = bytesUploaded
+          try {
+            await new Promise<void>((resolve, reject) => {
+              const xhr = new XMLHttpRequest()
+              xhrsRef.current.set(clipId, xhr)
+              xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                  const totalNow = bytesBeforeThisPart + e.loaded
+                  setPhase(clipId, { tag: "uploading", percent: Math.round((totalNow / file.size) * 100) })
+                }
+              }
+              xhr.onload = () => {
+                xhrsRef.current.delete(clipId)
+                if (xhr.status >= 200 && xhr.status < 300) resolve()
+                else reject(new Error(`Part ${partNumber} upload failed (${xhr.status})`))
+              }
+              xhr.onerror = () => { xhrsRef.current.delete(clipId); reject(new Error(`Part ${partNumber} network error`)) }
+              xhr.onabort = () => { xhrsRef.current.delete(clipId); reject(new DOMException("Cancelled", "AbortError")) }
+              xhr.open("PUT", uploadUrl)
+              // Parts use application/octet-stream; Content-Type on the assembled object
+              // is set by CreateMultipartUpload on the server.
+              xhr.setRequestHeader("Content-Type", "application/octet-stream")
+              xhr.send(chunk)
+            })
+            lastError = null
+            break // part succeeded
+          } catch (err) {
+            if (err instanceof DOMException && err.name === "AbortError") throw err
+            lastError = err instanceof Error ? err : new Error(String(err))
+          }
+        }
+
+        if (lastError) throw lastError
+        bytesUploaded += chunk.size
+      }
+
+      // 3. Assemble — server calls ListParts + CompleteMultipartUpload
+      setPhase(clipId, { tag: "uploading", percent: 100 })
+      const completeRes = await fetch(`/api/film/clips/${clipId}/complete-multipart`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uploadId, s3Key }),
+      })
+      if (!completeRes.ok) throw new Error("Failed to finalize upload")
+
+      // 4. Trigger MediaConvert transcoding
+      setPhase(clipId, { tag: "transcoding" })
+      const transcodeRes = await fetch(`/api/film/clips/${clipId}/transcode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ s3RawKey: s3Key }),
+      })
+      if (!transcodeRes.ok) throw new Error("Failed to start transcoding")
+
+      // 5. Poll until READY or ERROR
       startPolling(clipId)
-    } else {
-      setPhase(clipId, { tag: "interrupted" })
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return
+      setPhase(clipId, {
+        tag: "error",
+        message: err instanceof Error ? err.message : "Upload failed",
+        retryable: true,
+      })
     }
   }, [setPhase, startPolling])
 
   const uploadOne = useCallback(async (file: File, sortOrder: number) => {
     if (!gameId) return
-    let clipId: string | null = null
     try {
-      // 1. Create clip record
       const clipRes = await fetch("/api/film/clips", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          gameId,
-          title: file.name.replace(/\.[^.]+$/, ""),
-          sortOrder,
-        }),
+        body: JSON.stringify({ gameId, title: file.name.replace(/\.[^.]+$/, ""), sortOrder }),
       })
       if (!clipRes.ok) throw new Error("Failed to create clip record")
       const clip: FilmClipItem = await clipRes.json()
-      clipId = clip.id
-
-      pendingClipIds.current.add(clip.id)
       setClips(prev => [...prev, clip])
-      setPhase(clip.id, { tag: "uploading", percent: 0 })
-
-      // 2. Upload via server proxy (server streams to YouTube, avoids CORS)
-      const youtubeVideoId = await new Promise<string>((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhrsRef.current.set(clip.id, xhr)
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable)
-            setPhase(clip.id, { tag: "uploading", percent: Math.round((e.loaded / e.total) * 100) })
-        }
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const data = JSON.parse(xhr.responseText)
-              if (!data.youtubeVideoId) {
-                reject(new Error(data.error ?? "Upload response missing video ID"))
-                return
-              }
-              resolve(data.youtubeVideoId)
-            } catch {
-              reject(new Error(`Upload response parse failed (${xhr.status}): ${xhr.responseText.slice(0, 120)}`))
-            }
-          } else {
-            try {
-              const data = JSON.parse(xhr.responseText)
-              reject(new Error(data.error ?? `Upload failed (${xhr.status})`))
-            } catch {
-              reject(new Error(`Upload failed (${xhr.status}): ${xhr.responseText.slice(0, 120)}`))
-            }
-          }
-        }
-        xhr.onerror = () => reject(new Error("Upload failed"))
-        xhr.onabort = () => reject(new DOMException("Cancelled", "AbortError"))
-        xhr.open("POST", `/api/film/clips/${clip.id}/upload`)
-        xhr.setRequestHeader("Content-Type", file.type || "video/mp4")
-        xhr.send(file)
-      })
-
-      xhrsRef.current.delete(clip.id)
-      await finishAndPoll(clip.id, youtubeVideoId)
-
+      await runUpload(clip.id, file)
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return
-      // Unexpected failure — keep the clip so the session URL is preserved for resumption
-      if (clipId) {
-        xhrsRef.current.delete(clipId)
-        setPhase(clipId, { tag: "interrupted" })
-      }
-    } finally {
-      if (clipId) pendingClipIds.current.delete(clipId)
+      // clip record may not have been created — nothing to show
     }
-  }, [gameId, setPhase, startPolling])
-
-  const resumeUpload = useCallback(async (clipId: string, file: File) => {
-    setPhase(clipId, { tag: "uploading", percent: 0 })
-    try {
-      // Ask the server how many bytes YouTube already has for this session
-      const statusRes = await fetch(`/api/film/clips/${clipId}/upload`)
-      const status = statusRes.ok ? await statusRes.json() : { bytesReceived: 0, sessionValid: false }
-
-      // If upload somehow already completed server-side
-      if (status.youtubeVideoId) {
-        await finishAndPoll(clipId, status.youtubeVideoId)
-        return
-      }
-
-      const offset: number = status.sessionValid ? (status.bytesReceived ?? 0) : 0
-      const slice = offset > 0 ? file.slice(offset) : file
-
-      const youtubeVideoId = await new Promise<string>((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhrsRef.current.set(clipId, xhr)
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const overall = Math.round(((offset + e.loaded) / file.size) * 100)
-            setPhase(clipId, { tag: "uploading", percent: overall })
-          }
-        }
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const data = JSON.parse(xhr.responseText)
-              if (!data.youtubeVideoId) { reject(new Error(data.error ?? "Upload response missing video ID")); return }
-              resolve(data.youtubeVideoId)
-            } catch {
-              reject(new Error(`Upload response parse failed (${xhr.status}): ${xhr.responseText.slice(0, 120)}`))
-            }
-          } else {
-            try { reject(new Error(JSON.parse(xhr.responseText).error ?? `Upload failed (${xhr.status})`)) }
-            catch { reject(new Error(`Upload failed (${xhr.status}): ${xhr.responseText.slice(0, 120)}`)) }
-          }
-        }
-        xhr.onerror = () => reject(new Error("Upload failed"))
-        xhr.onabort = () => reject(new DOMException("Cancelled", "AbortError"))
-        xhr.open("POST", `/api/film/clips/${clipId}/upload`)
-        xhr.setRequestHeader("Content-Type", file.type || "video/mp4")
-        if (offset > 0) {
-          xhr.setRequestHeader("X-Upload-Offset", String(offset))
-          xhr.setRequestHeader("X-Upload-Total", String(file.size))
-        }
-        xhr.send(slice)
-      })
-
-      xhrsRef.current.delete(clipId)
-      await finishAndPoll(clipId, youtubeVideoId)
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return
-      xhrsRef.current.delete(clipId)
-      setPhase(clipId, { tag: "interrupted" })
-    }
-  }, [setPhase, startPolling, finishAndPoll]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gameId, runUpload])
 
   const upload = useCallback((files: File[]) => {
     if (!gameId || files.length === 0) return
@@ -253,5 +227,27 @@ export function useFilmClips(gameId: string | null) {
     files.forEach((file, i) => uploadOne(file, baseOrder + i))
   }, [gameId, clips, uploadOne])
 
-  return { clips, phases, loading, upload, resumeUpload, cancelUpload, deleteClip }
+  // Retry a failed upload — caller re-selects the file, server cleans up any orphaned multipart
+  const retryUpload = useCallback(async (clipId: string, file: File) => {
+    await runUpload(clipId, file)
+  }, [runUpload])
+
+  const importYoutube = useCallback(async (youtubeUrl: string) => {
+    if (!gameId) return
+    const sortOrder = clips.reduce((m, c) => Math.max(m, c.sortOrder ?? -1), -1) + 1
+    const res = await fetch("/api/film/clips/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gameId, youtubeUrl, sortOrder }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error((data as { error?: string }).error ?? "Import failed")
+    }
+    const clip: FilmClipItem = await res.json()
+    setClips(prev => [...prev, clip])
+    setPhase(clip.id, { tag: "ready" })
+  }, [gameId, clips, setPhase])
+
+  return { clips, phases, loading, upload, retryUpload, importYoutube, cancelUpload, deleteClip }
 }

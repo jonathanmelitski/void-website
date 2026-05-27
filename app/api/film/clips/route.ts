@@ -40,15 +40,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
-  const { gameId, title, sortOrder } = await request.json()
+  const { gameId, title, sortOrder, sourceType } = await request.json()
   if (!gameId) return NextResponse.json({ error: "gameId is required" }, { status: 400 })
 
+  const resolvedSourceType: "S3_HLS" | "YOUTUBE" = sourceType === "YOUTUBE" ? "YOUTUBE" : "S3_HLS"
   const id = randomUUID()
   const now = new Date().toISOString()
 
   const clip = {
     id,
     gameId,
+    sourceType: resolvedSourceType,
     ...(title ? { title } : {}),
     ...(sortOrder !== undefined ? { sortOrder } : {}),
     status: "UPLOADING" as const,

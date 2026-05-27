@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import dynamic from "next/dynamic"
@@ -77,9 +77,7 @@ function GameClipList({
   isCoachOrAdmin: boolean
   onWatch: (clips: FilmClipItem[], annotations: FilmAnnotationItem[]) => void
 }) {
-  const { clips, phases, loading, upload, resumeUpload, cancelUpload, deleteClip } = useFilmClips(game.id)
-  const resumeInputRef = useRef<HTMLInputElement | null>(null)
-  const [resumingClipId, setResumingClipId] = useState<string | null>(null)
+  const { clips, phases, loading, upload, cancelUpload, deleteClip } = useFilmClips(game.id)
 
   const handleWatchAll = async () => {
     const readyClips = clips.filter(c => c.status === "READY")
@@ -123,14 +121,6 @@ function GameClipList({
           <div key={clip.id} className="flex flex-col gap-1.5 px-3 py-2.5 rounded-lg border border-white/10 text-sm group">
             <div className="flex items-center gap-3">
               <span className="flex-1 text-white/80 truncate">{clip.title ?? "Game Film"}</span>
-              {phase?.tag === "interrupted" && isCoachOrAdmin && (
-                <button
-                  onClick={() => { setResumingClipId(clip.id); resumeInputRef.current?.click() }}
-                  className="text-xs text-white/50 hover:text-white/80 transition-colors"
-                >
-                  Resume
-                </button>
-              )}
               {phase?.tag === "error" && isCoachOrAdmin && (
                 <span className="text-xs text-white/30">Delete and re-upload to retry</span>
               )}
@@ -160,12 +150,6 @@ function GameClipList({
                 <span className="text-xs text-white/40 tabular-nums">{phase.percent}%</span>
               </div>
             )}
-            {phase?.tag === "interrupted" && (
-              <span className="text-xs text-white/30 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                Upload interrupted — select the file again to resume
-              </span>
-            )}
             {phase?.tag === "transcoding" && (
               <span className="text-xs text-blue-400 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
@@ -184,18 +168,6 @@ function GameClipList({
             + Upload film
             <input type="file" accept="video/*" multiple className="hidden" onChange={handleFileChange} />
           </label>
-          <input
-            ref={resumeInputRef}
-            type="file"
-            accept="video/*"
-            className="hidden"
-            onChange={e => {
-              const file = e.target.files?.[0]
-              e.target.value = ""
-              if (file && resumingClipId) resumeUpload(resumingClipId, file)
-              setResumingClipId(null)
-            }}
-          />
         </>
       )}
     </div>

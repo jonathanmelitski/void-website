@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
+import { AbortMultipartUploadCommand, DeleteObjectsCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3"
 import { verifyToken } from "@/lib/aws/cognito"
-import { getClip, updateClip, deleteClip, listClipsByGame } from "@/lib/aws/film-clips"
-import { getGame, updateGame } from "@/lib/aws/games"
-import {
-  getYouTubeVideoStatus,
-  deleteYouTubeVideo,
-  removeVideoFromPlaylist,
-  createGamePlaylist,
-  addVideoToPlaylist,
-} from "@/lib/aws/youtube"
+import { getClip, updateClip, deleteClip } from "@/lib/aws/film-clips"
+import { getMediaConvertJobStatus } from "@/lib/aws/mediaconvert"
+
+function s3() {
+  return new S3Client({ region: process.env.AWS_REGION ?? "us-east-2" })
+}
 
 export async function GET(
   request: NextRequest,
@@ -28,23 +26,26 @@ export async function GET(
     let clip = await getClip(id)
     if (!clip) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
-    if (clip.status === "TRANSCODING" && clip.youtubeVideoId) {
+    if (clip.sourceType === "S3_HLS" && clip.status === "TRANSCODING" && clip.mediaConvertJobId) {
       try {
-        const { uploadStatus, durationSeconds } = await getYouTubeVideoStatus(clip.youtubeVideoId)
+        const jobStatus = await getMediaConvertJobStatus(clip.mediaConvertJobId)
         const now = new Date().toISOString()
-        if (uploadStatus === "processed") {
-          await updateClip(id, {
-            status: "READY",
+        if (jobStatus.status === "COMPLETE" && jobStatus.cloudfrontHlsUrl) {
+          const updates = {
+            status: "READY" as const,
+            cloudfrontHlsUrl: jobStatus.cloudfrontHlsUrl,
             updatedAt: now,
-            ...(durationSeconds != null ? { durationSeconds } : {}),
-          })
-          clip = { ...clip, status: "READY", ...(durationSeconds != null ? { durationSeconds } : {}) }
-        } else if (uploadStatus === "failed") {
-          await updateClip(id, { status: "ERROR", errorMessage: "YouTube processing failed", updatedAt: now })
-          clip = { ...clip, status: "ERROR", errorMessage: "YouTube processing failed" }
+            ...(jobStatus.durationSeconds != null ? { durationSeconds: jobStatus.durationSeconds } : {}),
+          }
+          await updateClip(id, updates)
+          clip = { ...clip, ...updates }
+        } else if (jobStatus.status === "ERROR") {
+          const updates = { status: "ERROR" as const, errorMessage: jobStatus.errorMessage, updatedAt: now }
+          await updateClip(id, updates)
+          clip = { ...clip, ...updates }
         }
       } catch {
-        // YouTube status check failed — return current DB state
+        // MediaConvert check failed — return current DB state
       }
     }
 
@@ -77,60 +78,13 @@ export async function PATCH(
   }
 
   const body = await request.json()
-  const { title, sortOrder, youtubeVideoId } = body as {
-    title?: string
-    sortOrder?: number
-    youtubeVideoId?: string
-  }
+  const { title, durationSeconds } = body as { title?: string; durationSeconds?: number }
 
   try {
     const now = new Date().toISOString()
-
-    if (youtubeVideoId) {
-      // Upload completion: persist the video ID and start transcoding polling immediately.
-      // Playlist attachment is best-effort — a failure here must not block the clip.
-      const clip = await getClip(id)
-      if (!clip) return NextResponse.json({ error: "Not found" }, { status: 404 })
-
-      await updateClip(id, { youtubeVideoId, status: "TRANSCODING", updatedAt: now })
-
-      // Attach to YouTube playlist asynchronously — failure is non-fatal
-      void (async () => {
-        try {
-          const game = await getGame(clip.gameId)
-          if (!game) return
-
-          let playlistId = game.youtubePlaylistId
-          if (!playlistId) {
-            const playlistTitle = `Void vs ${game.opponent}${game.round ? ` · ${game.round}` : ""}`
-            playlistId = await createGamePlaylist(playlistTitle)
-            await updateGame(clip.gameId, { youtubePlaylistId: playlistId })
-          }
-
-          const allClips = await listClipsByGame(clip.gameId)
-          const position = allClips.filter(
-            c => c.id !== id && c.youtubePlaylistItemId && (c.sortOrder ?? 0) < (clip.sortOrder ?? 0)
-          ).length
-
-          const youtubePlaylistItemId = await addVideoToPlaylist({
-            playlistId,
-            videoId: youtubeVideoId,
-            position,
-          })
-
-          await updateClip(id, { youtubePlaylistItemId, updatedAt: new Date().toISOString() })
-        } catch {
-          // Playlist attachment failed — clip is still TRANSCODING and will be polled to READY.
-          // Reorder will re-attach it to the playlist when the coach next adjusts clip order.
-        }
-      })()
-
-      return NextResponse.json({ ok: true })
-    }
-
     const updates: Record<string, unknown> = { updatedAt: now }
     if (title !== undefined) updates.title = title
-    if (sortOrder !== undefined) updates.sortOrder = sortOrder
+    if (durationSeconds !== undefined) updates.durationSeconds = durationSeconds
     await updateClip(id, updates)
     return NextResponse.json({ ok: true })
   } catch (err) {
@@ -164,14 +118,37 @@ export async function DELETE(
     const clip = await getClip(id)
     await deleteClip(id)
 
-    // Fire-and-forget YouTube cleanup
-    if (clip) {
+    // Fire-and-forget S3 cleanup for uploaded clips
+    if (clip?.sourceType === "S3_HLS") {
       void (async () => {
-        if (clip.youtubePlaylistItemId) {
-          await removeVideoFromPlaylist(clip.youtubePlaylistItemId).catch(() => {})
+        const bucket = process.env.FILM_S3_BUCKET_NAME!
+        const client = s3()
+
+        // Abort any in-progress multipart upload so S3 doesn't keep charging for orphaned parts
+        if (clip.s3UploadId && clip.s3RawKey) {
+          await client.send(new AbortMultipartUploadCommand({
+            Bucket: bucket,
+            Key: clip.s3RawKey,
+            UploadId: clip.s3UploadId,
+          })).catch(() => {})
         }
-        if (clip.youtubeVideoId) {
-          await deleteYouTubeVideo(clip.youtubeVideoId).catch(() => {})
+
+        // Delete raw file
+        if (clip.s3RawKey) {
+          await client.send(new DeleteObjectsCommand({
+            Bucket: bucket,
+            Delete: { Objects: [{ Key: clip.s3RawKey }] },
+          })).catch(() => {})
+        }
+
+        // Delete HLS output prefix
+        const hlsPrefix = `hls/${id}/`
+        const listed = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: hlsPrefix })).catch(() => null)
+        if (listed?.Contents && listed.Contents.length > 0) {
+          await client.send(new DeleteObjectsCommand({
+            Bucket: bucket,
+            Delete: { Objects: listed.Contents.map(o => ({ Key: o.Key! })) },
+          })).catch(() => {})
         }
       })()
     }

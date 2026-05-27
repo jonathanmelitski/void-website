@@ -12,14 +12,23 @@ import { dynamo } from "./dynamo"
 const TABLE = () => process.env.DYNAMO_FILM_CLIPS_TABLE!
 
 export type FilmClipStatus = "UPLOADING" | "TRANSCODING" | "READY" | "ERROR"
+export type FilmClipSourceType = "S3_HLS" | "YOUTUBE"
 
 export type FilmClipItem = {
   id: string
   gameId: string
   title?: string
+  sourceType: FilmClipSourceType
+
+  // S3_HLS fields
+  s3RawKey?: string
+  s3UploadId?: string        // multipart upload ID while upload is in progress; cleared on completion
+  cloudfrontHlsUrl?: string
+  mediaConvertJobId?: string
+
+  // YOUTUBE fields
   youtubeVideoId?: string
-  youtubePlaylistItemId?: string
-  uploadSessionUrl?: string
+
   status: FilmClipStatus
   errorMessage?: string
   durationSeconds?: number
