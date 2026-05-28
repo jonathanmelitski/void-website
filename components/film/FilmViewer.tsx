@@ -1,7 +1,7 @@
 "use client"
 
 import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } from "react"
-import { Play, Pause, Volume2, VolumeX, Maximize, Minimize } from "lucide-react"
+import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings } from "lucide-react"
 import { MediaPlayer, MediaProvider } from "@vidstack/react"
 import type { MediaPlayerInstance } from "@vidstack/react"
 import { AnnotationMarker } from "./AnnotationMarker"
@@ -87,6 +87,11 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
   const [isMuted, setIsMuted] = useState(false)
   const [displayMs, setDisplayMs] = useState(0)
   const [playerError, setPlayerError] = useState<string | null>(null)
+  const [showQuality, setShowQuality] = useState(false)
+  const [qualityLabel, setQualityLabel] = useState("Auto")
+  const [availableHeights, setAvailableHeights] = useState<number[]>([])
+  // Persists preferred quality across clip switches: "auto" | height in pixels
+  const qualityPrefRef = useRef<"auto" | number>("auto")
 
   const activeClip = clips[activeClipIdx]
   const activeSrc = activeClip
@@ -98,14 +103,14 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
   // Keep activeClipIdxRef in sync before paint so the RAF never reads a stale value
   useLayoutEffect(() => { activeClipIdxRef.current = activeClipIdx }, [activeClipIdx])
 
-  // Reset display state on clip switch — don't touch isPaused during auto-advance transitions
+  // Reset display state whenever the active src changes (clip switch or clips prop reorder)
   useEffect(() => {
     if (!transitioningRef.current) setIsPaused(true)
     setDisplayMs(0)
     currentMsRef.current = 0
     setPlayerReady(false)
     setPlayerError(null)
-  }, [activeClipIdx])
+  }, [activeSrc])
 
   // Clip durations come from MediaConvert metadata — never updated dynamically.
   // The boundary line is computed once from these and never moves during playback.
@@ -218,7 +223,7 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
     let remaining = Math.max(0, targetMs)
     for (let i = 0; i < clips.length; i++) {
       const dur = clipDurationsMs[i]
-      if (remaining <= dur || i === clips.length - 1) {
+      if (remaining < dur || i === clips.length - 1) {
         const startSec = remaining / 1000
         if (i !== activeClipIdx) {
           transitioningRef.current = true
@@ -324,6 +329,15 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
     document.addEventListener("fullscreenchange", onChange)
     return () => document.removeEventListener("fullscreenchange", onChange)
   }, [])
+
+  useEffect(() => {
+    if (!showQuality) return
+    const close = (e: MouseEvent) => {
+      if (!(e.target as Element).closest("[data-quality-menu]")) setShowQuality(false)
+    }
+    document.addEventListener("mousedown", close)
+    return () => document.removeEventListener("mousedown", close)
+  }, [showQuality])
 
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
@@ -501,6 +515,56 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
     setIsPaused(true)
   }, [])
 
+  const applyQualityPref = useCallback(() => {
+    const player = playerRef.current
+    if (!player) return
+
+    const qs = player.qualities
+    if (qs.readonly) return
+
+    // Iterate live quality objects — Array.from() yields stale proxy snapshots; for...of uses live refs
+    const heights: number[] = []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const q of qs as any) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const h = (q as any).height as number
+      if (h > 0 && !heights.includes(h)) heights.push(h)
+    }
+    if (heights.length > 0) setAvailableHeights(heights.sort((a, b) => b - a))
+
+    const pref = qualityPrefRef.current
+    if (pref === "auto") {
+      qs.autoSelect()
+      return
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const q of qs as any) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((q as any).height === pref) {
+        // VideoQuality has no select() method — `selected` is the writable property from SelectListItem
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(q as any).selected = true
+        return
+      }
+    }
+  }, [])
+
+  const selectQuality = useCallback((value: "auto" | number) => {
+    qualityPrefRef.current = value
+    setQualityLabel(value === "auto" ? "Auto" : `${value}p`)
+    setShowQuality(false)
+    applyQualityPref()
+  }, [applyQualityPref])
+
+  // Re-apply quality preference after each clip loads.
+  // Delay 300ms: HLS.js ABR runs its initial level selection right at canPlay and would override an
+  // immediate select() call, resetting auto=true. Waiting lets ABR settle first.
+  useEffect(() => {
+    if (!playerReady) return
+    const id = setTimeout(applyQualityPref, 300)
+    return () => clearTimeout(id)
+  }, [playerReady, applyQualityPref])
+
   const handleCanPlay = useCallback(() => {
     transitioningRef.current = false
     setPlayerReady(true)
@@ -639,6 +703,7 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
   }
 
   const togglePlayPause = () => {
+    if (!playerReady) return
     if (isPaused) playerRef.current?.play()
     else playerRef.current?.pause()
   }
@@ -783,6 +848,39 @@ export function FilmViewer({ clips, initialAnnotations, canAnnotate }: FilmViewe
         >
           {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
         </button>
+
+        {/* Quality selector */}
+        <div className="relative shrink-0" data-quality-menu>
+          <button
+            onClick={() => setShowQuality(p => !p)}
+            className="flex items-center gap-1 text-white/50 hover:text-white transition-colors"
+            aria-label="Video quality"
+          >
+            <Settings size={14} className={showQuality ? "text-white" : ""} />
+            <span className="text-[10px] font-mono tabular-nums">{qualityLabel}</span>
+          </button>
+          {showQuality && (
+            <div className="absolute bottom-full right-0 mb-2 w-28 rounded-lg border border-white/15 overflow-hidden"
+              style={{ background: "rgba(10,10,10,0.95)", backdropFilter: "blur(8px)" }}>
+              <p className="text-[9px] uppercase tracking-widest text-white/30 px-3 pt-2 pb-1">Quality</p>
+              {(["auto" as const, ...availableHeights]).map(val => {
+                const label = val === "auto" ? "Auto" : `${val}p`
+                const active = qualityLabel === label
+                return (
+                  <button
+                    key={val}
+                    onClick={() => selectQuality(val)}
+                    className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center justify-between ${active ? "text-white" : "text-white/50 hover:text-white"}`}
+                  >
+                    {label}
+                    {active && <span className="w-1.5 h-1.5 rounded-full bg-white/60" />}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
         <button
           onClick={toggleFullscreen}
           className="text-white/50 hover:text-white transition-colors shrink-0"

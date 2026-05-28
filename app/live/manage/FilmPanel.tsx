@@ -38,7 +38,7 @@ export function FilmPanel() {
   const retryInputRef = useRef<HTMLInputElement | null>(null)
   const retryClipIdRef = useRef<string | null>(null)
 
-  const { clips, phases, loading, upload, retryUpload, importYoutube, cancelUpload, deleteClip } = useFilmClips(selectedGameId)
+  const { clips, phases, loading, upload, retryUpload, retranscode, importYoutube, cancelUpload, deleteClip } = useFilmClips(selectedGameId)
 
   const [orderedIds, setOrderedIds] = useState<string[]>([])
   const [dragIdx, setDragIdx] = useState<number | null>(null)
@@ -258,6 +258,15 @@ export function FilmPanel() {
                       )}
                       {phase?.tag === "uploading" && (
                         <button onClick={() => cancelUpload(clip.id)} className="text-white/30 hover:text-red-400 transition-colors text-xs px-2" aria-label="Cancel upload">Cancel</button>
+                      )}
+                      {phase?.tag === "ready" && clip.sourceType !== "YOUTUBE" && (
+                        <button
+                          onClick={() => retranscode(clip.id)}
+                          className="text-white/25 hover:text-white/60 transition-all text-xs px-2 py-0.5 rounded border border-white/10 hover:border-white/25 opacity-0 group-hover:opacity-100"
+                          title="Re-transcode at current quality settings"
+                        >
+                          Retranscode
+                        </button>
                       )}
                       <button
                         onClick={() => { if (confirm(`Delete "${clip.title ?? "Game Film"}"?`)) deleteClip(clip.id) }}

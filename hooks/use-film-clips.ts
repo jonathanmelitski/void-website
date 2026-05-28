@@ -232,6 +232,17 @@ export function useFilmClips(gameId: string | null) {
     await runUpload(clipId, file)
   }, [runUpload])
 
+  const retranscode = useCallback(async (clipId: string) => {
+    const res = await fetch(`/api/film/clips/${clipId}/transcode`, { method: "POST" })
+    if (!res.ok) {
+      setPhase(clipId, { tag: "error", message: "Failed to start transcoding" })
+      return
+    }
+    setClips(prev => prev.map(c => c.id === clipId ? { ...c, status: "TRANSCODING" } : c))
+    setPhase(clipId, { tag: "transcoding" })
+    startPolling(clipId)
+  }, [setPhase, startPolling])
+
   const importYoutube = useCallback(async (youtubeUrl: string) => {
     if (!gameId) return
     const sortOrder = clips.reduce((m, c) => Math.max(m, c.sortOrder ?? -1), -1) + 1
@@ -249,5 +260,5 @@ export function useFilmClips(gameId: string | null) {
     setPhase(clip.id, { tag: "ready" })
   }, [gameId, clips, setPhase])
 
-  return { clips, phases, loading, upload, retryUpload, importYoutube, cancelUpload, deleteClip }
+  return { clips, phases, loading, upload, retryUpload, retranscode, importYoutube, cancelUpload, deleteClip }
 }

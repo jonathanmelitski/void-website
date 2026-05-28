@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from "next/server"
 import { AbortMultipartUploadCommand, DeleteObjectsCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3"
+import { CloudFrontClient, CreateInvalidationCommand } from "@aws-sdk/client-cloudfront"
 import { verifyToken } from "@/lib/aws/cognito"
 import { getClip, updateClip, deleteClip } from "@/lib/aws/film-clips"
 import { getMediaConvertJobStatus } from "@/lib/aws/mediaconvert"
+
+function invalidateManifest(clipId: string) {
+  const cf = new CloudFrontClient({ region: "us-east-1" })
+  cf.send(new CreateInvalidationCommand({
+    DistributionId: process.env.CLOUDFRONT_DISTRIBUTION_ID!,
+    InvalidationBatch: {
+      CallerReference: `retranscode-${clipId}-${Date.now()}`,
+      Paths: { Quantity: 1, Items: [`/hls/${clipId}/index.m3u8`] },
+    },
+  })).catch(() => {}) // fire-and-forget
+}
 
 function s3() {
   return new S3Client({ region: process.env.AWS_REGION ?? "us-east-2" })
@@ -39,6 +51,7 @@ export async function GET(
           }
           await updateClip(id, updates)
           clip = { ...clip, ...updates }
+          invalidateManifest(id)
         } else if (jobStatus.status === "ERROR") {
           const updates = { status: "ERROR" as const, errorMessage: jobStatus.errorMessage, updatedAt: now }
           await updateClip(id, updates)

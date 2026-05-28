@@ -49,35 +49,59 @@ export async function createMediaConvertJob(opts: {
             },
             Outputs: [
               {
+                NameModifier: "_1080p",
+                ContainerSettings: { Container: "M3U8", M3u8Settings: {} },
+                VideoDescription: {
+                  ColorMetadata: "INSERT",
+                  Width: 1920, Height: 1080,
+                  CodecSettings: {
+                    Codec: "H_264",
+                    H264Settings: {
+                      RateControlMode: "QVBR",
+                      QvbrSettings: { QvbrQualityLevel: 8 },
+                      MaxBitrate: 5_000_000,
+                      GopSize: 90, GopSizeUnits: "FRAMES",
+                      ParControl: "INITIALIZE_FROM_SOURCE",
+                    },
+                  },
+                },
+                AudioDescriptions: [{ CodecSettings: { Codec: "AAC", AacSettings: { Bitrate: 128000, CodingMode: "CODING_MODE_2_0", SampleRate: 48000 } } }],
+              },
+              {
                 NameModifier: "_720p",
                 ContainerSettings: { Container: "M3U8", M3u8Settings: {} },
                 VideoDescription: {
-                  Width: 1280,
-                  Height: 720,
+                  Width: 1280, Height: 720,
                   CodecSettings: {
                     Codec: "H_264",
                     H264Settings: {
                       RateControlMode: "QVBR",
                       QvbrSettings: { QvbrQualityLevel: 7 },
                       MaxBitrate: 3_500_000,
-                      GopSize: 90,
-                      GopSizeUnits: "FRAMES",
+                      GopSize: 90, GopSizeUnits: "FRAMES",
                       ParControl: "INITIALIZE_FROM_SOURCE",
                     },
                   },
                 },
-                AudioDescriptions: [
-                  {
-                    CodecSettings: {
-                      Codec: "AAC",
-                      AacSettings: {
-                        Bitrate: 128000,
-                        CodingMode: "CODING_MODE_2_0",
-                        SampleRate: 48000,
-                      },
+                AudioDescriptions: [{ CodecSettings: { Codec: "AAC", AacSettings: { Bitrate: 128000, CodingMode: "CODING_MODE_2_0", SampleRate: 48000 } } }],
+              },
+              {
+                NameModifier: "_480p",
+                ContainerSettings: { Container: "M3U8", M3u8Settings: {} },
+                VideoDescription: {
+                  Width: 854, Height: 480,
+                  CodecSettings: {
+                    Codec: "H_264",
+                    H264Settings: {
+                      RateControlMode: "QVBR",
+                      QvbrSettings: { QvbrQualityLevel: 6 },
+                      MaxBitrate: 1_500_000,
+                      GopSize: 90, GopSizeUnits: "FRAMES",
+                      ParControl: "INITIALIZE_FROM_SOURCE",
                     },
                   },
-                ],
+                },
+                AudioDescriptions: [{ CodecSettings: { Codec: "AAC", AacSettings: { Bitrate: 96000, CodingMode: "CODING_MODE_2_0", SampleRate: 48000 } } }],
               },
             ],
           },
