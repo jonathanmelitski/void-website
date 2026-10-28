@@ -6,7 +6,7 @@ Penn Ultimate frisbee team web app. Two audiences:
 - **Public** — roster, news, gallery
 - **Authenticated** (Void Live) — coaches score games live, review film, manage broadcasts; players view their footage
 
-Stack: Next.js 16 App Router, React 19, TypeScript strict, Tailwind v4, shadcn/ui (new-york, neutral, dark default), AWS (Cognito auth, DynamoDB, S3, SES, MediaLive, MediaConvert, EC2 WS server, Lambda, SSM).
+Stack: Next.js 16 App Router, React 19, TypeScript strict, Tailwind v4, shadcn/ui (new-york, neutral, dark default), AWS (Cognito auth, DynamoDB, S3, SES, MediaLive, EC2 WS server, Lambda, SSM).
 
 ## Color System (OKLCH, dark-mode default)
 
@@ -105,4 +105,4 @@ Standalone Node.js WS server (`ws/server.ts`) on EC2.
 
 ## Lambda Worker Pattern
 
-Workers poll AWS job status and write results back to DynamoDB. See `broadcast-worker/handler.ts` (MediaLive) and `film-worker/handler.ts` (MediaConvert) for the pattern.
+Workers poll AWS job status and write results back to DynamoDB. See `broadcast-worker/handler.ts` (MediaLive) for the pattern.

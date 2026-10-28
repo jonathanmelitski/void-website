@@ -3,6 +3,7 @@
 import { useState } from "react"
 import type { FilmAnnotationItem } from "@/lib/aws/film-annotations"
 import type { PointItem } from "@/lib/aws/points"
+import { authorLabel } from "@/lib/author-name"
 
 interface AnnotationMarkerProps {
   annotation: FilmAnnotationItem
@@ -48,7 +49,9 @@ export function AnnotationMarker({ annotation, durationMs, onSeek, pointData }: 
             </p>
           )}
           {annotation.text && <p className="text-xs text-white/80 line-clamp-2">{annotation.text}</p>}
-          <p className="text-[10px] text-white/40 mt-0.5">{annotation.authorDisplayName}</p>
+          {!isPointMarker && authorLabel(annotation.authorDisplayName) && (
+            <p className="text-[10px] text-white/40 mt-0.5">{authorLabel(annotation.authorDisplayName)}</p>
+          )}
         </div>
       )}
     </button>

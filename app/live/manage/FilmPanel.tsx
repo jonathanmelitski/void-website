@@ -1,12 +1,14 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useCallback } from "react"
 import dynamic from "next/dynamic"
+import { Pencil, Plus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useFilmClips } from "@/hooks/use-film-clips"
 import type { GameItem } from "@/lib/aws/games"
 import type { FilmClipItem } from "@/lib/aws/film-clips"
 import type { FilmAnnotationItem } from "@/lib/aws/film-annotations"
+import { MAIN_TRACK_ID, sortClips, trackIdOf, type FilmTrack } from "@/lib/film-tracks"
 
 const FilmViewer = dynamic(
   () => import("@/components/film/FilmViewer").then(m => m.FilmViewer),
@@ -19,39 +21,38 @@ interface EventSummary {
   date: string
 }
 
-function sortedByOrder(clips: FilmClipItem[]): FilmClipItem[] {
-  return [...clips].sort((a, b) => {
-    if (a.sortOrder !== undefined && b.sortOrder !== undefined) return a.sortOrder - b.sortOrder
-    if (a.sortOrder !== undefined) return -1
-    if (b.sortOrder !== undefined) return 1
-    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-  })
-}
+type ViewerData = { clips: FilmClipItem[]; annotations: FilmAnnotationItem[]; syncTrackId?: string }
 
 export function FilmPanel() {
   const [events, setEvents] = useState<EventSummary[]>([])
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null)
   const [games, setGames] = useState<GameItem[]>([])
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null)
-  const [viewerData, setViewerData] = useState<{ clips: FilmClipItem[]; annotations: FilmAnnotationItem[] } | null>(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const retryInputRef = useRef<HTMLInputElement | null>(null)
-  const retryClipIdRef = useRef<string | null>(null)
+  const [viewerData, setViewerData] = useState<ViewerData | null>(null)
 
-  const { clips, phases, loading, upload, retryUpload, retranscode, importYoutube, cancelUpload, deleteClip } = useFilmClips(selectedGameId)
+  const { clips, loading, importYoutube, deleteClip } = useFilmClips(selectedGameId)
 
   const [orderedIds, setOrderedIds] = useState<string[]>([])
-  const [dragIdx, setDragIdx] = useState<number | null>(null)
-  const [dropIdx, setDropIdx] = useState<number | null>(null)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dropId, setDropId] = useState<string | null>(null)
 
   const [importUrl, setImportUrl] = useState("")
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState<string | null>(null)
 
+  const [selectedTrackId, setSelectedTrackId] = useState<string>(MAIN_TRACK_ID)
+  const [trackDraft, setTrackDraft] = useState<{ id: string | null; name: string } | null>(null)
+  const [trackError, setTrackError] = useState<string | null>(null)
+
+  const game = games.find(g => g.id === selectedGameId) ?? null
+  const angleTracks: FilmTrack[] = game?.filmTracks ?? []
+  const tracks: FilmTrack[] = [{ id: MAIN_TRACK_ID, name: "Main" }, ...angleTracks]
+  const selectedTrack = tracks.find(t => t.id === selectedTrackId) ?? tracks[0]
+
   useEffect(() => {
     setOrderedIds(prev => {
       const knownIds = new Set(prev)
-      const incoming = sortedByOrder(clips)
+      const incoming = sortClips(clips)
       const newClips = incoming.filter(c => !knownIds.has(c.id)).map(c => c.id)
       const existing = prev.filter(id => clips.some(c => c.id === id))
       return [...existing, ...newClips]
@@ -59,6 +60,7 @@ export function FilmPanel() {
   }, [clips])
 
   const orderedClips = orderedIds.map(id => clips.find(c => c.id === id)).filter(Boolean) as FilmClipItem[]
+  const trackClips = orderedClips.filter(c => trackIdOf(c) === selectedTrack.id)
 
   useEffect(() => {
     fetch("/api/events").then(r => r.json()).then(data => {
@@ -75,16 +77,17 @@ export function FilmPanel() {
     })
   }, [selectedEventId])
 
-  const handleDrop = useCallback((targetIdx: number) => {
-    if (dragIdx === null || dragIdx === targetIdx) {
-      setDragIdx(null)
-      setDropIdx(null)
+  // Reorder within the selected track; sortOrder is shared across tracks but only compared within one
+  const handleDrop = useCallback((targetId: string) => {
+    if (!dragId || dragId === targetId) {
+      setDragId(null)
+      setDropId(null)
       return
     }
     setOrderedIds(prev => {
       const next = [...prev]
-      const [moved] = next.splice(dragIdx, 1)
-      next.splice(targetIdx, 0, moved)
+      next.splice(next.indexOf(dragId), 1)
+      next.splice(next.indexOf(targetId), 0, dragId)
       fetch("/api/film/clips/reorder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -92,54 +95,70 @@ export function FilmPanel() {
       }).catch(() => {})
       return next
     })
-    setDragIdx(null)
-    setDropIdx(null)
-  }, [dragIdx])
+    setDragId(null)
+    setDropId(null)
+  }, [dragId])
 
-  const openGameViewer = useCallback(async () => {
+  const openGameViewer = useCallback(async (syncTrackId?: string) => {
     const readyClips = orderedClips.filter(c => c.status === "READY")
-    if (readyClips.length === 0) return
+    if (!readyClips.some(c => trackIdOf(c) === MAIN_TRACK_ID)) return
+    // Annotations live on the main track only
     const annArrays = await Promise.all(
-      readyClips.map(c =>
+      readyClips.filter(c => trackIdOf(c) === MAIN_TRACK_ID).map(c =>
         fetch(`/api/film/annotations?clipId=${c.id}`).then(r => r.ok ? r.json() : [])
       )
     )
-    setViewerData({ clips: readyClips, annotations: (annArrays as FilmAnnotationItem[][]).flat() })
+    setViewerData({ clips: readyClips, annotations: (annArrays as FilmAnnotationItem[][]).flat(), syncTrackId })
   }, [orderedClips])
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? [])
-    e.target.value = ""
-    if (files.length > 0) upload(files)
-  }
-
-  const handleRetryFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ""
-    const clipId = retryClipIdRef.current
-    if (file && clipId) {
-      retryClipIdRef.current = null
-      retryUpload(clipId, file)
-    }
-  }
-
-  const triggerRetry = (clipId: string) => {
-    retryClipIdRef.current = clipId
-    retryInputRef.current?.click()
-  }
 
   const handleImport = async () => {
     if (!selectedGameId || !importUrl.trim()) return
     setImporting(true)
     setImportError(null)
     try {
-      await importYoutube(importUrl.trim())
+      await importYoutube(importUrl.trim(), selectedTrack.id === MAIN_TRACK_ID ? undefined : selectedTrack.id)
       setImportUrl("")
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Import failed")
     } finally {
       setImporting(false)
     }
+  }
+
+  const saveTracks = async (next: FilmTrack[]) => {
+    if (!game) return false
+    setTrackError(null)
+    const res = await fetch(`/api/games/${game.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filmTracks: next }),
+    })
+    if (!res.ok) {
+      setTrackError("Failed to save angles")
+      return false
+    }
+    setGames(prev => prev.map(g => g.id === game.id ? { ...g, filmTracks: next } : g))
+    return true
+  }
+
+  const commitTrackDraft = async () => {
+    if (!trackDraft) return
+    const name = trackDraft.name.trim()
+    if (!name) { setTrackDraft(null); return }
+    if (trackDraft.id) {
+      if (await saveTracks(angleTracks.map(t => t.id === trackDraft.id ? { ...t, name } : t))) setTrackDraft(null)
+    } else {
+      const track = { id: crypto.randomUUID(), name }
+      if (await saveTracks([...angleTracks, track])) {
+        setTrackDraft(null)
+        setSelectedTrackId(track.id)
+      }
+    }
+  }
+
+  const deleteTrack = async (track: FilmTrack) => {
+    if (orderedClips.some(c => trackIdOf(c) === track.id)) return
+    if (await saveTracks(angleTracks.filter(t => t.id !== track.id))) setSelectedTrackId(MAIN_TRACK_ID)
   }
 
   if (viewerData) {
@@ -151,10 +170,19 @@ export function FilmPanel() {
         >
           ← Back to clips
         </button>
-        <FilmViewer clips={viewerData.clips} initialAnnotations={viewerData.annotations} canAnnotate />
+        <FilmViewer
+          clips={viewerData.clips}
+          initialAnnotations={viewerData.annotations}
+          canAnnotate
+          initialSyncTrackId={viewerData.syncTrackId}
+        />
       </div>
     )
   }
+
+  const isAngle = selectedTrack.id !== MAIN_TRACK_ID
+  const syncedCount = trackClips.filter(c => (c.syncPoints ?? []).some(p => p.kind === "sync")).length
+  const hasMainFilm = orderedClips.some(c => c.status === "READY" && trackIdOf(c) === MAIN_TRACK_ID)
 
   return (
     <div className="flex flex-col gap-6">
@@ -178,7 +206,7 @@ export function FilmPanel() {
             <label className="text-xs text-white/40 uppercase tracking-widest mb-1 block">Game</label>
             <select
               value={selectedGameId ?? ""}
-              onChange={e => setSelectedGameId(e.target.value || null)}
+              onChange={e => { setSelectedGameId(e.target.value || null); setSelectedTrackId(MAIN_TRACK_ID) }}
               className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
             >
               <option value="">Select game…</option>
@@ -193,48 +221,118 @@ export function FilmPanel() {
       {selectedGameId && (
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between gap-4">
-            <h3 className="text-sm font-semibold text-white/70">Clips</h3>
-            <div className="flex gap-2">
-              {orderedClips.some(c => c.status === "READY") && (
-                <Button size="sm" variant="ghost" onClick={openGameViewer}>
-                  Review Film
-                </Button>
-              )}
-              <input ref={fileInputRef} type="file" accept="video/*" multiple className="hidden" onChange={handleFileChange} />
-              <input ref={retryInputRef} type="file" accept="video/*" className="hidden" onChange={handleRetryFileChange} />
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                Upload Film
+            <h3 className="text-sm font-semibold text-white/70">Film</h3>
+            {hasMainFilm && (
+              <Button size="sm" variant="ghost" onClick={() => openGameViewer()}>
+                Review Film
               </Button>
-            </div>
+            )}
           </div>
 
-          {orderedClips.length > 1 && (
+          {/* Camera angles */}
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {tracks.map(track => {
+                const count = orderedClips.filter(c => trackIdOf(c) === track.id).length
+                const active = track.id === selectedTrack.id
+                if (trackDraft?.id === track.id) {
+                  return (
+                    <input
+                      key={track.id}
+                      autoFocus
+                      value={trackDraft.name}
+                      onChange={e => setTrackDraft({ ...trackDraft, name: e.target.value })}
+                      onKeyDown={e => { if (e.key === "Enter") commitTrackDraft(); if (e.key === "Escape") setTrackDraft(null) }}
+                      onBlur={commitTrackDraft}
+                      className="w-32 bg-white/5 border border-white/25 rounded-md px-2 py-1 text-xs text-white focus:outline-none"
+                    />
+                  )
+                }
+                return (
+                  <div key={track.id} className={`group flex items-center rounded-md border text-xs transition-colors ${active ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50 hover:text-white/80"}`}>
+                    <button onClick={() => setSelectedTrackId(track.id)} className="px-2.5 py-1">
+                      {track.name} <span className="text-white/30 font-mono">{count}</span>
+                    </button>
+                    {track.id !== MAIN_TRACK_ID && active && (
+                      <>
+                        <button
+                          onClick={() => setTrackDraft({ id: track.id, name: track.name })}
+                          className="pr-1 text-white/30 hover:text-white/70"
+                          aria-label={`Rename ${track.name}`}
+                        >
+                          <Pencil size={11} />
+                        </button>
+                        {count === 0 && (
+                          <button onClick={() => deleteTrack(track)} className="pr-1.5 text-white/30 hover:text-red-400" aria-label={`Delete ${track.name}`}>
+                            <X size={12} />
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+              {trackDraft?.id === null ? (
+                <input
+                  autoFocus
+                  placeholder="Angle name…"
+                  value={trackDraft.name}
+                  onChange={e => setTrackDraft({ id: null, name: e.target.value })}
+                  onKeyDown={e => { if (e.key === "Enter") commitTrackDraft(); if (e.key === "Escape") setTrackDraft(null) }}
+                  onBlur={commitTrackDraft}
+                  className="w-32 bg-white/5 border border-white/25 rounded-md px-2 py-1 text-xs text-white placeholder:text-white/25 focus:outline-none"
+                />
+              ) : (
+                <button
+                  onClick={() => setTrackDraft({ id: null, name: "" })}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md border border-dashed border-white/15 text-xs text-white/40 hover:text-white/70 hover:border-white/30 transition-colors"
+                >
+                  <Plus size={12} /> Angle
+                </button>
+              )}
+            </div>
+            {trackError && <p className="text-xs text-red-400/80">{trackError}</p>}
+            {isAngle ? (
+              <div className="flex items-center gap-3 text-[11px] text-white/35">
+                <span>
+                  {trackClips.length === 0
+                    ? "Add this angle's footage, then sync it to the main film."
+                    : `${syncedCount} of ${trackClips.length} clip${trackClips.length === 1 ? "" : "s"} synced to Main`}
+                </span>
+                {trackClips.length > 0 && hasMainFilm && (
+                  <Button size="sm" variant="outline" onClick={() => openGameViewer(selectedTrack.id)}>
+                    Sync angle
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <p className="text-[11px] text-white/30">Main is the reference film — points, notes and events are timed against it.</p>
+            )}
+          </div>
+
+          {trackClips.length > 1 && (
             <p className="text-[10px] text-white/25 -mt-2">Drag to reorder clips — sets playback order in the viewer</p>
           )}
 
           {loading ? (
             <div className="w-4 h-4 border border-white/20 border-t-white/60 rounded-full animate-spin" />
-          ) : orderedClips.length === 0 ? (
-            <p className="text-white/30 text-sm">No clips for this game yet.</p>
+          ) : trackClips.length === 0 ? (
+            <p className="text-white/30 text-sm">No clips on {selectedTrack.name} yet.</p>
           ) : (
             <div className="flex flex-col gap-2">
-              {orderedClips.map((clip, i) => {
-                const phase = phases[clip.id]
-                const isDragging = dragIdx === i
-                const isDropTarget = dropIdx === i && dragIdx !== null && dragIdx !== i
+              {trackClips.map(clip => {
+                const isDragging = dragId === clip.id
+                const isDropTarget = dropId === clip.id && dragId !== null && dragId !== clip.id
+                const synced = (clip.syncPoints ?? []).some(p => p.kind === "sync")
 
                 return (
                   <div
                     key={clip.id}
                     draggable
-                    onDragStart={() => setDragIdx(i)}
-                    onDragOver={e => { e.preventDefault(); setDropIdx(i) }}
-                    onDrop={() => handleDrop(i)}
-                    onDragEnd={() => { setDragIdx(null); setDropIdx(null) }}
+                    onDragStart={() => setDragId(clip.id)}
+                    onDragOver={e => { e.preventDefault(); setDropId(clip.id) }}
+                    onDrop={() => handleDrop(clip.id)}
+                    onDragEnd={() => { setDragId(null); setDropId(null) }}
                     className={`flex flex-col gap-1.5 px-4 py-3 rounded-lg border transition-colors group cursor-grab active:cursor-grabbing ${
                       isDragging
                         ? "opacity-40 border-white/10"
@@ -253,60 +351,19 @@ export function FilmPanel() {
                           </p>
                         )}
                       </div>
-                      {clip.sourceType === "YOUTUBE" && phase?.tag === "ready" && (
-                        <span className="text-[10px] text-white/30 px-1.5 py-0.5 rounded border border-white/10">YouTube</span>
-                      )}
-                      {phase?.tag === "uploading" && (
-                        <button onClick={() => cancelUpload(clip.id)} className="text-white/30 hover:text-red-400 transition-colors text-xs px-2" aria-label="Cancel upload">Cancel</button>
-                      )}
-                      {phase?.tag === "ready" && clip.sourceType !== "YOUTUBE" && (
-                        <button
-                          onClick={() => retranscode(clip.id)}
-                          className="text-white/25 hover:text-white/60 transition-all text-xs px-2 py-0.5 rounded border border-white/10 hover:border-white/25 opacity-0 group-hover:opacity-100"
-                          title="Re-transcode at current quality settings"
-                        >
-                          Retranscode
-                        </button>
+                      {isAngle && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${synced ? "border-emerald-400/30 text-emerald-300/80" : "border-amber-300/30 text-amber-200/80"}`}>
+                          {synced ? "Synced" : "Not synced"}
+                        </span>
                       )}
                       <button
                         onClick={() => { if (confirm(`Delete "${clip.title ?? "Game Film"}"?`)) deleteClip(clip.id) }}
-                        className={`text-white/30 hover:text-red-400 transition-all text-xs p-1 ${phase?.tag === "error" ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+                        className="text-white/30 hover:text-red-400 transition-all text-xs p-1 opacity-0 group-hover:opacity-100"
                         aria-label="Delete clip"
                       >
                         ✕
                       </button>
                     </div>
-
-                    {phase?.tag === "uploading" && (
-                      <div className="flex flex-col gap-1">
-                        <div className="h-1 bg-white/10 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-white/50 rounded-full transition-[width] duration-300"
-                            style={{ width: `${phase.percent}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-white/40 tabular-nums">{phase.percent}%</span>
-                      </div>
-                    )}
-                    {phase?.tag === "transcoding" && (
-                      <span className="text-xs text-blue-400 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-                        Processing…
-                      </span>
-                    )}
-                    {phase?.tag === "error" && (
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs text-red-400/80 flex-1">{phase.message ?? "Error"}</span>
-                        {phase.retryable && (
-                          <button
-                            onClick={() => triggerRetry(clip.id)}
-                            className="text-xs text-white/50 hover:text-white transition-colors px-2 py-0.5 rounded border border-white/15 hover:border-white/30 shrink-0"
-                          >
-                            Retry
-                          </button>
-                        )}
-                      </div>
-                    )}
                   </div>
                 )
               })}
@@ -315,7 +372,7 @@ export function FilmPanel() {
 
           {/* YouTube import */}
           <div className="flex flex-col gap-2 pt-2 border-t border-white/10">
-            <p className="text-xs text-white/40 uppercase tracking-widest">Import from YouTube</p>
+            <p className="text-xs text-white/40 uppercase tracking-widest">Import from YouTube to {selectedTrack.name}</p>
             <div className="flex gap-2">
               <input
                 type="url"

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { verifyToken } from "@/lib/aws/cognito"
-import { listEventsByPoint, listEventsByGame, createPointEvent } from "@/lib/aws/point-events"
+import { listEventsByPoint, listEventsByGame, createPointEvent, POINT_EVENT_TYPES, PLAYERLESS_EVENT_TYPES } from "@/lib/aws/point-events"
 import { pushGameUpdate } from "@/lib/ws-push"
 import { randomUUID } from "crypto"
 
@@ -41,17 +41,16 @@ export async function POST(request: NextRequest) {
 
   const { pointId, gameId, eventType, playerId, playerInId, team, sortOrder } = await request.json()
 
-  const VALID_TYPES = ["GOAL", "ASSIST", "TURNOVER", "BLOCK", "PULL", "SUBSTITUTION", "TIMEOUT"]
   if (!pointId || !gameId || !eventType || sortOrder === undefined) {
     return NextResponse.json(
       { error: "pointId, gameId, eventType, and sortOrder are required" },
       { status: 400 }
     )
   }
-  if (!VALID_TYPES.includes(eventType)) {
-    return NextResponse.json({ error: `eventType must be one of: ${VALID_TYPES.join(", ")}` }, { status: 400 })
+  if (!POINT_EVENT_TYPES.includes(eventType)) {
+    return NextResponse.json({ error: `eventType must be one of: ${POINT_EVENT_TYPES.join(", ")}` }, { status: 400 })
   }
-  if (eventType !== "TIMEOUT" && !playerId) {
+  if (!PLAYERLESS_EVENT_TYPES.includes(eventType) && !playerId) {
     return NextResponse.json({ error: "playerId is required for this event type" }, { status: 400 })
   }
 

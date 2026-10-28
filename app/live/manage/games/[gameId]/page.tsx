@@ -26,6 +26,7 @@ const EVENT_TYPE_LABELS: Record<PointEventType, string> = {
   TURNOVER: "Turnover",
   BLOCK: "Block",
   PULL: "Pull",
+  PULL_FINISHED: "Pull Finished",
   SUBSTITUTION: "Sub",
   TIMEOUT: "Timeout",
 }
@@ -36,6 +37,7 @@ const EVENT_TYPE_COLORS: Record<PointEventType, string> = {
   TURNOVER: "text-red-400",
   BLOCK: "text-yellow-400",
   PULL: "text-white/50",
+  PULL_FINISHED: "text-cyan-400",
   SUBSTITUTION: "text-purple-400",
   TIMEOUT: "text-orange-400",
 }
@@ -624,6 +626,8 @@ function ActivePointSection({
     : attendingPlayers
 
   function getPlayerName(id: string) {
+
+    if (!id) return ""
     const p = attendingPlayers.find(p => p.id === id)
     return p ? `${p.first_name} ${p.last_name}` : "Unknown"
   }
@@ -802,7 +806,7 @@ function ActivePointSection({
           <div>
             <p className="text-xs text-white/40 mb-2">Log event</p>
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-              {(Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).map(type => (
+              {(Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).filter(t => t !== "PULL_FINISHED").map(type => (
                 <button
                   key={type}
                   type="button"
@@ -1172,6 +1176,8 @@ function CompletedPointRow({
     : attendingPlayers
 
   function getPlayerName(id: string) {
+
+    if (!id) return ""
     const p = players.find(p => p.id === id)
     return p ? `${p.first_name} ${p.last_name}` : "Unknown"
   }
@@ -1423,7 +1429,7 @@ function CompletedPointRow({
                     <div>
                       <p className="text-xs text-white/40 mb-1.5">Add event</p>
                       <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
-                        {(Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).map(type => (
+                        {(Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).filter(t => t !== "PULL_FINISHED").map(type => (
                           <button
                             key={type}
                             type="button"

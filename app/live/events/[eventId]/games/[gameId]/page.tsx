@@ -21,6 +21,7 @@ const EVENT_TYPE_LABELS: Record<PointEventType, string> = {
   TURNOVER: "Turnover",
   BLOCK: "Block",
   PULL: "Pull",
+  PULL_FINISHED: "Pull Finished",
   SUBSTITUTION: "Sub",
   TIMEOUT: "Timeout",
 }
@@ -31,6 +32,7 @@ const EVENT_TYPE_COLORS: Record<PointEventType, string> = {
   TURNOVER: "text-red-400",
   BLOCK: "text-yellow-400",
   PULL: "text-white/50",
+  PULL_FINISHED: "text-cyan-400",
   SUBSTITUTION: "text-purple-400",
   TIMEOUT: "text-orange-400",
 }
@@ -115,6 +117,8 @@ export default function GameDetailPage() {
   }
 
   function getPlayerName(id: string) {
+
+    if (!id) return ""
     const p = players.find(p => p.id === id)
     return p ? `${p.first_name} ${p.last_name}` : "Unknown"
   }

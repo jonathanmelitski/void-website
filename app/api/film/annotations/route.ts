@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { randomUUID } from "crypto"
-import { verifyToken } from "@/lib/aws/cognito"
+import { AdminGetUserCommand } from "@aws-sdk/client-cognito-identity-provider"
+import { verifyToken, cognitoClient } from "@/lib/aws/cognito"
+import { getPlayerLink } from "@/lib/aws/player-links"
+import { getPlayer } from "@/lib/aws/players"
 import { listAnnotationsByClip, createAnnotation } from "@/lib/aws/film-annotations"
 import { getClip } from "@/lib/aws/film-clips"
 import { pushFilmUpdate } from "@/lib/ws-push"
@@ -24,6 +27,24 @@ export async function GET(request: NextRequest) {
     const message = err instanceof Error ? err.message : "Failed to fetch annotations"
     return NextResponse.json({ error: message }, { status: 500 })
   }
+}
+
+// Linked roster player's name, else the email's local part; never the raw Cognito username (a UUID)
+async function resolveAuthorName(sub: string, username: string): Promise<string> {
+  try {
+    const link = await getPlayerLink(sub)
+    const player = link ? await getPlayer(link.playerId) : null
+    if (player) return `${player.first_name} ${player.last_name}`
+  } catch { /* fall through */ }
+  try {
+    const user = await cognitoClient.send(new AdminGetUserCommand({
+      UserPoolId: process.env.COGNITO_USER_POOL_ID!,
+      Username: username,
+    }))
+    const email = user.UserAttributes?.find(a => a.Name === "email")?.Value
+    if (email) return email.split("@")[0]
+  } catch { /* fall through */ }
+  return "Coach"
 }
 
 export async function POST(request: NextRequest) {
@@ -54,6 +75,7 @@ export async function POST(request: NextRequest) {
   if (!clip) return NextResponse.json({ error: "Clip not found" }, { status: 404 })
 
   const username = payload["cognito:username"] ?? payload.sub
+  const authorDisplayName = await resolveAuthorName(payload.sub, username)
   const now = new Date().toISOString()
   const annotation = {
     id: randomUUID(),
@@ -64,7 +86,7 @@ export async function POST(request: NextRequest) {
     videoTimestampMs,
     text: text ?? "",
     authorUsername: username,
-    authorDisplayName: username,
+    authorDisplayName,
     createdAt: now,
     updatedAt: now,
   }

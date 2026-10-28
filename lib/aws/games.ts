@@ -6,6 +6,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
+import type { FilmTrack } from "../film-tracks"
 
 // DynamoDB table: VoidGames
 // GSI: EventIdIndex — PK: eventId, SK: scheduledTime (projects all)
@@ -28,6 +29,7 @@ export type GameItem = {
   voidReceivingFirst: boolean // true = VOID received the first pull of the game
   secondHalfStartCompletedCount?: number // number of completed points when second half was marked
   notes?: string
+  filmTracks?: FilmTrack[]    // extra camera angles for film review (main track is implicit)
   createdAt: string
   updatedAt: string
 }

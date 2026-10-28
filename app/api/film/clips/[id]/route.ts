@@ -1,23 +1,36 @@
 import { NextRequest, NextResponse } from "next/server"
-import { AbortMultipartUploadCommand, DeleteObjectsCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3"
-import { CloudFrontClient, CreateInvalidationCommand } from "@aws-sdk/client-cloudfront"
 import { verifyToken } from "@/lib/aws/cognito"
-import { getClip, updateClip, deleteClip } from "@/lib/aws/film-clips"
-import { getMediaConvertJobStatus } from "@/lib/aws/mediaconvert"
+import { getClip, updateClip, deleteClip, listClipsByGame } from "@/lib/aws/film-clips"
+import type { FilmSyncPoint } from "@/lib/film-tracks"
 
-function invalidateManifest(clipId: string) {
-  const cf = new CloudFrontClient({ region: "us-east-1" })
-  cf.send(new CreateInvalidationCommand({
-    DistributionId: process.env.CLOUDFRONT_DISTRIBUTION_ID!,
-    InvalidationBatch: {
-      CallerReference: `retranscode-${clipId}-${Date.now()}`,
-      Paths: { Quantity: 1, Items: [`/hls/${clipId}/index.m3u8`] },
-    },
-  })).catch(() => {}) // fire-and-forget
-}
+const MAX_SYNC_POINTS = 500
 
-function s3() {
-  return new S3Client({ region: process.env.AWS_REGION ?? "us-east-2" })
+// Validates an angle clip's sync points; sync anchors must be main-track clips of the same game
+async function validateSyncPoints(raw: unknown, clipId: string, gameId: string): Promise<FilmSyncPoint[] | string> {
+  if (!Array.isArray(raw)) return "syncPoints must be an array"
+  if (raw.length > MAX_SYNC_POINTS) return `At most ${MAX_SYNC_POINTS} sync points`
+  const ms = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0
+  const out: FilmSyncPoint[] = []
+  const ids = new Set<string>()
+  for (const p of raw as Record<string, unknown>[]) {
+    if (typeof p?.id !== "string" || !p.id || p.id.length > 64 || ids.has(p.id)) return "Each sync point needs a unique id"
+    ids.add(p.id)
+    if (!ms(p.clipMs)) return "clipMs must be a non-negative number"
+    if (p.kind === "desync") {
+      out.push({ id: p.id, kind: "desync", clipMs: Math.round(p.clipMs as number) })
+    } else if (p.kind === "sync") {
+      if (typeof p.mainClipId !== "string" || !ms(p.mainClipMs)) return "sync points need mainClipId and mainClipMs"
+      out.push({ id: p.id, kind: "sync", clipMs: Math.round(p.clipMs as number), mainClipId: p.mainClipId, mainClipMs: Math.round(p.mainClipMs as number) })
+    } else {
+      return "kind must be sync or desync"
+    }
+  }
+  const anchors = new Set(out.flatMap(p => p.kind === "sync" ? [p.mainClipId] : []))
+  if (anchors.size > 0) {
+    const mainIds = new Set((await listClipsByGame(gameId)).filter(c => !c.trackId && c.id !== clipId).map(c => c.id))
+    for (const id of anchors) if (!mainIds.has(id)) return "Sync points must anchor to a main-track clip of this game"
+  }
+  return out
 }
 
 export async function GET(
@@ -35,33 +48,8 @@ export async function GET(
   }
 
   try {
-    let clip = await getClip(id)
+    const clip = await getClip(id)
     if (!clip) return NextResponse.json({ error: "Not found" }, { status: 404 })
-
-    if (clip.sourceType === "S3_HLS" && clip.status === "TRANSCODING" && clip.mediaConvertJobId) {
-      try {
-        const jobStatus = await getMediaConvertJobStatus(clip.mediaConvertJobId)
-        const now = new Date().toISOString()
-        if (jobStatus.status === "COMPLETE" && jobStatus.cloudfrontHlsUrl) {
-          const updates = {
-            status: "READY" as const,
-            cloudfrontHlsUrl: jobStatus.cloudfrontHlsUrl,
-            updatedAt: now,
-            ...(jobStatus.durationSeconds != null ? { durationSeconds: jobStatus.durationSeconds } : {}),
-          }
-          await updateClip(id, updates)
-          clip = { ...clip, ...updates }
-          invalidateManifest(id)
-        } else if (jobStatus.status === "ERROR") {
-          const updates = { status: "ERROR" as const, errorMessage: jobStatus.errorMessage, updatedAt: now }
-          await updateClip(id, updates)
-          clip = { ...clip, ...updates }
-        }
-      } catch {
-        // MediaConvert check failed — return current DB state
-      }
-    }
-
     return NextResponse.json(clip)
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to fetch clip"
@@ -91,13 +79,21 @@ export async function PATCH(
   }
 
   const body = await request.json()
-  const { title, durationSeconds } = body as { title?: string; durationSeconds?: number }
+  const { title, durationSeconds, syncPoints } = body as { title?: string; durationSeconds?: number; syncPoints?: unknown }
 
   try {
     const now = new Date().toISOString()
     const updates: Record<string, unknown> = { updatedAt: now }
     if (title !== undefined) updates.title = title
     if (durationSeconds !== undefined) updates.durationSeconds = durationSeconds
+    if (syncPoints !== undefined) {
+      const clip = await getClip(id)
+      if (!clip) return NextResponse.json({ error: "Not found" }, { status: 404 })
+      if (!clip.trackId) return NextResponse.json({ error: "Only angle clips have sync points" }, { status: 400 })
+      const validated = await validateSyncPoints(syncPoints, id, clip.gameId)
+      if (typeof validated === "string") return NextResponse.json({ error: validated }, { status: 400 })
+      updates.syncPoints = validated
+    }
     await updateClip(id, updates)
     return NextResponse.json({ ok: true })
   } catch (err) {
@@ -128,44 +124,7 @@ export async function DELETE(
   }
 
   try {
-    const clip = await getClip(id)
     await deleteClip(id)
-
-    // Fire-and-forget S3 cleanup for uploaded clips
-    if (clip?.sourceType === "S3_HLS") {
-      void (async () => {
-        const bucket = process.env.FILM_S3_BUCKET_NAME!
-        const client = s3()
-
-        // Abort any in-progress multipart upload so S3 doesn't keep charging for orphaned parts
-        if (clip.s3UploadId && clip.s3RawKey) {
-          await client.send(new AbortMultipartUploadCommand({
-            Bucket: bucket,
-            Key: clip.s3RawKey,
-            UploadId: clip.s3UploadId,
-          })).catch(() => {})
-        }
-
-        // Delete raw file
-        if (clip.s3RawKey) {
-          await client.send(new DeleteObjectsCommand({
-            Bucket: bucket,
-            Delete: { Objects: [{ Key: clip.s3RawKey }] },
-          })).catch(() => {})
-        }
-
-        // Delete HLS output prefix
-        const hlsPrefix = `hls/${id}/`
-        const listed = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: hlsPrefix })).catch(() => null)
-        if (listed?.Contents && listed.Contents.length > 0) {
-          await client.send(new DeleteObjectsCommand({
-            Bucket: bucket,
-            Delete: { Objects: listed.Contents.map(o => ({ Key: o.Key! })) },
-          })).catch(() => {})
-        }
-      })()
-    }
-
     return NextResponse.json({ ok: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to delete clip"

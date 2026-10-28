@@ -6,31 +6,26 @@ import {
   QueryCommand,
 } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
+import type { FilmSyncPoint } from "../film-tracks"
 
 // DynamoDB table: VoidFilmClips
 // GSI: GameIdIndex — PK: gameId, SK: createdAt (projects all)
 const TABLE = () => process.env.DYNAMO_FILM_CLIPS_TABLE!
 
-export type FilmClipStatus = "UPLOADING" | "TRANSCODING" | "READY" | "ERROR"
-export type FilmClipSourceType = "S3_HLS" | "YOUTUBE"
+export type FilmClipStatus = "READY"
+export type FilmClipSourceType = "YOUTUBE"
 
 export type FilmClipItem = {
   id: string
   gameId: string
   title?: string
   sourceType: FilmClipSourceType
-
-  // S3_HLS fields
-  s3RawKey?: string
-  s3UploadId?: string        // multipart upload ID while upload is in progress; cleared on completion
-  cloudfrontHlsUrl?: string
-  mediaConvertJobId?: string
-
-  // YOUTUBE fields
-  youtubeVideoId?: string
-
+  youtubeVideoId: string
+  // Camera angle; absent = the main track, which defines game film time (see lib/film-tracks.ts)
+  trackId?: string
+  // Angle clips only: alignment of this footage onto the main track
+  syncPoints?: FilmSyncPoint[]
   status: FilmClipStatus
-  errorMessage?: string
   durationSeconds?: number
   sortOrder?: number
   uploadedBy: string

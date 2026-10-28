@@ -77,7 +77,10 @@ function GameClipList({
   isCoachOrAdmin: boolean
   onWatch: (clips: FilmClipItem[], annotations: FilmAnnotationItem[]) => void
 }) {
-  const { clips, phases, loading, upload, cancelUpload, deleteClip } = useFilmClips(game.id)
+  const { clips, loading, importYoutube, deleteClip } = useFilmClips(game.id)
+  const [importUrl, setImportUrl] = useState("")
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
 
   const handleWatchAll = async () => {
     const readyClips = clips.filter(c => c.status === "READY")
@@ -90,10 +93,18 @@ function GameClipList({
     onWatch(readyClips, (annArrays as FilmAnnotationItem[][]).flat())
   }
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? [])
-    e.target.value = ""
-    if (files.length > 0) upload(files)
+  const handleImport = async () => {
+    if (!importUrl.trim()) return
+    setImporting(true)
+    setImportError(null)
+    try {
+      await importYoutube(importUrl.trim())
+      setImportUrl("")
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Import failed")
+    } finally {
+      setImporting(false)
+    }
   }
 
   if (loading) {
@@ -105,7 +116,7 @@ function GameClipList({
   return (
     <div className="flex flex-col gap-2">
       {clips.length === 0 && !isCoachOrAdmin && (
-        <p className="text-white/30 text-xs pl-1">No film uploaded for this game.</p>
+        <p className="text-white/30 text-xs pl-1">No film for this game.</p>
       )}
       {readyCount > 0 && (
         <button
@@ -115,60 +126,45 @@ function GameClipList({
           Watch Game Film → {readyCount > 1 ? `(${readyCount} clips)` : ""}
         </button>
       )}
-      {clips.map(clip => {
-        const phase = phases[clip.id]
-        return (
-          <div key={clip.id} className="flex flex-col gap-1.5 px-3 py-2.5 rounded-lg border border-white/10 text-sm group">
-            <div className="flex items-center gap-3">
-              <span className="flex-1 text-white/80 truncate">{clip.title ?? "Game Film"}</span>
-              {phase?.tag === "error" && isCoachOrAdmin && (
-                <span className="text-xs text-white/30">Delete and re-upload to retry</span>
-              )}
-              {phase?.tag === "uploading" && (
-                <button onClick={() => cancelUpload(clip.id)} className="text-xs text-white/30 hover:text-red-400 transition-colors">
-                  Cancel
-                </button>
-              )}
-              {isCoachOrAdmin && (
-                <button
-                  onClick={() => { if (confirm(`Delete "${clip.title ?? "Game Film"}"?`)) deleteClip(clip.id) }}
-                  className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-400 transition-all text-xs p-1"
-                  aria-label="Delete clip"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-            {phase?.tag === "uploading" && (
-              <div className="flex flex-col gap-1">
-                <div className="h-1 bg-white/10 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-white/50 rounded-full transition-[width] duration-300"
-                    style={{ width: `${phase.percent}%` }}
-                  />
-                </div>
-                <span className="text-xs text-white/40 tabular-nums">{phase.percent}%</span>
-              </div>
-            )}
-            {phase?.tag === "transcoding" && (
-              <span className="text-xs text-blue-400 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-                Processing…
-              </span>
-            )}
-            {phase?.tag === "error" && (
-              <span className="text-xs text-red-400/80">{phase.message ?? "Error"}</span>
+      {clips.map(clip => (
+        <div key={clip.id} className="flex flex-col gap-1.5 px-3 py-2.5 rounded-lg border border-white/10 text-sm group">
+          <div className="flex items-center gap-3">
+            <span className="flex-1 text-white/80 truncate">{clip.title ?? "Game Film"}</span>
+            {isCoachOrAdmin && (
+              <button
+                onClick={() => { if (confirm(`Delete "${clip.title ?? "Game Film"}"?`)) deleteClip(clip.id) }}
+                className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-400 transition-all text-xs p-1"
+                aria-label="Delete clip"
+              >
+                ✕
+              </button>
             )}
           </div>
-        )
-      })}
+        </div>
+      ))}
       {isCoachOrAdmin && (
-        <>
-          <label className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-white/15 hover:border-white/30 transition-colors cursor-pointer text-xs text-white/40 hover:text-white/60">
-            + Upload film
-            <input type="file" accept="video/*" multiple className="hidden" onChange={handleFileChange} />
-          </label>
-        </>
+        <div className="flex flex-col gap-1">
+          <div className="flex gap-2">
+            <input
+              type="url"
+              placeholder="+ Add YouTube URL…"
+              value={importUrl}
+              onChange={e => { setImportUrl(e.target.value); setImportError(null) }}
+              onKeyDown={e => { if (e.key === "Enter") handleImport() }}
+              className="flex-1 min-w-0 bg-transparent border border-dashed border-white/15 hover:border-white/30 focus:border-white/30 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/40 focus:outline-none transition-colors"
+            />
+            {importUrl.trim() && (
+              <button
+                onClick={handleImport}
+                disabled={importing}
+                className="text-xs text-white/50 hover:text-white transition-colors px-2 disabled:opacity-50"
+              >
+                {importing ? "Adding…" : "Add"}
+              </button>
+            )}
+          </div>
+          {importError && <p className="text-xs text-red-400/80 pl-1">{importError}</p>}
+        </div>
       )}
     </div>
   )
