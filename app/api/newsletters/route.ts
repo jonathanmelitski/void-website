@@ -7,6 +7,7 @@ import {
   type NewsletterItem,
 } from "@/lib/aws/newsletters"
 import { logAudit } from "@/lib/aws/audit"
+import { NO_STORE_HEADERS, publicReadHeaders } from "@/lib/http-cache"
 import { randomUUID } from "crypto"
 
 
@@ -19,11 +20,13 @@ export async function GET(request: NextRequest) {
     const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
     if (!auth.ok) return auth.response
     const newsletters = await listNewsletters()
-    return NextResponse.json(newsletters)
+    return NextResponse.json(newsletters, { headers: NO_STORE_HEADERS })
   }
 
   const newsletters = await listNewsletters()
-  return NextResponse.json(newsletters.filter(n => n.published))
+  return NextResponse.json(newsletters.filter(n => n.published), {
+    headers: publicReadHeaders(request, { maxAge: 60, swr: 600 }),
+  })
 }
 
 export async function POST(request: NextRequest) {

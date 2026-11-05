@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { listPlayers, createPlayer } from "@/lib/aws/players"
+import { publicReadHeaders } from "@/lib/http-cache"
 import { randomUUID } from "crypto"
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const players = await listPlayers()
-    return NextResponse.json(players)
+    // Public roster: short anonymous browser cache; signed-in (editors) always get fresh data
+    return NextResponse.json(players, { headers: publicReadHeaders(request, { maxAge: 60, swr: 600 }) })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to fetch players"
     return NextResponse.json({ error: message }, { status: 500 })
