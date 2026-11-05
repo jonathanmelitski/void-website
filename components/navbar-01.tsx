@@ -235,10 +235,10 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
             {/* Live badge — shown when a game is IN_PROGRESS */}
             {liveGame && (
               <Link href={`/live/watch/${liveGame.id}`}>
-                <span className="flex items-center gap-1.5 text-xs font-medium text-red-400 border border-red-400/30 bg-red-400/10 px-2.5 py-1 rounded-full cursor-pointer hover:bg-red-400/20 transition-colors">
+                <span className="flex items-center gap-1.5 text-xs font-medium text-destructive border border-destructive/30 bg-destructive/10 px-2.5 py-1 rounded-full cursor-pointer hover:bg-destructive/20 transition-colors">
                   <span className="relative flex h-1.5 w-1.5">
-                    <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-400" />
+                    <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full bg-destructive opacity-75" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-destructive" />
                   </span>
                   Live vs. {liveGame.opponent}
                 </span>
@@ -250,7 +250,7 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
               {liveGame && (
                 <>
                   <div
-                    className="absolute inset-[-2px] rounded-lg z-0 pointer-events-none motion-reduce:[animation:none!important]"
+                    className="absolute inset-[-2px] rounded-xl z-0 pointer-events-none motion-reduce:[animation:none!important]"
                     style={{
                       background: "conic-gradient(from var(--border-angle), #991b1b 0%, #ef4444 20%, #fca5a5 27%, #ef4444 35%, #991b1b 55%, #991b1b 100%)",
                       animation: "border-spotlight 4s linear infinite",

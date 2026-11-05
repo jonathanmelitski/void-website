@@ -79,26 +79,26 @@ export default function LoginPage() {
       <div className="flex flex-col items-center pt-24 px-4 text-left">
         <div className="w-full max-w-sm flex flex-col gap-6">
           <div>
-            <h1 className="text-4xl font-black">Set your password</h1>
-            <p className="text-white/50 mt-1 text-sm">Choose a permanent password to continue.</p>
+            <h1 className="text-4xl font-display leading-none tracking-wide">Set your password</h1>
+            <p className="text-fg-muted mt-1 text-sm">Choose a permanent password to continue.</p>
           </div>
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
 
           <form onSubmit={handleSetPassword} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="new-password" className="text-white/70">New password</Label>
+              <Label htmlFor="new-password" className="text-fg-secondary">New password</Label>
               <Input id="new-password" type="password" value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
                 placeholder="••••••••" required autoComplete="new-password"
-                className="bg-white/5 border-white/10 text-white placeholder:text-white/20" />
+                className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="confirm-password" className="text-white/70">Confirm password</Label>
+              <Label htmlFor="confirm-password" className="text-fg-secondary">Confirm password</Label>
               <Input id="confirm-password" type="password" value={confirmPassword}
                 onChange={e => setConfirmPassword(e.target.value)}
                 placeholder="••••••••" required autoComplete="new-password"
-                className="bg-white/5 border-white/10 text-white placeholder:text-white/20" />
+                className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
             </div>
             <Button type="submit" disabled={isLoading} className="mt-1">
               {isLoading ? "Saving…" : "Set password & sign in"}
@@ -113,31 +113,31 @@ export default function LoginPage() {
     <div className="flex flex-col items-center pt-24 px-4 text-left">
       <div className="w-full max-w-sm flex flex-col gap-6">
         <div>
-          <h1 className="text-4xl font-black">Void Live</h1>
-          <p className="text-white/50 mt-1 text-sm">Sign in to manage events and photos.</p>
+          <h1 className="text-4xl font-display leading-none tracking-wide">Void Live</h1>
+          <p className="text-fg-muted mt-1 text-sm">Sign in to manage events and photos.</p>
         </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
 
         <form onSubmit={handleSignIn} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="email" className="text-white/70">Email</Label>
+            <Label htmlFor="email" className="text-fg-secondary">Email</Label>
             <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)}
               placeholder="you@upenn.edu" required autoComplete="email"
-              className="bg-white/5 border-white/10 text-white placeholder:text-white/20" />
+              className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password" className="text-white/70">Password</Label>
+            <Label htmlFor="password" className="text-fg-secondary">Password</Label>
             <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)}
               placeholder="••••••••" required autoComplete="current-password"
-              className="bg-white/5 border-white/10 text-white placeholder:text-white/20" />
+              className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
           </div>
           <Button type="submit" disabled={isLoading} className="mt-1">
             {isLoading ? "Signing in…" : "Sign in"}
           </Button>
         </form>
 
-        <Link href="/live/reset-password" className="text-sm text-white/40 hover:text-white transition-colors w-fit">
+        <Link href="/live/reset-password" className="text-sm text-fg-muted hover:text-foreground transition-colors w-fit">
           Forgot password?
         </Link>
       </div>

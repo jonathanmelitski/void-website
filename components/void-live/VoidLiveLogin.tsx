@@ -41,7 +41,7 @@ export function VoidLiveLogin() {
 
   return (
     <div className="px-6 py-5 flex flex-col gap-4 max-w-sm">
-      <p className="text-sm text-white/50">Sign in to upload photos and manage events.</p>
+      <p className="text-sm text-fg-muted">Sign in to upload photos and manage events.</p>
 
       {error && (
         <Alert variant="destructive">
@@ -51,7 +51,7 @@ export function VoidLiveLogin() {
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="vl-email" className="text-white/70">Email</Label>
+          <Label htmlFor="vl-email" className="text-fg-secondary">Email</Label>
           <Input
             id="vl-email"
             type="email"
@@ -60,11 +60,11 @@ export function VoidLiveLogin() {
             placeholder="you@example.com"
             required
             autoComplete="email"
-            className="bg-white/5 border-white/10 text-white placeholder:text-white/20"
+            className="bg-surface border-border text-foreground placeholder:text-fg-faint"
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="vl-password" className="text-white/70">Password</Label>
+          <Label htmlFor="vl-password" className="text-fg-secondary">Password</Label>
           <Input
             id="vl-password"
             type="password"
@@ -73,7 +73,7 @@ export function VoidLiveLogin() {
             placeholder="••••••••"
             required
             autoComplete="current-password"
-            className="bg-white/5 border-white/10 text-white placeholder:text-white/20"
+            className="bg-surface border-border text-foreground placeholder:text-fg-faint"
           />
         </div>
         <Button type="submit" disabled={isLoading} className="mt-1">
@@ -81,9 +81,9 @@ export function VoidLiveLogin() {
         </Button>
       </form>
 
-      <div className="flex gap-4 text-xs text-white/30">
-        <Link href="/live/register" className="hover:text-white/60 transition-colors">Create account</Link>
-        <Link href="/live/reset-password" className="hover:text-white/60 transition-colors">Forgot password?</Link>
+      <div className="flex gap-4 text-xs text-fg-muted">
+        <Link href="/live/register" className="hover:text-foreground transition-colors">Create account</Link>
+        <Link href="/live/reset-password" className="hover:text-foreground transition-colors">Forgot password?</Link>
       </div>
     </div>
   )

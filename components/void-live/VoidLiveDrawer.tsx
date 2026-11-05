@@ -6,6 +6,7 @@ import { X } from "lucide-react"
 import { useAuth } from "@/lib/use-auth"
 import { VoidLiveLogin } from "./VoidLiveLogin"
 import { VoidLiveTabs } from "./VoidLiveTabs"
+import { Spinner } from "@/components/ui/spinner"
 
 interface VoidLiveDrawerProps {
   isOpen: boolean
@@ -41,27 +42,27 @@ export function VoidLiveDrawer({ isOpen, onClose }: VoidLiveDrawerProps) {
             {/* Handle + header */}
             <div className="flex items-center justify-between px-6 pt-4 pb-3 shrink-0">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-bold tracking-widest uppercase text-white/40">Void Live</span>
+                <span className="text-sm font-bold tracking-widest uppercase text-fg-muted">Void Live</span>
                 {user && (
-                  <span className="text-xs text-white/30">{user.email}</span>
+                  <span className="text-xs text-fg-muted">{user.email}</span>
                 )}
               </div>
               <button
                 onClick={onClose}
-                className="flex items-center justify-center w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 transition-colors text-white/60 hover:text-white"
+                className="flex items-center justify-center w-7 h-7 rounded-full bg-surface-2 hover:bg-surface-3 transition-colors text-fg-secondary hover:text-foreground"
               >
                 <X size={14} />
               </button>
             </div>
 
             {/* Divider */}
-            <div className="h-px bg-white/10 mx-6 shrink-0" />
+            <div className="h-px bg-surface-2 mx-6 shrink-0" />
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto">
               {isLoading ? (
                 <div className="flex items-center justify-center h-32">
-                  <div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                  <Spinner size="md" />
                 </div>
               ) : user ? (
                 <VoidLiveTabs onClose={onClose} />

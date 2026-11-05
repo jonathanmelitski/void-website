@@ -217,27 +217,27 @@ export function NewslettersPanel() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => router.push(`/live/manage/newsletters/${row.id}`)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-white/[0.06] text-white/50 hover:bg-white/10 hover:text-white/80 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-surface text-fg-muted hover:bg-surface-2 hover:text-foreground transition-colors"
             >
               Manage
             </button>
             <button
               onClick={() => setDuplicateTarget(row)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-white/[0.06] text-white/50 hover:bg-white/10 hover:text-white/80 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-surface text-fg-muted hover:bg-surface-2 hover:text-foreground transition-colors"
             >
               Duplicate
             </button>
             <button
               onClick={() => handleTogglePublished(row)}
               disabled={togglingId === row.id}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-white/[0.06] text-white/50 hover:bg-white/10 hover:text-white/80 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-surface text-fg-muted hover:bg-surface-2 hover:text-foreground transition-colors disabled:opacity-40"
             >
               {row.published ? "Unpublish" : "Publish"}
             </button>
             {isAdmin && (
               <button
                 onClick={() => openConfirm(row)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-red-500/10 text-red-400/70 hover:bg-red-500/20 hover:text-red-400 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-destructive/10 text-destructive/70 hover:bg-destructive/20 hover:text-destructive transition-colors"
               >
                 Delete
               </button>
@@ -257,7 +257,7 @@ export function NewslettersPanel() {
             size="sm"
             variant="ghost"
             onClick={handleDownloadTemplate}
-            className="text-white/50 hover:text-white/80"
+            className="text-fg-muted hover:text-foreground"
           >
             Download Template
           </Button>
@@ -266,7 +266,7 @@ export function NewslettersPanel() {
             variant="ghost"
             onClick={() => importInputRef.current?.click()}
             disabled={isImporting}
-            className="text-white/50 hover:text-white/80"
+            className="text-fg-muted hover:text-foreground"
           >
             {isImporting ? "Importing…" : "From Template"}
           </Button>
@@ -281,7 +281,7 @@ export function NewslettersPanel() {
             <DialogTrigger asChild>
               <Button size="sm">New Newsletter</Button>
             </DialogTrigger>
-            <DialogContent className="bg-black border-white/10 text-white max-w-md">
+            <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>Create Newsletter</DialogTitle>
               </DialogHeader>
@@ -291,8 +291,8 @@ export function NewslettersPanel() {
         </div>
       </div>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
-      {importError && <p className="text-sm text-red-400">{importError}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {importError && <p className="text-sm text-destructive">{importError}</p>}
 
       <DataTable
         columns={buildColumns(row => setDeleteTarget([row]))}
@@ -305,7 +305,7 @@ export function NewslettersPanel() {
           if (selectedRows.length === 0 || !isAdmin) return null
           return (
             <div className="flex items-center gap-3">
-              <span className="text-sm text-white/50">{selectedRows.length} selected</span>
+              <span className="text-sm text-fg-muted">{selectedRows.length} selected</span>
               <Button
                 size="sm"
                 variant="destructive"
@@ -328,7 +328,7 @@ export function NewslettersPanel() {
       />
 
       <Dialog open={duplicateTarget !== null} onOpenChange={open => { if (!open) setDuplicateTarget(null) }}>
-        <DialogContent className="bg-black border-white/10 text-white max-w-sm">
+        <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Duplicate newsletter</DialogTitle>
           </DialogHeader>
@@ -409,44 +409,44 @@ function CreateNewsletterForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4 pt-2">
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Title</Label>
+        <Label className="text-fg-secondary">Title</Label>
         <Input
           value={title}
           onChange={e => handleTitleChange(e.target.value)}
           placeholder="March 2026 Newsletter"
           required
-          className="bg-white/5 border-white/10 text-white placeholder:text-white/20"
+          className="bg-surface border-border text-foreground placeholder:text-fg-faint"
         />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Slug</Label>
+        <Label className="text-fg-secondary">Slug</Label>
         <Input
           value={slug}
           onChange={e => setSlug(e.target.value)}
           placeholder="march-2026-newsletter"
           required
-          className="bg-white/5 border-white/10 text-white placeholder:text-white/20 font-mono text-sm"
+          className="bg-surface border-border text-foreground placeholder:text-fg-faint font-mono text-sm"
         />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Date</Label>
+        <Label className="text-fg-secondary">Date</Label>
         <Input
           type="date"
           value={date}
           onChange={e => setDate(e.target.value)}
           required
-          className="bg-white/5 border-white/10 text-white"
+          className="bg-surface border-border text-foreground"
         />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Cover photo (optional)</Label>
+        <Label className="text-fg-secondary">Cover photo (optional)</Label>
         <input
           type="file"
           accept="image/*"
           onChange={e => setCoverFile(e.target.files?.[0] ?? null)}
-          className="text-sm text-white/60 file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-sm file:text-white hover:file:bg-white/20"
+          className="text-sm text-fg-secondary file:mr-3 file:rounded-md file:border-0 file:bg-surface-2 file:px-3 file:py-1 file:text-sm file:text-foreground hover:file:bg-surface-3"
         />
       </div>
       <Button type="submit" disabled={isLoading} className="w-fit mt-1">
@@ -478,19 +478,19 @@ function DuplicateForm({
   return (
     <div className="flex flex-col gap-4 pt-2">
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Title</Label>
+        <Label className="text-fg-secondary">Title</Label>
         <Input
           value={title}
           onChange={e => handleTitleChange(e.target.value)}
-          className="bg-white/5 border-white/10 text-white"
+          className="bg-surface border-border text-foreground"
         />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Slug</Label>
+        <Label className="text-fg-secondary">Slug</Label>
         <Input
           value={slug}
           onChange={e => setSlug(e.target.value)}
-          className="bg-white/5 border-white/10 text-white font-mono text-sm"
+          className="bg-surface border-border text-foreground font-mono text-sm"
         />
       </div>
       <Button

@@ -20,11 +20,11 @@ export function NewsletterCard({ newsletter }: NewsletterCardProps) {
   if (!coverUrl) {
     return (
       <Link href={`/news/${newsletter.slug ?? newsletter.id}`} className="block group">
-        <div className="bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden">
-          <div className="relative aspect-[4/3] flex items-center justify-center text-white/40 text-sm">
-            <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
-              <h3 className="font-bold text-lg leading-tight">{newsletter.title}</h3>
-              <p className="text-sm text-white/80 mt-0.5">{dateLabel}</p>
+        <div className="bg-surface border border-border rounded-xl overflow-hidden transition-colors group-hover:bg-surface-2">
+          <div className="relative aspect-[4/3] flex items-center justify-center text-fg-muted text-sm">
+            <div className="absolute bottom-0 left-0 right-0 p-4 text-foreground">
+              <h2 className="font-semibold text-lg leading-tight">{newsletter.title}</h2>
+              <p className="text-sm text-fg-secondary mt-0.5">{dateLabel}</p>
             </div>
           </div>
         </div>
@@ -34,7 +34,7 @@ export function NewsletterCard({ newsletter }: NewsletterCardProps) {
 
   return (
     <Link href={`/news/${newsletter.slug ?? newsletter.id}`} className="block group">
-      <div className="bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden">
+      <div className="bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden">
         <div className="relative aspect-[4/3] hover:scale-[1.02] transition-transform">
           <Image
             src={coverUrl}
@@ -45,8 +45,8 @@ export function NewsletterCard({ newsletter }: NewsletterCardProps) {
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
           <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
-            <h3 className="font-bold text-lg leading-tight">{newsletter.title}</h3>
-            <p className="text-sm text-white/80 mt-0.5">{dateLabel}</p>
+            <h2 className="font-semibold text-lg leading-tight">{newsletter.title}</h2>
+            <p className="text-sm text-white/90 mt-0.5">{dateLabel}</p>
           </div>
         </div>
       </div>

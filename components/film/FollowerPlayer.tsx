@@ -91,7 +91,7 @@ export function FollowerPlayer({ trackName, clips, coverage, getMainMs, playing,
         />
       )}
       {(!covered || !clip) && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/85 text-white/40 pointer-events-none">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/85 text-white/70 pointer-events-none">
           <VideoOff size={20} />
           <span className="text-xs">No {trackName} footage here</span>
         </div>

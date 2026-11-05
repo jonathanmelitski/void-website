@@ -21,9 +21,9 @@ export default function RosterView({ initialPlayers }: RosterProps) {
       </div>
 
       {/* Desktop: full grid with per-card WebGL contexts */}
-      <main className="hidden md:block lg:p-16 md:p-8">
+      <div className="hidden md:block lg:p-16 md:p-8">
         <RosterProvider>
-          <h1 className="text-6xl font-black p-12">Roster</h1>
+          <h1 className="text-6xl font-display leading-none tracking-wide p-12 text-center">Roster</h1>
           <div className="w-full flex justify-center">
             <ul className="grid grid-cols-1 items-center gap-8 max-w-3xl w-full">
               {players.map((el, i) => (
@@ -34,7 +34,7 @@ export default function RosterView({ initialPlayers }: RosterProps) {
             </ul>
           </div>
         </RosterProvider>
-      </main>
+      </div>
     </>
   );
 }

@@ -53,30 +53,30 @@ export function NewsletterEntryEditor({ newsletterId, onEntryAdded }: Props) {
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <h3 className="text-lg font-semibold">Add Entry</h3>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Entry title</Label>
+        <Label className="text-fg-secondary">Entry title</Label>
         <Input
           value={title}
           onChange={e => setTitle(e.target.value)}
           placeholder="What I've been working on…"
-          className="bg-white/5 border-white/10 text-white placeholder:text-white/20"
+          className="bg-surface border-border text-foreground placeholder:text-fg-faint"
         />
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Date <span className="text-white/30">(optional, e.g. "March 2026")</span></Label>
+        <Label className="text-fg-secondary">Date <span className="text-fg-muted">(optional, e.g. "March 2026")</span></Label>
         <Input
           value={date}
           onChange={e => setDate(e.target.value)}
           placeholder="March 2026"
-          className="bg-white/5 border-white/10 text-white placeholder:text-white/20"
+          className="bg-surface border-border text-foreground placeholder:text-fg-faint"
         />
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Body</Label>
+        <Label className="text-fg-secondary">Body</Label>
         <SimpleEditor onEditorReady={editor => { editorRef.current = editor }} />
       </div>
 

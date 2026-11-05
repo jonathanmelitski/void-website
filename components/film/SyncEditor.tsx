@@ -315,22 +315,22 @@ export function SyncEditor({
     const disabled = locked && !isMain
     return (
       <div
-        className={`flex flex-col gap-2 rounded-xl border p-2 transition-colors ${focused ? "border-amber-300/50 bg-amber-300/[0.03]" : "border-white/10"}`}
+        className={`flex flex-col gap-2 rounded-xl border p-2 transition-colors ${focused ? "border-warning/50 bg-amber-300/[0.03]" : "border-border"}`}
         onMouseDown={() => setFocus(side)}
       >
         <div className="flex items-center gap-2 text-xs">
-          <span className={`font-semibold ${focused ? "text-amber-200" : "text-white/70"}`}>{isMain ? "Main" : trackName}</span>
+          <span className={`font-semibold ${focused ? "text-warning" : "text-fg-secondary"}`}>{isMain ? "Main" : trackName}</span>
           <select
             value={idx}
             disabled={disabled}
             onChange={e => { loadClip(side, Number(e.target.value), 0); e.currentTarget.blur() }}
-            className="min-w-0 flex-1 bg-white/5 border border-white/10 rounded-md px-1.5 py-0.5 text-[11px] text-white/80 focus:outline-none disabled:opacity-50"
+            className="min-w-0 flex-1 bg-surface border border-border rounded-md px-1.5 py-0.5 text-[11px] text-foreground disabled:opacity-50"
           >
-            {clipsList.map((c, i) => <option key={c.id} value={i} className="bg-neutral-900">{c.title ?? `Clip ${i + 1}`}</option>)}
+            {clipsList.map((c, i) => <option key={c.id} value={i} className="bg-card">{c.title ?? `Clip ${i + 1}`}</option>)}
           </select>
-          {disabled && <span className="flex items-center gap-1 text-[10px] text-sky-300"><Lock size={10} /> following Main</span>}
+          {disabled && <span className="flex items-center gap-1 text-[11px] text-brand-text"><Lock size={10} /> following Main</span>}
         </div>
-        <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
+        <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black">
           {clip && (
             <YouTubePlayer
               ref={players[side]}
@@ -360,7 +360,7 @@ export function SyncEditor({
             onMouseDown={keepFocus}
             onClick={() => togglePlay(side)}
             disabled={disabled}
-            className="text-white/70 hover:text-white disabled:opacity-30"
+            className="text-fg-secondary hover:text-foreground disabled:opacity-30"
             aria-label={playing[side] ? "Pause" : "Play"}
           >
             {playing[side] ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
@@ -377,9 +377,9 @@ export function SyncEditor({
             className="flex-1 accent-amber-300 disabled:opacity-40"
             aria-label={`${isMain ? "Main" : trackName} position`}
           />
-          <span className="font-mono text-[11px] text-white/70 tabular-nums w-[64px] text-right">{fmt(pos[side])}</span>
+          <span className="font-mono text-[11px] text-fg-secondary tabular-nums w-[64px] text-right">{fmt(pos[side])}</span>
         </div>
-        <div className="flex items-center gap-1 text-[10px]">
+        <div className="flex items-center gap-1 text-[11px]">
           {[-1000, -100, -FRAME_MS, FRAME_MS, 100, 1000].map(d => (
             <button
               key={d}
@@ -387,7 +387,7 @@ export function SyncEditor({
               onMouseDown={keepFocus}
               disabled={disabled}
               onClick={() => { setFocus(side); seekSide(side, posRef.current[side] + d) }}
-              className="px-1.5 py-0.5 rounded font-mono text-white/45 hover:text-white hover:bg-white/10 disabled:opacity-30"
+              className="px-1.5 py-0.5 rounded-md font-mono text-fg-muted hover:text-foreground hover:bg-surface-2 disabled:opacity-30"
             >
               {d > 0 ? "+" : "−"}{Math.abs(d) === FRAME_MS ? "1f" : Math.abs(d) >= 1000 ? "1s" : ".1s"}
             </button>
@@ -398,21 +398,21 @@ export function SyncEditor({
   }
 
   return (
-    <div ref={rootRef} className="flex flex-col gap-3 rounded-xl border border-white/10 bg-black/60 p-3 select-none">
+    <div ref={rootRef} className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-3 select-none">
       {/* Header */}
       <div className="flex items-center gap-2 text-xs">
-        <Link2 size={14} className="text-amber-300" />
-        <span className="font-semibold text-white/85">Sync {trackName} to Main</span>
-        <span className="text-white/30 hidden md:inline">Find the same moment in both (a pull release is ideal), then press Enter.</span>
+        <Link2 size={14} className="text-warning" />
+        <span className="font-semibold text-foreground">Sync {trackName} to Main</span>
+        <span className="text-fg-muted hidden md:inline">Find the same moment in both (a pull release is ideal), then press Enter.</span>
         <div className="ml-auto flex items-center gap-1">
-          <span className="flex items-center gap-1 px-1 text-white/40">
-            {saveStatus === "error" ? <><AlertCircle size={12} className="text-red-300" /><span className="text-red-300">Save failed</span></>
+          <span className="flex items-center gap-1 px-1 text-fg-muted">
+            {saveStatus === "error" ? <><AlertCircle size={12} className="text-destructive" /><span className="text-destructive">Save failed</span></>
               : saveStatus === "saved" ? <><Check size={12} /> Saved</>
               : <><Loader2 size={12} className="animate-spin" /> Saving</>}
           </span>
-          <button type="button" onMouseDown={keepFocus} onClick={undo} disabled={past.length === 0} className="p-1 rounded text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25" aria-label="Undo"><Undo2 size={14} /></button>
-          <button type="button" onMouseDown={keepFocus} onClick={redo} disabled={future.length === 0} className="p-1 rounded text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25" aria-label="Redo"><Redo2 size={14} /></button>
-          <button type="button" onMouseDown={keepFocus} onClick={onClose} className="ml-1 flex items-center gap-1 px-2 py-0.5 rounded-md border border-white/15 text-white/60 hover:text-white hover:border-white/30" aria-label="Close sync editor">
+          <button type="button" onMouseDown={keepFocus} onClick={undo} disabled={past.length === 0} className="p-1 rounded-md text-fg-muted hover:text-foreground hover:bg-surface-2 disabled:opacity-25" aria-label="Undo"><Undo2 size={14} /></button>
+          <button type="button" onMouseDown={keepFocus} onClick={redo} disabled={future.length === 0} className="p-1 rounded-md text-fg-muted hover:text-foreground hover:bg-surface-2 disabled:opacity-25" aria-label="Redo"><Redo2 size={14} /></button>
+          <button type="button" onMouseDown={keepFocus} onClick={onClose} className="ml-1 flex items-center gap-1 px-2 py-0.5 rounded-md border border-border text-fg-secondary hover:text-foreground hover:border-border-strong" aria-label="Close sync editor">
             <X size={12} /> Done
           </button>
         </div>
@@ -426,16 +426,16 @@ export function SyncEditor({
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <button type="button" onMouseDown={keepFocus} onClick={addSync} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-300/20 border border-amber-300/40 text-amber-100 hover:bg-amber-300/30">
-          <Link2 size={13} /> Sync here <kbd className="font-mono text-[10px] text-amber-200/70">↵</kbd>
+        <button type="button" onMouseDown={keepFocus} onClick={addSync} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-warning/20 border border-warning/40 text-warning hover:bg-warning/30">
+          <Link2 size={13} /> Sync here <kbd className="font-mono text-[11px] text-warning/70">↵</kbd>
         </button>
-        <button type="button" onMouseDown={keepFocus} onClick={addDesync} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-white/15 text-white/70 hover:text-white hover:border-white/30">
-          <Scissors size={13} /> Desync at {trackName} playhead <kbd className="font-mono text-[10px] text-white/40">D</kbd>
+        <button type="button" onMouseDown={keepFocus} onClick={addDesync} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-fg-secondary hover:text-foreground hover:border-border-strong">
+          <Scissors size={13} /> Desync at {trackName} playhead <kbd className="font-mono text-[11px] text-fg-muted">D</kbd>
         </button>
-        <button type="button" onMouseDown={keepFocus} onClick={() => setLocked(l => !l)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border ${locked ? "border-sky-300/50 bg-sky-300/15 text-sky-100" : "border-white/15 text-white/70 hover:text-white hover:border-white/30"}`}>
-          {locked ? <Lock size={13} /> : <Unlock size={13} />} Preview alignment <kbd className="font-mono text-[10px] text-white/40">P</kbd>
+        <button type="button" onMouseDown={keepFocus} onClick={() => setLocked(l => !l)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border ${locked ? "border-brand/50 bg-brand/15 text-brand-text" : "border-border text-fg-secondary hover:text-foreground hover:border-border-strong"}`}>
+          {locked ? <Lock size={13} /> : <Unlock size={13} />} Preview alignment <kbd className="font-mono text-[11px] text-fg-muted">P</kbd>
         </button>
-        <span className="ml-auto font-mono text-[11px] text-white/40">
+        <span className="ml-auto font-mono text-[11px] text-fg-muted">
           current offset {currentOffset !== null ? fmtOffset(currentOffset) : "—"}
         </span>
       </div>
@@ -444,7 +444,7 @@ export function SyncEditor({
       {angleClip && angleDuration > 0 && (
         <div className="flex flex-col gap-1">
           <div
-            className="relative h-5 rounded-md bg-white/[0.04] overflow-hidden cursor-pointer"
+            className="relative h-5 rounded-md bg-surface overflow-hidden cursor-pointer"
             onMouseDown={e => {
               const rect = e.currentTarget.getBoundingClientRect()
               setFocus("angle")
@@ -454,7 +454,7 @@ export function SyncEditor({
             {clipCoverage.map(s => (
               <div
                 key={`${s.clipStartMs}`}
-                className="absolute top-0 bottom-0 bg-emerald-400/25 border-x border-emerald-300/40"
+                className="absolute top-0 bottom-0 bg-success/25 border-x border-success/40"
                 style={{ left: `${(s.clipStartMs / angleDuration) * 100}%`, width: `${((Math.min(s.clipEndMs, angleDuration) - s.clipStartMs) / angleDuration) * 100}%` }}
                 title={`Synced: ${fmt(s.clipStartMs)}–${fmt(Math.min(s.clipEndMs, angleDuration))} → Main ${fmt(s.mainStartMs)}`}
               />
@@ -462,16 +462,16 @@ export function SyncEditor({
             {clipPoints.map(p => (
               <div
                 key={p.id}
-                className={`absolute top-0 bottom-0 w-0.5 ${p.kind === "sync" ? "bg-emerald-300" : "bg-red-400"} ${p.id === selectedPointId ? "ring-2 ring-white/70" : ""}`}
+                className={`absolute top-0 bottom-0 w-0.5 ${p.kind === "sync" ? "bg-success" : "bg-destructive"} ${p.id === selectedPointId ? "ring-2 ring-white/70" : ""}`}
                 style={{ left: `${(p.clipMs / angleDuration) * 100}%` }}
               />
             ))}
-            <div className="absolute top-0 bottom-0 w-px bg-amber-300" style={{ left: `${(pos.angle / angleDuration) * 100}%` }} />
+            <div className="absolute top-0 bottom-0 w-px bg-warning" style={{ left: `${(pos.angle / angleDuration) * 100}%` }} />
           </div>
-          <div className="flex gap-3 text-[10px] text-white/30">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-emerald-400/40" /> synced footage</span>
-            <span className="flex items-center gap-1"><span className="w-0.5 h-2 bg-emerald-300" /> sync</span>
-            <span className="flex items-center gap-1"><span className="w-0.5 h-2 bg-red-400" /> desync (camera stopped)</span>
+          <div className="flex gap-3 text-[11px] text-fg-muted">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-md bg-success/40" /> synced footage</span>
+            <span className="flex items-center gap-1"><span className="w-0.5 h-2 bg-success" /> sync</span>
+            <span className="flex items-center gap-1"><span className="w-0.5 h-2 bg-destructive" /> desync (camera stopped)</span>
             <span>Unshaded stretches show &ldquo;no footage&rdquo; when viewing this angle.</span>
           </div>
         </div>
@@ -480,7 +480,7 @@ export function SyncEditor({
       {/* Points for this clip */}
       <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto">
         {clipPoints.length === 0 ? (
-          <p className="text-xs text-white/30 py-2">
+          <p className="text-xs text-fg-muted py-2">
             No sync points on this clip yet. Line up a moment visible from both cameras and press Enter.
           </p>
         ) : clipPoints.map(p => {
@@ -490,24 +490,24 @@ export function SyncEditor({
             <div
               key={p.id}
               onClick={() => jumpToPoint(p)}
-              className={`group flex items-center gap-3 px-2 py-1 rounded-md text-xs cursor-pointer ${selected ? "bg-white/10" : "hover:bg-white/5"}`}
+              className={`group flex items-center gap-3 px-2 py-1 rounded-md text-xs cursor-pointer ${selected ? "bg-surface-2" : "hover:bg-surface-2"}`}
             >
               {p.kind === "sync"
-                ? <span className="flex items-center gap-1 w-16 text-emerald-300"><Link2 size={11} /> Sync</span>
-                : <span className="flex items-center gap-1 w-16 text-red-300"><Scissors size={11} /> Desync</span>}
-              <span className="font-mono text-white/70">{trackName} {fmt(p.clipMs)}</span>
+                ? <span className="flex items-center gap-1 w-16 text-success"><Link2 size={11} /> Sync</span>
+                : <span className="flex items-center gap-1 w-16 text-destructive"><Scissors size={11} /> Desync</span>}
+              <span className="font-mono text-fg-secondary">{trackName} {fmt(p.clipMs)}</span>
               {p.kind === "sync" && (
                 <>
-                  <span className="text-white/25">↔</span>
-                  <span className="font-mono text-white/70">{mainMs !== null ? `Main ${fmt(mainMs)}` : "Main clip removed"}</span>
-                  {mainMs !== null && <span className="font-mono text-white/35">{fmtOffset(mainMs - p.clipMs)}</span>}
+                  <span className="text-fg-faint">↔</span>
+                  <span className="font-mono text-fg-secondary">{mainMs !== null ? `Main ${fmt(mainMs)}` : "Main clip removed"}</span>
+                  {mainMs !== null && <span className="font-mono text-fg-muted">{fmtOffset(mainMs - p.clipMs)}</span>}
                 </>
               )}
               <button
                 type="button"
                 onMouseDown={keepFocus}
                 onClick={e => { e.stopPropagation(); deletePoint(p.id) }}
-                className="ml-auto text-white/30 hover:text-red-400 opacity-0 group-hover:opacity-100"
+                className="ml-auto text-fg-muted hover:text-destructive opacity-0 group-hover:opacity-100"
                 aria-label="Delete point"
               >
                 <Trash2 size={12} />
@@ -517,7 +517,7 @@ export function SyncEditor({
         })}
       </div>
 
-      <p className="text-[10px] text-white/25">
+      <p className="text-[11px] text-fg-faint">
         <kbd className="font-mono">Tab</kbd> switch side · <kbd className="font-mono">Space</kbd> play/pause focused (<kbd className="font-mono">⇧Space</kbd> both) ·
         {" "}<kbd className="font-mono">← →</kbd> 1s (<kbd className="font-mono">⇧</kbd> 0.1s) · <kbd className="font-mono">, .</kbd> one frame · <kbd className="font-mono">J L</kbd> 5s ·
         {" "}<kbd className="font-mono">⌫</kbd> delete selected · <kbd className="font-mono">⌘Z</kbd> undo · <kbd className="font-mono">Esc</kbd> done

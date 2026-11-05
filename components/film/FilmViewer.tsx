@@ -24,6 +24,7 @@ import {
   MAIN_TRACK_ID, angleToMain, buildAngleCoverage, buildMainTimeline, locateMain, mainToAngle, nextCoverage, trackIdOf,
   type CoverageSpan, type FilmSyncPoint, type FilmTrack,
 } from "@/lib/film-tracks"
+import { Spinner } from "@/components/ui/spinner"
 
 interface FilmViewerProps {
   /** All of the game's clips: main track (no trackId) plus any camera angles */
@@ -58,7 +59,7 @@ const POINT_COLORS: Record<string, string> = {
 }
 
 function getPointColor(lineType: string, outcome: string) {
-  return POINT_COLORS[`${lineType}-${outcome}`] ?? "bg-white/20"
+  return POINT_COLORS[`${lineType}-${outcome}`] ?? "bg-surface-3"
 }
 
 const NO_EVENTS: PointEventItem[] = []
@@ -70,12 +71,12 @@ function SectionToggle({ open, label, detail, onClick }: { open: boolean; label:
       type="button"
       onClick={onClick}
       aria-expanded={open}
-      className="self-start flex items-center gap-1 text-[10px] uppercase tracking-wider text-white/35 hover:text-white/70 transition-colors"
+      className="self-start flex items-center gap-1 text-[11px] uppercase tracking-wider text-fg-muted hover:text-foreground transition-colors"
     >
       <ChevronRight size={11} className={`transition-transform ${open ? "rotate-90" : ""}`} />
       {label}
-      {detail && <span className="normal-case tracking-normal text-white/25">· {detail}</span>}
-      <span className="normal-case tracking-normal text-white/25">— {open ? "hide" : "show"}</span>
+      {detail && <span className="normal-case tracking-normal text-fg-faint">· {detail}</span>}
+      <span className="normal-case tracking-normal text-fg-faint">— {open ? "hide" : "show"}</span>
     </button>
   )
 }
@@ -1101,10 +1102,10 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
   const selectedPoint = selectedPointId ? pointMap[selectedPointId] : null
 
   const toggleBtn = (active: boolean) =>
-    `px-2.5 py-1 rounded text-xs font-medium transition-colors ${active ? "bg-white/20 text-white" : "text-white/40 hover:text-white/70"}`
+    `px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${active ? "bg-surface-3 text-foreground" : "text-fg-muted hover:text-foreground"}`
 
   if (!activeClip) {
-    return <div className="text-white/30 text-sm p-4">No clips available.</div>
+    return <div className="text-fg-muted text-sm p-4">No clips available.</div>
   }
 
   const openSync = (trackId: string) => {
@@ -1218,7 +1219,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                   return (
                     <div
                       key={t.id}
-                      className="relative h-3 rounded bg-white/[0.04] cursor-pointer overflow-hidden"
+                      className="relative h-3 rounded-md bg-surface cursor-pointer overflow-hidden"
                       title={`${t.name} — click to watch this angle from here`}
                       onClick={e => {
                         const rect = e.currentTarget.getBoundingClientRect()
@@ -1232,12 +1233,12 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                         return (
                           <div
                             key={`${span.clipId}-${span.clipStartMs}`}
-                            className={`absolute top-0 bottom-0 ${active ? "bg-sky-300/70" : "bg-sky-300/30 hover:bg-sky-300/45"}`}
+                            className={`absolute top-0 bottom-0 ${active ? "bg-brand/70" : "bg-brand/30 hover:bg-brand/45"}`}
                             style={{ left: `${(start / totalDurationMs) * 100}%`, width: `${((end - start) / totalDurationMs) * 100}%` }}
                           />
                         )
                       })}
-                      <span className={`absolute left-1 top-0 text-[9px] leading-3 pointer-events-none ${active ? "text-white" : "text-white/45"}`}>{t.name}</span>
+                      <span className={`absolute left-1 top-0 text-[11px] leading-3 pointer-events-none ${active ? "text-foreground" : "text-fg-muted"}`}>{t.name}</span>
                     </div>
                   )
                 })}
@@ -1259,7 +1260,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
         onTouchStart={totalDurationMs > 0 ? handleTimelineTouchStart : undefined}
       >
         {/* Track — doubles as the point strip: one colored band per tagged point, positioned by time */}
-        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-3 rounded-[4px] overflow-hidden bg-white/[0.07] pointer-events-none">
+        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-3 rounded-[4px] overflow-hidden bg-surface-2 pointer-events-none">
           {totalDurationMs > 0 && globalMetaSegments.map(({ point, markerAnn, globalStart, segEnd }) => {
             const start = Math.max(0, Math.min(globalStart, totalDurationMs))
             const end = Math.max(start, Math.min(segEnd, totalDurationMs))
@@ -1268,7 +1269,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
             return (
               <div
                 key={markerAnn.id}
-                className={`absolute top-0 bottom-0 flex items-center justify-center overflow-hidden border-l border-black/70 text-[8px] font-mono leading-none text-white/90 ${getPointColor(point.lineType, point.outcome)} ${isActive ? "opacity-90" : "opacity-45"}`}
+                className={`absolute top-0 bottom-0 flex items-center justify-center overflow-hidden border-l border-black/70 text-[11px] font-mono leading-none text-white ${getPointColor(point.lineType, point.outcome)} ${isActive ? "opacity-90" : "opacity-45"}`}
                 style={{ left: `${(start / totalDurationMs) * 100}%`, width: `${widthPct}%` }}
               >
                 {widthPct > 3.5 ? `P${point.pointNumber}` : ""}
@@ -1276,7 +1277,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
             )
           })}
           {/* Played progress */}
-          <div ref={progressRef} className="absolute bottom-0 left-0 h-[2px] bg-white" style={{ width: "0%" }} />
+          <div ref={progressRef} className="absolute bottom-0 left-0 h-[2px] bg-foreground" style={{ width: "0%" }} />
         </div>
 
         {/* Clip boundary markers */}
@@ -1284,7 +1285,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           <div
             key={i}
             className="absolute top-0 bottom-0 w-px pointer-events-none"
-            style={{ left: `${(offset / totalDurationMs) * 100}%`, backgroundColor: "rgba(255,255,255,0.45)", boxShadow: "0 0 3px rgba(255,255,255,0.2)" }}
+            style={{ left: `${(offset / totalDurationMs) * 100}%`, backgroundColor: "color-mix(in oklch, var(--foreground) 45%, transparent)" }}
           />
         ))}
 
@@ -1305,20 +1306,20 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           className="absolute top-0 bottom-0 pointer-events-none"
           style={{ left: "0%", opacity: 0 }}
         >
-          <div className="absolute inset-y-0 left-0 w-px" style={{ backgroundColor: "rgba(255,255,255,0.25)" }} />
+          <div className="absolute inset-y-0 left-0 w-px" style={{ backgroundColor: "color-mix(in oklch, var(--foreground) 30%, transparent)" }} />
           <span
             ref={hoverTooltipRef}
-            className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 text-[10px] font-mono whitespace-nowrap px-1.5 py-0.5 rounded pointer-events-none"
-            style={{ backgroundColor: "rgba(0,0,0,0.75)", color: "rgba(255,255,255,0.7)" }}
+            className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 text-[11px] font-mono whitespace-nowrap px-1.5 py-0.5 rounded-md pointer-events-none"
+            style={{ backgroundColor: "var(--foreground)", color: "var(--background)" }}
           />
         </div>
 
         {/* Playhead */}
         <div ref={playheadRef} className="absolute top-0 bottom-0 pointer-events-none" style={{ left: "0%" }}>
-          <div className="absolute inset-y-0 left-0 w-px bg-white" />
+          <div className="absolute inset-y-0 left-0 w-px bg-foreground" />
           <div
-            className="absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white"
-            style={{ boxShadow: "0 0 0 2px rgba(255,255,255,0.15), 0 0 8px rgba(255,255,255,0.3)" }}
+            className="absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-foreground"
+            style={{ boxShadow: "0 0 0 2px color-mix(in oklch, var(--foreground) 15%, transparent)" }}
           />
         </div>
       </div>
@@ -1327,22 +1328,22 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-0.5" onClick={e => e.stopPropagation()}>
         <button
           onClick={togglePlayPause}
-          className="text-white hover:text-white/70 transition-colors shrink-0"
+          className="text-foreground hover:text-foreground transition-colors shrink-0"
           aria-label={isPaused ? "Play" : "Pause"}
         >
           {isPaused ? <Play size={16} fill="currentColor" /> : <Pause size={16} fill="currentColor" />}
         </button>
-        <span ref={timecodeRef} className="text-[11px] font-mono text-white/50 tabular-nums shrink-0 min-w-[80px]">
+        <span ref={timecodeRef} className="text-[11px] font-mono text-fg-muted tabular-nums shrink-0 min-w-[80px]">
           {formatTime(globalMs)} / {totalDurationMs > 0 ? formatTime(totalDurationMs) : "--:--"}
         </span>
         {allTracks.length > 1 && (
-          <div className="flex items-center gap-0.5 rounded-md bg-white/5 p-0.5 max-w-full overflow-x-auto [scrollbar-width:none]" role="group" aria-label="Camera angle">
+          <div className="flex items-center gap-0.5 rounded-md bg-surface p-0.5 max-w-full overflow-x-auto [scrollbar-width:none]" role="group" aria-label="Camera angle">
             {allTracks.map((t, i) => (
               <button
                 key={t.id}
                 onClick={() => switchTrack(t.id)}
                 title={`${t.name} (${i + 1})`}
-                className={`shrink-0 whitespace-nowrap px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${t.id === activeTrackId ? "bg-sky-300/25 text-white" : "text-white/45 hover:text-white/80"}`}
+                className={`shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors ${t.id === activeTrackId ? "bg-brand/25 text-foreground" : "text-fg-muted hover:text-foreground"}`}
               >
                 {t.name}
               </button>
@@ -1355,13 +1356,13 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
               <button
                 key={clip.id}
                 onClick={() => jumpToClip(i)}
-                className={`shrink-0 whitespace-nowrap px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                className={`shrink-0 whitespace-nowrap px-2.5 py-1 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
                   i === activeClipIdx
-                    ? "bg-white/20 text-white"
-                    : "bg-white/5 text-white/40 hover:text-white/60 hover:bg-white/10"
+                    ? "bg-surface-3 text-foreground"
+                    : "bg-surface text-fg-muted hover:text-foreground hover:bg-surface-2"
                 }`}
               >
-                {i === activeClipIdx && <span className="w-1.5 h-1.5 rounded-full bg-white/60 shrink-0" />}
+                {i === activeClipIdx && <span className="w-1.5 h-1.5 rounded-full bg-foreground/60 shrink-0" />}
                 {clip.title ?? `Clip ${i + 1}`}
               </button>
             ))}
@@ -1371,7 +1372,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           {allTracks.length > 1 && !isFullscreen && (
             <button
               onClick={() => setSplitTrackId(cur => cur ? null : (allTracks.find(t => t.id !== activeTrackId)?.id ?? null))}
-              className={`transition-colors ${splitTrackId ? "text-sky-300" : "text-white/50 hover:text-white"}`}
+              className={`transition-colors ${splitTrackId ? "text-brand-text" : "text-fg-muted hover:text-foreground"}`}
               title="Side-by-side angles (V)"
               aria-label="Toggle side-by-side angles"
             >
@@ -1381,7 +1382,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           {canAnnotate && angleTracks.length > 0 && !isFullscreen && (
             <button
               onClick={() => openSync(onAngle ? activeTrackId : angleTracks[0].id)}
-              className="text-white/50 hover:text-white transition-colors"
+              className="text-fg-muted hover:text-foreground transition-colors"
               title="Sync camera angles to Main"
               aria-label="Open angle sync editor"
             >
@@ -1390,14 +1391,14 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           )}
           <button
             onClick={toggleMute}
-            className="text-white/50 hover:text-white transition-colors"
+            className="text-fg-muted hover:text-foreground transition-colors"
             aria-label={isMuted ? "Unmute" : "Mute"}
           >
             {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
           </button>
           <button
             onClick={toggleFullscreen}
-            className="text-white/50 hover:text-white transition-colors"
+            className="text-fg-muted hover:text-foreground transition-colors"
             aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
           >
             {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
@@ -1413,7 +1414,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
       <div className="flex-1 min-w-0 flex flex-col gap-2">
         <div
           ref={containerRef}
-          className={isFullscreen ? "relative bg-black h-full" : "relative flex flex-col gap-2"}
+          className={isFullscreen ? "theme-dark relative bg-black h-full" : "relative flex flex-col gap-2"}
         >
           {/* Video area — clicks inside the iframe are handled by YouTube's own controls */}
           <div
@@ -1442,28 +1443,28 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
               />
               {playerError ? (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-                  <p className="text-sm text-red-400/80 text-center px-6">{playerError}</p>
+                  <p className="text-sm text-destructive/80 text-center px-6">{playerError}</p>
                 </div>
               ) : !playerReady && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="w-6 h-6 border border-white/20 border-t-white/60 rounded-full animate-spin" />
+                  <Spinner size="md" className="border-white/20 border-t-white" />
                 </div>
               )}
               {onAngle && noCoverageMainMs !== null && (
-                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/90 px-4 text-center">
-                  <VideoOff size={22} className="text-white/40" />
-                  <p className="text-sm text-white/60">No {activeTrackName} footage at {formatTime(noCoverageMainMs)}</p>
+                <div className="theme-dark absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/90 px-4 text-center">
+                  <VideoOff size={22} className="text-fg-muted" />
+                  <p className="text-sm text-fg-secondary">No {activeTrackName} footage at {formatTime(noCoverageMainMs)}</p>
                   <div className="flex flex-wrap justify-center gap-2">
                     <button
                       onClick={() => switchTrack(MAIN_TRACK_ID)}
-                      className="px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 text-xs text-white transition-colors"
+                      className="px-3 py-1.5 rounded-md bg-surface-2 hover:bg-surface-3 text-xs text-foreground transition-colors"
                     >
-                      Watch Main here <kbd className="ml-1 font-mono text-[10px] text-white/40">1</kbd>
+                      Watch Main here <kbd className="ml-1 font-mono text-[11px] text-fg-muted">1</kbd>
                     </button>
                     {nextSpan && (
                       <button
                         onClick={() => seekAngle(activeTrackId, nextSpan.mainStartMs)}
-                        className="px-3 py-1.5 rounded-md border border-white/15 hover:border-white/30 text-xs text-white/70 hover:text-white transition-colors"
+                        className="px-3 py-1.5 rounded-md border border-border hover:border-border-strong text-xs text-fg-secondary hover:text-foreground transition-colors"
                       >
                         Next {activeTrackName} footage at {formatTime(nextSpan.mainStartMs)} →
                       </button>
@@ -1472,10 +1473,10 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                 </div>
               )}
               {onAngle && angleUnsynced && noCoverageMainMs === null && (
-                <div className="absolute top-2 inset-x-2 z-10 flex items-center gap-2 rounded-lg border border-amber-300/30 bg-black/70 px-3 py-1.5 text-xs text-amber-100">
+                <div className="theme-dark absolute top-2 inset-x-2 z-10 flex items-center gap-2 rounded-md border border-warning/30 bg-black/70 px-3 py-1.5 text-xs text-warning">
                   This stretch of {activeTrackName} isn&apos;t synced to Main, so the timeline holds here.
                   {canAnnotate && (
-                    <button onClick={() => openSync(activeTrackId)} className="ml-auto shrink-0 underline underline-offset-2 hover:text-white">
+                    <button onClick={() => openSync(activeTrackId)} className="ml-auto shrink-0 underline underline-offset-2 hover:text-foreground">
                       Sync…
                     </button>
                   )}
@@ -1491,18 +1492,18 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                 getMainMs={getMainMsNow}
                 playing={!isPaused}
                 header={
-                  <div className="flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px]">
+                  <div className="theme-dark flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px]">
                     <select
                       value={followerTrackId}
                       onChange={e => { setSplitTrackId(e.target.value); e.currentTarget.blur() }}
-                      className="bg-transparent text-white/80 focus:outline-none"
+                      className="bg-transparent text-foreground"
                       aria-label="Second angle"
                     >
                       {allTracks.filter(t => t.id !== activeTrackId).map(t => (
-                        <option key={t.id} value={t.id} className="bg-neutral-900">{t.name}</option>
+                        <option key={t.id} value={t.id} className="bg-card">{t.name}</option>
                       ))}
                     </select>
-                    <button onClick={() => setSplitTrackId(null)} className="text-white/40 hover:text-white" aria-label="Close split view">×</button>
+                    <button onClick={() => setSplitTrackId(null)} className="text-fg-muted hover:text-foreground" aria-label="Close split view">×</button>
                   </div>
                 }
               />
@@ -1524,7 +1525,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
             {(editorPoint || globalMetaSegments.length > 0 || canAnnotate) && (
               <div>
                 {!layout.editor ? (
-                  <div className="rounded-xl border border-white/10 px-3 py-1.5">
+                  <div className="rounded-xl border border-border px-3 py-1.5">
                     <SectionToggle
                       open={false}
                       label="Point timeline"
@@ -1555,13 +1556,13 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                     isPaused={isPaused}
                   />
                 ) : (
-                  <div className="flex items-center gap-2 rounded-xl border border-dashed border-white/10 px-4 py-3 text-xs text-white/35">
+                  <div className="flex items-center gap-2 rounded-xl border border-dashed border-border px-4 py-3 text-xs text-fg-muted">
                     <span className="flex-1">
                       {globalMetaSegments.length > 0
-                        ? <>Play or scrub into a tagged point (or press <kbd className="font-mono text-white/60">]</kbd>) to see its timeline.</>
+                        ? <>Play or scrub into a tagged point (or press <kbd className="font-mono text-fg-secondary">]</kbd>) to see its timeline.</>
                         : "Tag a point at its pull to start building its timeline against the film."}
                     </span>
-                    <button onClick={() => updateLayout({ editor: false })} className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-white/35 hover:text-white/70" aria-label="Hide point timeline">
+                    <button onClick={() => updateLayout({ editor: false })} className="flex items-center gap-1 text-[11px] uppercase tracking-wider text-fg-muted hover:text-foreground" aria-label="Hide point timeline">
                       <ChevronRight size={11} className="rotate-90" /> Hide
                     </button>
                   </div>
@@ -1576,25 +1577,25 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
       {!layout.sidebar && !isFullscreen && (
         <button
           onClick={() => updateLayout({ sidebar: true })}
-          className="flex items-center justify-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/45 hover:text-white hover:border-white/25 transition-colors lg:w-9 lg:self-start lg:px-0 lg:py-3 lg:[writing-mode:vertical-rl]"
+          className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs text-fg-muted hover:text-foreground hover:border-border-strong transition-colors lg:w-9 lg:self-start lg:px-0 lg:py-3 lg:[writing-mode:vertical-rl]"
           title="Show points & notes"
         >
           <PanelRightOpen size={13} className="lg:rotate-90" /> Points &amp; notes
         </button>
       )}
       {layout.sidebar && !isFullscreen && (
-        <div className="w-full lg:w-80 shrink-0 flex flex-col border border-white/10 rounded-xl overflow-hidden lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100dvh-2rem)]">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10 shrink-0">
+        <div className="w-full lg:w-80 shrink-0 flex flex-col border border-border rounded-xl overflow-hidden lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100dvh-2rem)]">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
             <span className="text-sm font-semibold">Game Film</span>
             {points.length > 0 && (
-              <span className="text-xs bg-white/10 rounded-full px-2 py-0.5 font-mono tabular-nums">
+              <span className="text-xs bg-surface-2 rounded-full px-2 py-0.5 font-mono tabular-nums">
                 {points.length} pts
               </span>
             )}
-            <span className="ml-auto text-[10px] text-white/25 font-mono">[ ] nav</span>
+            <span className="ml-auto text-[11px] text-fg-faint font-mono">[ ] nav</span>
           <button
             onClick={() => updateLayout({ sidebar: false })}
-            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-fg-muted hover:text-foreground hover:bg-surface-2 transition-colors"
             title="Hide points & notes"
           >
             <PanelRightClose size={13} /> Hide
@@ -1603,7 +1604,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
 
           <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-0.5 min-h-0 max-h-[50vh] lg:max-h-none">
             {sidebarEntries.length === 0 ? (
-              <p className="text-white/30 text-sm text-center py-6">No points or notes yet.</p>
+              <p className="text-fg-muted text-sm text-center py-6">No points or notes yet.</p>
             ) : (
               sidebarEntries.map(entry => {
                 if (entry.kind === "point") {
@@ -1624,7 +1625,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                   return (
                     <div
                       key={point.id}
-                      className={`rounded-lg border transition-colors ${isActive ? "border-white/20 bg-white/5" : "border-transparent"}`}
+                      className={`rounded-xl border transition-colors ${isActive ? "border-border-strong bg-surface" : "border-transparent"}`}
                     >
                       <div className="flex items-center">
                         <button
@@ -1632,37 +1633,37 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                           disabled={pointEvents.length === 0}
                           aria-expanded={isExpanded}
                           aria-label={`${isExpanded ? "Hide" : "Show"} events for point ${point.pointNumber}`}
-                          className="shrink-0 pl-1.5 pr-0.5 py-2 text-white/30 hover:text-white/70 disabled:opacity-0 transition-colors"
+                          className="shrink-0 pl-1.5 pr-0.5 py-2 text-fg-muted hover:text-foreground disabled:opacity-0 transition-colors"
                         >
                           <ChevronRight size={12} className={`transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                         </button>
                         <button
                           onClick={isTagged ? () => jumpToAnnotation(markerAnn!) : undefined}
                           disabled={!isTagged}
-                          className={`flex-1 min-w-0 flex items-center gap-2 pl-1 pr-3 py-2 text-left rounded-lg transition-colors ${
-                            isTagged ? "hover:bg-white/5 cursor-pointer" : "cursor-default opacity-50"
+                          className={`flex-1 min-w-0 flex items-center gap-2 pl-1 pr-3 py-2 text-left rounded-xl transition-colors ${
+                            isTagged ? "hover:bg-surface-2 cursor-pointer" : "cursor-default opacity-50"
                           }`}
                         >
                           <span
-                            className={`w-2 h-2 rounded-sm shrink-0 ${
-                              isTagged ? getPointColor(point.lineType, point.outcome) : "border border-white/20"
+                            className={`w-2 h-2 rounded-md shrink-0 ${
+                              isTagged ? getPointColor(point.lineType, point.outcome) : "border border-border-strong"
                             }`}
                           />
-                          <span className="text-xs font-mono text-white/70 shrink-0">P{point.pointNumber}</span>
-                          <span className="text-xs text-white/50">{point.lineType}-line</span>
+                          <span className="text-xs font-mono text-fg-secondary shrink-0">P{point.pointNumber}</span>
+                          <span className="text-xs text-fg-muted">{point.lineType}-line</span>
                           {point.outcome !== "IN_PROGRESS" && (
-                            <span className="text-xs text-white/40">{point.outcome}</span>
+                            <span className="text-xs text-fg-muted">{point.outcome}</span>
                           )}
-                          <span className="text-xs text-white/30 font-mono ml-auto shrink-0">
+                          <span className="text-xs text-fg-muted font-mono ml-auto shrink-0">
                             {point.voidScoreBefore}–{point.opponentScoreBefore}
                           </span>
                           {showClipBadge && (
-                            <span className="text-[9px] bg-white/10 rounded px-1 py-0.5 text-white/40 shrink-0">
+                            <span className="text-[11px] bg-surface-2 rounded-md px-1 py-0.5 text-fg-muted shrink-0">
                               Clip {clipIdx + 1}
                             </span>
                           )}
                           {isTagged && markerAnn && (
-                            <span className="text-[10px] font-mono text-purple-400/60 shrink-0">
+                            <span className="text-[11px] font-mono text-brand-text/60 shrink-0">
                               {formatTime(getGlobalMs(markerAnn))}
                             </span>
                           )}
@@ -1674,7 +1675,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                         const base = markerAnn ? getGlobalMs(markerAnn) : null
                         const ordered = [...pointEvents].sort((a, b) => offsets.get(a.id)! - offsets.get(b.id)! || a.sortOrder - b.sortOrder)
                         return (
-                          <div className="ml-6 mr-2 mb-1.5 flex flex-col border-l border-white/10">
+                          <div className="ml-6 mr-2 mb-1.5 flex flex-col border-l border-border">
                             {ordered.map(ev => {
                               const meta = POINT_EVENT_META[ev.eventType]
                               const evGlobal = base !== null ? base + offsets.get(ev.id)! : null
@@ -1684,13 +1685,13 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                                   key={ev.id}
                                   onClick={evGlobal !== null ? () => { choosePoint(point.id); seekGlobal(evGlobal) } : undefined}
                                   disabled={evGlobal === null}
-                                  className="flex items-center gap-2 pl-2.5 pr-1 py-1 text-left rounded-r hover:bg-white/5 disabled:hover:bg-transparent disabled:cursor-default transition-colors"
+                                  className="flex items-center gap-2 pl-2.5 pr-1 py-1 text-left rounded-r hover:bg-surface-2 disabled:hover:bg-transparent disabled:cursor-default transition-colors"
                                 >
                                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${meta.dot}`} />
                                   <span className={`text-xs shrink-0 ${meta.text}`}>{meta.label}</span>
-                                  {who && <span className="text-xs text-white/50 truncate">{who}</span>}
+                                  {who && <span className="text-xs text-fg-muted truncate">{who}</span>}
                                   {evGlobal !== null && (
-                                    <span className="ml-auto text-[10px] font-mono text-white/30 shrink-0">{formatTime(evGlobal)}</span>
+                                    <span className="ml-auto text-[11px] font-mono text-fg-muted shrink-0">{formatTime(evGlobal)}</span>
                                   )}
                                 </button>
                               )
@@ -1703,7 +1704,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                         <div className="px-4 pb-1.5">
                           <button
                             onClick={() => addPointTag(point)}
-                            className="text-[10px] text-white/30 hover:text-white/60 transition-colors"
+                            className="text-[11px] text-fg-muted hover:text-foreground transition-colors"
                           >
                             + Tag at {formatTime(globalMs)}
                           </button>
@@ -1714,12 +1715,12 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                         <button
                           key={ann.id}
                           onClick={() => jumpToAnnotation(ann)}
-                          className={`w-full flex items-start gap-3 px-4 py-1.5 text-left hover:bg-white/3 transition-colors rounded-b-lg ${ann.id.startsWith("temp_") ? "opacity-60" : ""}`}
+                          className={`w-full flex items-start gap-3 px-4 py-1.5 text-left hover:bg-surface-2 transition-colors rounded-b-lg ${ann.id.startsWith("temp_") ? "opacity-60" : ""}`}
                         >
-                          <span className="text-[10px] font-mono text-purple-400/50 shrink-0 mt-0.5 min-w-[36px]">
+                          <span className="text-[11px] font-mono text-brand-text/50 shrink-0 mt-0.5 min-w-[36px]">
                             {formatTime(getGlobalMs(ann))}
                           </span>
-                          <p className="text-xs text-white/60 flex-1 min-w-0">{ann.text}</p>
+                          <p className="text-xs text-fg-secondary flex-1 min-w-0">{ann.text}</p>
                         </button>
                       ))}
                     </div>
@@ -1735,17 +1736,17 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                   <button
                     key={ann.id}
                     onClick={() => jumpToAnnotation(ann)}
-                    className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border border-white/5 hover:border-white/15 hover:bg-white/3 text-left transition-colors ${isTemp ? "opacity-60" : ""}`}
+                    className={`flex items-start gap-3 px-3 py-2.5 rounded-md border border-border hover:border-border hover:bg-surface-2 text-left transition-colors ${isTemp ? "opacity-60" : ""}`}
                   >
-                    <span className="text-[10px] font-mono text-purple-400 shrink-0 mt-0.5 min-w-[36px]">
+                    <span className="text-[11px] font-mono text-brand-text shrink-0 mt-0.5 min-w-[36px]">
                       {formatTime(getGlobalMs(ann))}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white/80">{ann.text}</p>
-                      <p className="text-xs text-white/30 mt-0.5 flex items-center gap-1.5">
+                      <p className="text-sm text-foreground">{ann.text}</p>
+                      <p className="text-xs text-fg-muted mt-0.5 flex items-center gap-1.5">
                         {authorLabel(ann.authorDisplayName)}
                         {showAnnClipBadge && (
-                          <span className="text-[9px] bg-white/10 rounded px-1 py-0.5 text-white/40">
+                          <span className="text-[11px] bg-surface-2 rounded-md px-1 py-0.5 text-fg-muted">
                             Clip {annClipIdx + 1}
                           </span>
                         )}
@@ -1758,14 +1759,14 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           </div>
 
           {canAnnotate && (
-            <div className="border-t border-white/10 p-3 flex flex-col gap-2 shrink-0">
+            <div className="border-t border-border p-3 flex flex-col gap-2 shrink-0">
               {selectedPoint && (
-                <div className="flex items-center gap-2 text-xs bg-white/5 rounded-lg px-2 py-1.5">
-                  <span className={`w-2 h-2 rounded-sm shrink-0 ${getPointColor(selectedPoint.lineType, selectedPoint.outcome)}`} />
-                  <span className="text-white/60">Tagging Point {selectedPoint.pointNumber}</span>
+                <div className="flex items-center gap-2 text-xs bg-surface rounded-md px-2 py-1.5">
+                  <span className={`w-2 h-2 rounded-md shrink-0 ${getPointColor(selectedPoint.lineType, selectedPoint.outcome)}`} />
+                  <span className="text-fg-secondary">Tagging Point {selectedPoint.pointNumber}</span>
                   <button
                     onClick={() => setSelectedPointId(null)}
-                    className="ml-auto text-white/30 hover:text-white/60 transition-colors"
+                    className="ml-auto text-fg-muted hover:text-foreground transition-colors"
                   >
                     ×
                   </button>
@@ -1773,66 +1774,66 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
               )}
 
               <div className="flex gap-2 items-center">
-                <span className="text-xs text-white/30 font-mono shrink-0">{formatTime(globalMs)}</span>
+                <span className="text-xs text-fg-muted font-mono shrink-0">{formatTime(globalMs)}</span>
                 <input
                   value={newText}
                   onChange={e => setNewText(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addAnnotation() } }}
                   placeholder={selectedPoint ? `Note for Point ${selectedPoint.pointNumber}…` : "Add note…"}
                   maxLength={500}
-                  className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/20"
+                  className="flex-1 min-w-0 bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-fg-faint focus:border-border-strong"
                 />
                 <button
                   onClick={addAnnotation}
                   disabled={(!newText.trim() && !selectedPointId) || submitting}
-                  className="px-3 py-2 bg-white/10 hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm text-white transition-colors shrink-0"
+                  className="px-3 py-2 bg-surface-2 hover:bg-surface-2 disabled:opacity-40 disabled:cursor-not-allowed rounded-md text-sm text-foreground transition-colors shrink-0"
                 >
                   {selectedPoint && !newText.trim() ? "Mark" : "Add"}
                 </button>
               </div>
 
-              <div className="border-t border-white/5 my-0.5" />
+              <div className="border-t border-border my-0.5" />
 
               <button
                 onClick={() => showNewPointForm ? setShowNewPointForm(false) : openNewPointForm(points)}
-                className="text-xs text-white/40 hover:text-white/70 transition-colors text-left flex items-center gap-1"
+                className="text-xs text-fg-muted hover:text-foreground transition-colors text-left flex items-center gap-1"
               >
-                <span className="text-white/25">{showNewPointForm ? "▼" : "▶"}</span>
+                <span className="text-fg-faint">{showNewPointForm ? "▼" : "▶"}</span>
                 + New Point
               </button>
 
               {showNewPointForm && (
-                <div className="flex flex-col gap-2 bg-white/3 rounded-lg p-2.5 border border-white/8">
+                <div className="flex flex-col gap-2 bg-surface rounded-xl p-2.5 border border-border">
                   <div className="flex items-center gap-2">
-                    <label className="text-[10px] text-white/40 w-10 shrink-0">Point</label>
+                    <label className="text-[11px] text-fg-muted w-10 shrink-0">Point</label>
                     <input
                       type="number"
                       min={1}
                       value={npNumber}
                       onChange={e => setNpNumber(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-12 bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white text-center focus:outline-none focus:border-white/25"
+                      className="w-12 bg-surface border border-border rounded-md px-2 py-1 text-xs text-foreground text-center focus:border-border-strong"
                     />
-                    <span className="text-white/20 text-xs ml-auto">Void</span>
+                    <span className="text-fg-faint text-xs ml-auto">Void</span>
                     <input
                       type="number"
                       min={0}
                       value={npVoid}
                       onChange={e => setNpVoid(Math.max(0, parseInt(e.target.value) || 0))}
-                      className="w-10 bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white text-center focus:outline-none focus:border-white/25"
+                      className="w-10 bg-surface border border-border rounded-md px-2 py-1 text-xs text-foreground text-center focus:border-border-strong"
                     />
-                    <span className="text-white/20 text-xs">–</span>
+                    <span className="text-fg-faint text-xs">–</span>
                     <input
                       type="number"
                       min={0}
                       value={npOpp}
                       onChange={e => setNpOpp(Math.max(0, parseInt(e.target.value) || 0))}
-                      className="w-10 bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white text-center focus:outline-none focus:border-white/25"
+                      className="w-10 bg-surface border border-border rounded-md px-2 py-1 text-xs text-foreground text-center focus:border-border-strong"
                     />
-                    <span className="text-white/20 text-xs">Opp</span>
+                    <span className="text-fg-faint text-xs">Opp</span>
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <label className="text-[10px] text-white/40 w-10 shrink-0">Line</label>
+                    <label className="text-[11px] text-fg-muted w-10 shrink-0">Line</label>
                     <div className="flex gap-1">
                       <button onClick={() => setNpLine("O")} className={toggleBtn(npLine === "O")}>O</button>
                       <button onClick={() => setNpLine("D")} className={toggleBtn(npLine === "D")}>D</button>
@@ -1840,7 +1841,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <label className="text-[10px] text-white/40 w-10 shrink-0">Result</label>
+                    <label className="text-[11px] text-fg-muted w-10 shrink-0">Result</label>
                     <div className="flex gap-1">
                       <button onClick={() => setNpOutcome("HOLD")} className={toggleBtn(npOutcome === "HOLD")}>HOLD</button>
                       <button onClick={() => setNpOutcome("BREAK")} className={toggleBtn(npOutcome === "BREAK")}>BREAK</button>
@@ -1852,7 +1853,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                     <div className="flex flex-col gap-1">
                       <button
                         onClick={() => setShowPlayerPicker(p => !p)}
-                        className="text-[10px] text-white/35 hover:text-white/60 transition-colors text-left"
+                        className="text-[11px] text-fg-muted hover:text-foreground transition-colors text-left"
                       >
                         {showPlayerPicker ? "▼" : "▶"} Players {npPlayerIds.length > 0 ? `(${npPlayerIds.length})` : "(optional)"}
                       </button>
@@ -1871,11 +1872,11 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                                       selected ? prev.filter(id => id !== p.id) : [...prev, p.id]
                                     )
                                   }
-                                  className={`flex items-center gap-2 px-2 py-1 rounded text-xs text-left transition-colors ${selected ? "bg-white/10 text-white" : "text-white/50 hover:bg-white/5"}`}
+                                  className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs text-left transition-colors ${selected ? "bg-surface-2 text-foreground" : "text-fg-muted hover:bg-surface-2"}`}
                                 >
-                                  <span className="font-mono text-white/30 w-6 text-right">{p.number}</span>
+                                  <span className="font-mono text-fg-muted w-6 text-right">{p.number}</span>
                                   <span>{p.first_name} {p.last_name}</span>
-                                  {selected && <span className="ml-auto text-white/40">✓</span>}
+                                  {selected && <span className="ml-auto text-fg-muted">✓</span>}
                                 </button>
                               )
                             })}
@@ -1887,7 +1888,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                   <button
                     onClick={createAndTagPoint}
                     disabled={creatingPoint}
-                    className="mt-0.5 w-full py-1.5 bg-white/10 hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs text-white transition-colors"
+                    className="mt-0.5 w-full py-1.5 bg-surface-2 hover:bg-surface-2 disabled:opacity-40 disabled:cursor-not-allowed rounded-md text-xs text-foreground transition-colors"
                   >
                     {creatingPoint ? "Creating…" : `Create & Tag at ${formatTime(globalMs)}`}
                   </button>
@@ -1898,23 +1899,23 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                 <>
                   <button
                     onClick={() => setShowPointPicker(p => !p)}
-                    className="text-xs text-white/30 hover:text-white/60 transition-colors text-left"
+                    className="text-xs text-fg-muted hover:text-foreground transition-colors text-left"
                   >
                     {showPointPicker ? "↑ Hide" : "↓ Tag existing point…"}
                   </button>
                   {showPointPicker && (
-                    <div className="flex flex-col gap-0.5 max-h-36 overflow-y-auto border border-white/10 rounded-lg p-1 bg-black/40">
+                    <div className="flex flex-col gap-0.5 max-h-36 overflow-y-auto border border-border rounded-xl p-1 bg-surface">
                       {untaggedPoints.map(p => (
                         <button
                           key={p.id}
                           onClick={() => { setSelectedPointId(p.id); setShowPointPicker(false) }}
-                          className="flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left hover:bg-white/5 transition-colors"
+                          className="flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-left hover:bg-surface-2 transition-colors"
                         >
-                          <span className={`w-2 h-2 rounded-sm shrink-0 ${getPointColor(p.lineType, p.outcome)}`} />
-                          <span className="font-mono text-white/70">P{p.pointNumber}</span>
-                          <span className="text-white/40">{p.lineType}-line</span>
-                          {p.outcome !== "IN_PROGRESS" && <span className="text-white/40">{p.outcome}</span>}
-                          <span className="text-white/30 font-mono ml-auto">{p.voidScoreBefore}–{p.opponentScoreBefore}</span>
+                          <span className={`w-2 h-2 rounded-md shrink-0 ${getPointColor(p.lineType, p.outcome)}`} />
+                          <span className="font-mono text-fg-secondary">P{p.pointNumber}</span>
+                          <span className="text-fg-muted">{p.lineType}-line</span>
+                          {p.outcome !== "IN_PROGRESS" && <span className="text-fg-muted">{p.outcome}</span>}
+                          <span className="text-fg-muted font-mono ml-auto">{p.voidScoreBefore}–{p.opponentScoreBefore}</span>
                         </button>
                       ))}
                     </div>

@@ -104,7 +104,7 @@ export function Lightbox({ photos, initialIndex, onClose }: LightboxProps) {
               alt={photo.alt}
               width={photo.width ?? 1200}
               height={photo.height ?? 800}
-              className="object-contain max-h-[85vh] w-auto rounded-lg select-none"
+              className="object-contain max-h-[85vh] w-auto rounded-xl select-none"
               draggable={false}
               priority
             />

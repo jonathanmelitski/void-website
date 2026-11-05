@@ -62,12 +62,12 @@ export function DataTable<T>({
       )}
       <Table>
         <TableHeader>
-          <TableRow className="border-white/10 hover:bg-transparent">
+          <TableRow className="border-border hover:bg-transparent">
             {selectable && (
-              <TableHead className="w-8 text-white/40">
+              <TableHead className="w-8 text-fg-muted">
                 <input
                   type="checkbox"
-                  className="h-4 w-4 rounded border-white/20 bg-white/5 accent-white cursor-pointer"
+                  className="h-4 w-4 rounded-md border-border-strong bg-surface accent-white cursor-pointer"
                   checked={allSelected}
                   ref={el => { if (el) el.indeterminate = someSelected }}
                   onChange={toggleAll}
@@ -75,7 +75,7 @@ export function DataTable<T>({
               </TableHead>
             )}
             {columns.map((col, i) => (
-              <TableHead key={i} className={col.className ?? "text-white/40 font-medium"}>
+              <TableHead key={i} className={col.className ?? "text-fg-muted font-medium"}>
                 {col.header}
               </TableHead>
             ))}
@@ -83,14 +83,14 @@ export function DataTable<T>({
         </TableHeader>
         <TableBody>
           {isLoading ? (
-            <TableRow className="border-white/5 hover:bg-transparent">
-              <TableCell colSpan={colSpan} className="text-white/40 text-sm py-4">
+            <TableRow className="border-border hover:bg-transparent">
+              <TableCell colSpan={colSpan} className="text-fg-muted text-sm py-4">
                 Loading…
               </TableCell>
             </TableRow>
           ) : data.length === 0 ? (
-            <TableRow className="border-white/5 hover:bg-transparent">
-              <TableCell colSpan={colSpan} className="text-white/40 text-sm py-4">
+            <TableRow className="border-border hover:bg-transparent">
+              <TableCell colSpan={colSpan} className="text-fg-muted text-sm py-4">
                 {emptyMessage}
               </TableCell>
             </TableRow>
@@ -99,19 +99,19 @@ export function DataTable<T>({
               const key = selectable ? getRowKey!(row) : String(rowIdx)
               const isChecked = selectable && selected.has(key)
               return (
-                <TableRow key={key} className="border-white/5">
+                <TableRow key={key} className="border-border">
                   {selectable && (
                     <TableCell className="py-2.5 w-8">
                       <input
                         type="checkbox"
-                        className="h-4 w-4 rounded border-white/20 bg-white/5 accent-white cursor-pointer"
+                        className="h-4 w-4 rounded-md border-border-strong bg-surface accent-white cursor-pointer"
                         checked={isChecked}
                         onChange={() => toggleRow(key)}
                       />
                     </TableCell>
                   )}
                   {columns.map((col, colIdx) => (
-                    <TableCell key={colIdx} className={col.className ?? "text-white/80 py-2.5"}>
+                    <TableCell key={colIdx} className={col.className ?? "text-foreground py-2.5"}>
                       {col.cell ? col.cell(row) : col.accessorKey != null ? String(row[col.accessorKey] ?? "") : null}
                     </TableCell>
                   ))}

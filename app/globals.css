@@ -123,6 +123,58 @@
   }
 }
 
+
+/*
+ * Force the dark palette on a subtree that sits on video, imagery or a black scrim
+ * (fullscreen film chrome, overlays on the player) so semantic tokens stay readable
+ * in the light theme too.
+ */
+.theme-dark {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --fg-secondary: oklch(0.985 0 0 / 0.7);
+    --fg-muted: oklch(0.985 0 0 / 0.55);
+    --fg-faint: oklch(0.985 0 0 / 0.3);
+
+    --surface: oklch(1 0 0 / 0.05);
+    --surface-2: oklch(1 0 0 / 0.1);
+    --surface-3: oklch(1 0 0 / 0.2);
+
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 0.1);
+    --border-strong: oklch(1 0 0 / 0.2);
+    --input: oklch(1 0 0 / 0.15);
+    --ring: oklch(0.65 0.2 266);
+
+    --brand-text: oklch(0.75 0.14 268);
+    --success: oklch(0.79 0.17 152);
+    --warning: oklch(0.86 0.15 85);
+
+    --chart-2: oklch(0.696 0.17 162.48);
+    --chart-3: oklch(0.769 0.188 70.08);
+
+    --sidebar: oklch(0.205 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(1 0 0 / 0.1);
+    --sidebar-ring: oklch(0.65 0.2 266);
+    color-scheme: dark;
+  color: var(--foreground);
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

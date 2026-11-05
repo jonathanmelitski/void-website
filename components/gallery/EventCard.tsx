@@ -24,13 +24,13 @@ export function EventCard({ event, href }: EventCardProps) {
   if (!coverUrl) {
     return (
       <PrefetchLink href={href ?? `/gallery/${event.id}`} apiPrefetchUrls={[`/api/events/${event.id}`]} className="block group">
-        <div className="bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden">
-          <div className="relative aspect-[4/3] flex items-center justify-center text-white/40 text-sm">
+        <div className="bg-surface border border-border rounded-xl overflow-hidden transition-colors group-hover:bg-surface-2">
+          <div className="relative aspect-[4/3] flex items-center justify-center text-fg-muted text-sm">
             No cover photo
-            <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
-              <h3 className="font-bold text-lg leading-tight">{event.title}</h3>
-              <p className="text-sm text-white/80 mt-0.5">{dateLabel}</p>
-              {event.location && <p className="text-xs text-white/60 mt-0.5">{event.location}</p>}
+            <div className="absolute bottom-0 left-0 right-0 p-4 text-foreground">
+              <h3 className="font-semibold text-lg leading-tight">{event.title}</h3>
+              <p className="text-sm text-fg-secondary mt-0.5">{dateLabel}</p>
+              {event.location && <p className="text-xs text-fg-muted mt-0.5">{event.location}</p>}
             </div>
           </div>
         </div>
@@ -40,7 +40,7 @@ export function EventCard({ event, href }: EventCardProps) {
 
   return (
     <PrefetchLink href={href ?? `/gallery/${event.id}`} apiPrefetchUrls={[`/api/events/${event.id}`]} className="block group">
-      <div className="bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden">
+      <div className="bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden">
         <div className="relative aspect-[4/3] hover:scale-[1.02] transition-transform">
           <Image
             src={coverUrl}
@@ -57,10 +57,10 @@ export function EventCard({ event, href }: EventCardProps) {
           </div>
           {/* Title / date / location */}
           <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
-            <h3 className="font-bold text-lg leading-tight">{event.title}</h3>
-            <p className="text-sm text-white/80 mt-0.5">{dateLabel}</p>
+            <h3 className="font-semibold text-lg leading-tight">{event.title}</h3>
+            <p className="text-sm text-white/90 mt-0.5">{dateLabel}</p>
             {event.location && (
-              <p className="text-xs text-white/60 mt-0.5">{event.location}</p>
+              <p className="text-xs text-white/80 mt-0.5">{event.location}</p>
             )}
           </div>
         </div>

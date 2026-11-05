@@ -35,7 +35,7 @@ export default async function GalleryPage() {
 
   return (
     <div className="p-8 lg:px-16">
-      <h1 className="text-4xl font-black mb-8">Gallery</h1>
+      <h1 className="text-4xl font-display leading-none tracking-wide mb-8">Gallery</h1>
       <GalleryView events={galleryEvents} />
     </div>
   )

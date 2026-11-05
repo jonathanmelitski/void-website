@@ -50,28 +50,28 @@ function ConfirmForm() {
     <div className="flex flex-col items-center pt-24 px-4 text-left">
       <div className="w-full max-w-sm flex flex-col gap-6">
         <div>
-          <h1 className="text-4xl font-black">Check your email</h1>
-          <p className="text-white/50 mt-1 text-sm">Enter the 6-digit code sent to {email}.</p>
+          <h1 className="text-4xl font-display leading-none tracking-wide">Check your email</h1>
+          <p className="text-fg-muted mt-1 text-sm">Enter the 6-digit code sent to {email}.</p>
         </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        {notice && <p className="text-sm text-white/60">{notice}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {notice && <p className="text-sm text-fg-secondary">{notice}</p>}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="code" className="text-white/70">Confirmation code</Label>
+            <Label htmlFor="code" className="text-fg-secondary">Confirmation code</Label>
             <Input id="code" type="text" value={code} onChange={e => setCode(e.target.value)}
               placeholder="123456" required maxLength={6} autoComplete="one-time-code"
-              className="bg-white/5 border-white/10 text-white placeholder:text-white/20 tracking-widest text-center text-lg" />
+              className="bg-surface border-border text-foreground placeholder:text-fg-faint tracking-widest text-center text-lg" />
           </div>
           <Button type="submit" disabled={isLoading}>
             {isLoading ? "Confirming…" : "Confirm account"}
           </Button>
         </form>
 
-        <div className="flex gap-5 text-sm text-white/40">
-          <button type="button" onClick={handleResend} className="hover:text-white transition-colors">Resend code</button>
-          <Link href="/live/login" className="hover:text-white transition-colors">Back to sign in</Link>
+        <div className="flex gap-5 text-sm text-fg-muted">
+          <button type="button" onClick={handleResend} className="hover:text-foreground transition-colors">Resend code</button>
+          <Link href="/live/login" className="hover:text-foreground transition-colors">Back to sign in</Link>
         </div>
       </div>
     </div>

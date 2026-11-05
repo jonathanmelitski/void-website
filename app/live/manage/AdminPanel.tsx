@@ -15,6 +15,7 @@ import { DataTable, ColumnDef } from "@/components/ui/data-table"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { SimpleEditor } from "@/components/tiptap-templates/simple/simple-editor"
 import type { Editor } from "@tiptap/react"
+import { Spinner } from "@/components/ui/spinner"
 
 type UserRow = { username: string; email: string; enabled: boolean; status: string; role: string }
 
@@ -204,7 +205,7 @@ export function AdminPanel() {
     {
       header: "Status",
       cell: u => (
-        <Badge variant="outline" className="text-xs text-white/40 border-white/10">{u.status}</Badge>
+        <Badge variant="outline" className="text-xs text-fg-muted border-border">{u.status}</Badge>
       ),
     },
     {
@@ -213,7 +214,7 @@ export function AdminPanel() {
         <div className="flex items-center gap-2">
           <Badge variant={ROLE_VARIANT[u.role] ?? "outline"}>{u.role}</Badge>
           <Select value={u.role} onValueChange={role => handleRoleChange(u.username, role)}>
-            <SelectTrigger size="sm" className="w-24 bg-white/5 border-white/10 text-white">
+            <SelectTrigger size="sm" className="w-24 bg-surface border-border text-foreground">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -227,13 +228,13 @@ export function AdminPanel() {
     },
   ]
 
-  if (error) return <p className="text-sm text-red-400">{error}</p>
+  if (error) return <p className="text-sm text-destructive">{error}</p>
 
   return (
     <div className="flex flex-col gap-4 text-left">
       {/* Invite controls */}
       <div className="flex flex-col gap-2">
-        <Label className="text-sm text-white/60">Invite user</Label>
+        <Label className="text-sm text-fg-secondary">Invite user</Label>
         <div className="flex items-center gap-2 flex-wrap">
           <Input
             type="email"
@@ -241,10 +242,10 @@ export function AdminPanel() {
             value={inviteEmail}
             onChange={e => setInviteEmail(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") handleInvite() }}
-            className="bg-white/5 border-white/10 text-white placeholder:text-white/30 max-w-xs"
+            className="bg-surface border-border text-foreground placeholder:text-fg-faint max-w-xs"
           />
           <Select value={inviteRole} onValueChange={setInviteRole}>
-            <SelectTrigger size="sm" className="w-28 bg-white/5 border-white/10 text-white">
+            <SelectTrigger size="sm" className="w-28 bg-surface border-border text-foreground">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -259,11 +260,11 @@ export function AdminPanel() {
           <Button size="sm" variant="outline" onClick={() => setBulkOpen(true)}>
             Bulk invite
           </Button>
-          <Button size="sm" variant="ghost" className="text-white/40 hover:text-white/70" onClick={openTemplateDialog}>
+          <Button size="sm" variant="ghost" className="text-fg-muted hover:text-foreground" onClick={openTemplateDialog}>
             Customize email
           </Button>
         </div>
-        {inviteError && <p className="text-xs text-red-400">{inviteError}</p>}
+        {inviteError && <p className="text-xs text-destructive">{inviteError}</p>}
       </div>
 
       <DataTable
@@ -277,7 +278,7 @@ export function AdminPanel() {
           if (selectedRows.length === 0) return null
           return (
             <div className="flex items-center gap-3">
-              <span className="text-sm text-white/50">{selectedRows.length} selected</span>
+              <span className="text-sm text-fg-muted">{selectedRows.length} selected</span>
               <Button size="sm" variant="destructive" onClick={() => setDeleteTarget(selectedRows)}>
                 Delete
               </Button>
@@ -304,14 +305,14 @@ export function AdminPanel() {
 
           {bulkSummary ? (
             <div className="flex flex-col gap-3 text-sm">
-              <p className="text-white/80">
+              <p className="text-foreground">
                 {bulkSummary.succeeded.length} invited
                 {bulkSummary.failed.length > 0 && `, ${bulkSummary.failed.length} failed`}
               </p>
               {bulkSummary.failed.length > 0 && (
                 <ul className="flex flex-col gap-1">
                   {bulkSummary.failed.map(f => (
-                    <li key={f.email} className="text-red-400">
+                    <li key={f.email} className="text-destructive">
                       {f.email ? `${f.email}: ` : ""}{f.error}
                     </li>
                   ))}
@@ -324,18 +325,18 @@ export function AdminPanel() {
           ) : (
             <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
-                <Label className="text-sm text-white/60">Emails</Label>
+                <Label className="text-sm text-fg-secondary">Emails</Label>
                 <textarea
-                  className="min-h-32 w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-white/20 resize-none"
+                  className="min-h-32 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-fg-faint resize-none"
                   placeholder="One email per line, or comma-separated"
                   value={bulkText}
                   onChange={e => setBulkText(e.target.value)}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-sm text-white/60">Role</Label>
+                <Label className="text-sm text-fg-secondary">Role</Label>
                 <Select value={bulkRole} onValueChange={setBulkRole}>
-                  <SelectTrigger className="bg-white/5 border-white/10 text-white w-32">
+                  <SelectTrigger className="bg-surface border-border text-foreground w-32">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -365,13 +366,13 @@ export function AdminPanel() {
 
           {isTemplateLoading ? (
             <div className="flex items-center justify-center py-12">
-              <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+              <Spinner size="md" />
             </div>
           ) : (
             <div className="flex flex-col gap-5 px-6 py-5 overflow-y-auto flex-1 min-h-0">
               {/* Placeholders legend */}
               <div className="flex flex-wrap gap-2 items-center">
-                <span className="text-xs text-white/40">Available placeholders:</span>
+                <span className="text-xs text-fg-muted">Available placeholders:</span>
                 {[
                   { tag: "{username}", desc: "recipient email" },
                   { tag: "{####}", desc: "temporary password" },
@@ -379,7 +380,7 @@ export function AdminPanel() {
                   <span
                     key={p.tag}
                     title={p.desc}
-                    className="font-mono text-xs px-2 py-0.5 rounded bg-white/[0.06] border border-white/10 text-white/70 cursor-default select-all"
+                    className="font-mono text-xs px-2 py-0.5 rounded-md bg-surface border border-border text-fg-secondary cursor-default select-all"
                   >
                     {p.tag}
                   </span>
@@ -388,21 +389,21 @@ export function AdminPanel() {
 
               {/* Subject */}
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs text-white/50">Subject</Label>
+                <Label className="text-xs text-fg-muted">Subject</Label>
                 <Input
                   value={templateSubject}
                   onChange={e => setTemplateSubject(e.target.value)}
                   placeholder="You're invited to Void Live"
-                  className="bg-white/5 border-white/10 text-white placeholder:text-white/20"
+                  className="bg-surface border-border text-foreground placeholder:text-fg-faint"
                 />
               </div>
 
               {/* Body */}
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs text-white/50">
-                  Body <span className="text-white/25 font-normal">— must include {"{username}"} and {"{####}"}</span>
+                <Label className="text-xs text-fg-muted">
+                  Body <span className="text-fg-faint font-normal">— must include {"{username}"} and {"{####}"}</span>
                 </Label>
-                <div className="rounded-lg border border-white/10 overflow-hidden">
+                <div className="rounded-xl border border-border overflow-hidden">
                   <SimpleEditor
                     key={templateBody}
                     initialContent={templateBody}
@@ -412,12 +413,12 @@ export function AdminPanel() {
                 </div>
               </div>
 
-              {templateError && <p className="text-xs text-red-400">{templateError}</p>}
+              {templateError && <p className="text-xs text-destructive">{templateError}</p>}
             </div>
           )}
 
-          <div className="px-6 pb-6 pt-3 flex items-center justify-between shrink-0 border-t border-white/10">
-            <span className="text-xs text-white/30">
+          <div className="px-6 pb-6 pt-3 flex items-center justify-between shrink-0 border-t border-border">
+            <span className="text-xs text-fg-muted">
               {templateSaved ? "Saved" : "Changes will apply to all future invites"}
             </span>
             <div className="flex gap-2">

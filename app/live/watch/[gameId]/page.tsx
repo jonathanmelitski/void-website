@@ -7,6 +7,7 @@ import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { LiveGameMessage } from "@/lib/live-types"
+import { Spinner } from "@/components/ui/spinner"
 
 // --- Connection status ---
 type ConnStatus = "connecting" | "connected" | "reconnecting" | "polling" | "final"
@@ -26,14 +27,14 @@ const EVENT_LABELS: Record<PointEventType, string> = {
 }
 
 const EVENT_COLORS: Record<PointEventType, string> = {
-  GOAL: "text-green-400",
-  ASSIST: "text-blue-400",
-  TURNOVER: "text-red-400",
-  BLOCK: "text-yellow-400",
-  PULL: "text-white/40",
-  PULL_FINISHED: "text-cyan-400",
-  SUBSTITUTION: "text-purple-400",
-  TIMEOUT: "text-orange-400",
+  GOAL: "text-success",
+  ASSIST: "text-brand-text",
+  TURNOVER: "text-destructive",
+  BLOCK: "text-warning",
+  PULL: "text-fg-muted",
+  PULL_FINISHED: "text-brand-text",
+  SUBSTITUTION: "text-brand-text",
+  TIMEOUT: "text-warning",
 }
 
 // Possession is determined by line type at the start of the point
@@ -253,18 +254,18 @@ export default function LiveWatchPage() {
     : []
 
   const STATUS_INDICATOR: Record<ConnStatus, { label: string; color: string; pulse: boolean }> = {
-    connecting:   { label: "Connecting…",   color: "text-white/30", pulse: false },
-    connected:    { label: "Live",           color: "text-green-400", pulse: true },
-    reconnecting: { label: "Reconnecting…", color: "text-white/40", pulse: false },
-    polling:      { label: "Live",           color: "text-yellow-400", pulse: true },
-    final:        { label: "Final",          color: "text-white/50", pulse: false },
+    connecting:   { label: "Connecting…",   color: "text-fg-muted", pulse: false },
+    connected:    { label: "Live",           color: "text-success", pulse: true },
+    reconnecting: { label: "Reconnecting…", color: "text-fg-muted", pulse: false },
+    polling:      { label: "Live",           color: "text-warning", pulse: true },
+    final:        { label: "Final",          color: "text-fg-muted", pulse: false },
   }
   const si = STATUS_INDICATOR[connStatus]
 
   if (!game && (connStatus === "connecting" || connStatus === "reconnecting")) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+      <div className="flex items-center justify-center min-h-[50dvh]">
+        <Spinner size="md" />
       </div>
     )
   }
@@ -272,7 +273,7 @@ export default function LiveWatchPage() {
   if (!game) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3">
-        <p className="text-white/40 text-sm">Game not found or not yet started.</p>
+        <p className="text-fg-muted text-sm">Game not found or not yet started.</p>
       </div>
     )
   }
@@ -292,25 +293,25 @@ export default function LiveWatchPage() {
             )}
             {si.label}
           </span>
-          <span className="text-white/20 text-xs">·</span>
-          <span className="text-white/60 text-sm font-medium">VOID vs. {game.opponent}</span>
-          {game.round && <span className="text-white/30 text-xs">{game.round}</span>}
+          <span className="text-fg-faint text-xs">·</span>
+          <span className="text-fg-secondary text-sm font-medium">VOID vs. {game.opponent}</span>
+          {game.round && <span className="text-fg-muted text-xs">{game.round}</span>}
         </div>
-        <span className="text-white/25 text-xs">Cap {game.cap}</span>
+        <span className="text-fg-faint text-xs">Cap {game.cap}</span>
       </div>
 
       {/* Score */}
       <div className="flex items-center justify-center gap-8 py-4 mb-4">
         <div className="flex flex-col items-center gap-1">
-          <span className="text-white/40 text-xs font-medium tracking-widest uppercase">VOID</span>
-          <span className={`text-7xl font-black font-mono transition-transform duration-300 ${scorePulse === "VOID" ? "scale-125 text-green-400" : "text-white"}`}>
+          <span className="text-fg-muted text-xs font-medium tracking-widest uppercase">VOID</span>
+          <span className={`text-7xl font-bold font-mono transition-transform duration-300 ${scorePulse === "VOID" ? "scale-125 text-success" : "text-foreground"}`}>
             {game.scoreVoid}
           </span>
         </div>
-        <span className="text-white/20 text-3xl font-thin">–</span>
+        <span className="text-fg-faint text-3xl font-thin">–</span>
         <div className="flex flex-col items-center gap-1">
-          <span className="text-white/40 text-xs font-medium tracking-widest uppercase">{game.opponent}</span>
-          <span className={`text-7xl font-black font-mono transition-transform duration-300 ${scorePulse === "OPP" ? "scale-125 text-green-400" : "text-white"}`}>
+          <span className="text-fg-muted text-xs font-medium tracking-widest uppercase">{game.opponent}</span>
+          <span className={`text-7xl font-bold font-mono transition-transform duration-300 ${scorePulse === "OPP" ? "scale-125 text-success" : "text-foreground"}`}>
             {game.scoreOpponent}
           </span>
         </div>
@@ -328,10 +329,10 @@ export default function LiveWatchPage() {
 
       {/* Active point info */}
       {activePoint && (
-        <div className="flex items-center gap-2 mt-3 px-1 text-xs text-white/40">
+        <div className="flex items-center gap-2 mt-3 px-1 text-xs text-fg-muted">
           <span>P{activePoint.pointNumber}</span>
           <span>·</span>
-          <span className={activePoint.lineType === "O" ? "text-blue-400/70" : "text-orange-400/70"}>
+          <span className={activePoint.lineType === "O" ? "text-brand-text/70" : "text-warning/70"}>
             {activePoint.lineType}-line
           </span>
           {activeLinePlayers.length > 0 && (
@@ -346,24 +347,24 @@ export default function LiveWatchPage() {
       {/* Event log */}
       {recentEvents.length > 0 && (
         <section className="mt-6">
-          <h2 className="text-xs font-medium text-white/30 uppercase tracking-widest mb-3">Play by Play</h2>
+          <h2 className="text-xs font-medium text-fg-muted uppercase tracking-widest mb-3">Play by Play</h2>
           <div className="flex flex-col gap-1.5">
             {recentEvents.map((ev, i) => {
               const point = points.find(p => p.id === ev.pointId)
               return (
                 <div
                   key={ev.id}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    i === 0 ? "bg-white/5 border border-white/10" : ""
+                  className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                    i === 0 ? "bg-surface border border-border" : ""
                   }`}
                 >
                   {point && (
-                    <span className="text-white/20 font-mono text-xs w-5 shrink-0">P{point.pointNumber}</span>
+                    <span className="text-fg-faint font-mono text-xs w-5 shrink-0">P{point.pointNumber}</span>
                   )}
                   <span className={`font-medium shrink-0 ${EVENT_COLORS[ev.eventType]}`}>
                     {EVENT_LABELS[ev.eventType]}
                   </span>
-                  <span className="text-white/60 truncate">
+                  <span className="text-fg-secondary truncate">
                     {ev.eventType === "TIMEOUT"
                       ? (ev.team === "VOID" ? "VOID" : "Opp")
                       : ev.eventType === "SUBSTITUTION"
@@ -380,7 +381,7 @@ export default function LiveWatchPage() {
       {/* Completed points summary */}
       {completedPoints.length > 0 && (
         <section className="mt-6">
-          <h2 className="text-xs font-medium text-white/30 uppercase tracking-widest mb-3">Points</h2>
+          <h2 className="text-xs font-medium text-fg-muted uppercase tracking-widest mb-3">Points</h2>
           <div className="flex flex-wrap gap-1.5">
             {completedPoints.map(point => {
               const voidScored =
@@ -390,10 +391,10 @@ export default function LiveWatchPage() {
                 <span
                   key={point.id}
                   title={`P${point.pointNumber}: ${point.outcome} (${point.lineType}-line)`}
-                  className={`text-xs px-2 py-0.5 rounded font-mono ${
+                  className={`text-xs px-2 py-0.5 rounded-md font-mono ${
                     voidScored
-                      ? "bg-green-400/15 text-green-400"
-                      : "bg-red-400/15 text-red-400"
+                      ? "bg-success/15 text-success"
+                      : "bg-destructive/15 text-destructive"
                   }`}
                 >
                   P{point.pointNumber}
@@ -406,15 +407,15 @@ export default function LiveWatchPage() {
 
       {/* Final banner */}
       {game.status === "FINAL" && (
-        <div className="mt-8 border border-white/10 rounded-xl px-6 py-5 text-center">
-          <p className={`text-2xl font-black ${
-            game.result === "WIN" ? "text-green-400" :
-            game.result === "LOSS" ? "text-red-400" :
-            "text-yellow-400"
+        <div className="mt-8 border border-border rounded-xl px-6 py-5 text-center">
+          <p className={`text-2xl font-display leading-none tracking-wide ${
+            game.result === "WIN" ? "text-success" :
+            game.result === "LOSS" ? "text-destructive" :
+            "text-warning"
           }`}>
             {game.result === "WIN" ? "VOID Wins" : game.result === "LOSS" ? `${game.opponent} Wins` : "Tie"}
           </p>
-          <p className="text-white/40 text-sm mt-1">Final · {game.scoreVoid} – {game.scoreOpponent}</p>
+          <p className="text-fg-muted text-sm mt-1">Final · {game.scoreVoid} – {game.scoreOpponent}</p>
         </div>
       )}
     </div>
@@ -463,30 +464,30 @@ function FieldView({
         }
       `}</style>
 
-      <div className="relative w-full rounded-xl overflow-hidden border border-white/10" style={{ aspectRatio: "2.5 / 1" }}>
+      <div className="relative w-full rounded-xl overflow-hidden border border-border" style={{ aspectRatio: "2.5 / 1" }}>
         {/* Field base */}
         <div className="absolute inset-0 bg-[#1a2e1a]" />
 
         <div className="absolute inset-0 flex">
           {/* Left end zone */}
-          <div className={`relative w-[20%] border-r border-white/20 flex flex-col items-center justify-center gap-1 transition-colors duration-300 ${
-            flashEZ === "LEFT" ? "bg-green-400/40" : leftIsAttack ? "bg-green-400/5" : "bg-white/3"
+          <div className={`relative w-[20%] border-r border-border-strong flex flex-col items-center justify-center gap-1 transition-colors duration-300 ${
+            flashEZ === "LEFT" ? "bg-success/40" : leftIsAttack ? "bg-success/5" : "bg-surface"
           }`}>
-            <span className="text-white/50 text-[10px] font-bold tracking-wider rotate-[-90deg] select-none whitespace-nowrap">VOID</span>
+            <span className="text-fg-muted text-[11px] font-bold tracking-wider rotate-[-90deg] select-none whitespace-nowrap">VOID</span>
             {isActive && (
-              <span className={`absolute bottom-2 text-[8px] font-bold tracking-widest whitespace-nowrap ${
-                leftIsAttack ? "text-green-400/60" : "text-white/25"
+              <span className={`absolute bottom-2 text-[11px] font-bold tracking-widest whitespace-nowrap ${
+                leftIsAttack ? "text-success/60" : "text-fg-faint"
               }`}>
                 {leftIsAttack ? "ATTACK" : "DEFEND"}
               </span>
             )}
-            {flashEZ === "LEFT" && <div className="absolute inset-0 bg-green-400/20 animate-ping" />}
+            {flashEZ === "LEFT" && <div className="absolute inset-0 bg-success/20 animate-ping" />}
           </div>
 
           {/* Main field */}
           <div className="relative flex-1">
             {/* Center line */}
-            <div className="absolute inset-y-0 left-1/2 w-px bg-white/10" />
+            <div className="absolute inset-y-0 left-1/2 w-px bg-surface-2" />
 
             {/* Flowing direction arrows */}
             {isActive && (
@@ -494,7 +495,7 @@ function FieldView({
                 {[0, 1, 2, 3, 4, 5, 6, 7].map(i => (
                   <span
                     key={i}
-                    className="absolute select-none text-white/25 font-light"
+                    className="absolute select-none text-fg-faint font-light"
                     style={{
                       fontSize: "18px",
                       left: `${3 + i * 13}%`,
@@ -513,10 +514,10 @@ function FieldView({
                 {/* Row: players set the height, badge centers within it */}
                 <div className="absolute left-0 right-0 top-2 flex justify-center gap-1 z-10">
                   {/* Badge: vertically centered within the player row */}
-                  <div className={`absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold tracking-widest uppercase px-1.5 py-0.5 rounded ${
+                  <div className={`absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-bold tracking-widest uppercase px-1.5 py-0.5 rounded-md ${
                     voidOnOffense
-                      ? "text-green-400 bg-green-400/15 border border-green-400/25"
-                      : "text-white/35 bg-white/5 border border-white/10"
+                      ? "text-success bg-success/15 border border-success/25"
+                      : "text-fg-muted bg-surface border border-border"
                   }`}>
                     {voidOnOffense ? "O-line" : "D-line"}
                   </div>
@@ -524,7 +525,7 @@ function FieldView({
                     <div
                       key={p.id}
                       title={`${p.first_name} ${p.last_name}`}
-                      className="w-8 h-8 rounded-full flex items-center justify-center border text-[11px] font-bold transition-all duration-500 border-transparent text-white"
+                      className="w-8 h-8 rounded-full flex items-center justify-center border text-[11px] font-bold transition-all duration-500 border-transparent text-foreground"
                       style={{ backgroundColor: "rgb(60, 21, 97)", boxShadow: "0 2px 8px rgba(0,0,0,0.6)" }}
                     >
                       {p.number}
@@ -537,20 +538,20 @@ function FieldView({
           </div>
 
           {/* Right end zone */}
-          <div className={`relative w-[20%] border-l border-white/20 flex flex-col items-center justify-center transition-colors duration-300 ${
-            flashEZ === "RIGHT" ? "bg-green-400/40" : rightIsAttack ? "bg-green-400/5" : "bg-white/3"
+          <div className={`relative w-[20%] border-l border-border-strong flex flex-col items-center justify-center transition-colors duration-300 ${
+            flashEZ === "RIGHT" ? "bg-success/40" : rightIsAttack ? "bg-success/5" : "bg-surface"
           }`}>
-            <span className="text-white/50 text-[10px] font-bold tracking-wider rotate-[90deg] select-none truncate max-w-[60px]">
+            <span className="text-fg-muted text-[11px] font-bold tracking-wider rotate-[90deg] select-none truncate max-w-[60px]">
               {opponent.toUpperCase()}
             </span>
             {isActive && (
-              <span className={`absolute bottom-2 text-[8px] font-bold tracking-widest whitespace-nowrap ${
-                rightIsAttack ? "text-green-400/60" : "text-white/25"
+              <span className={`absolute bottom-2 text-[11px] font-bold tracking-widest whitespace-nowrap ${
+                rightIsAttack ? "text-success/60" : "text-fg-faint"
               }`}>
                 {rightIsAttack ? "ATTACK" : "DEFEND"}
               </span>
             )}
-            {flashEZ === "RIGHT" && <div className="absolute inset-0 bg-green-400/20 animate-ping" />}
+            {flashEZ === "RIGHT" && <div className="absolute inset-0 bg-success/20 animate-ping" />}
           </div>
         </div>
       </div>

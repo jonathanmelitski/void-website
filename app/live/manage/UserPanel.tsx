@@ -43,11 +43,11 @@ export function UserPanel() {
   return (
     <div className="flex flex-col gap-5 text-left">
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Event</Label>
+        <Label className="text-fg-secondary">Event</Label>
         <select
           value={selectedEventId}
           onChange={e => setSelectedEventId(e.target.value)}
-          className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-sm text-white"
+          className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-foreground"
         >
           <option value="">— choose an event —</option>
           {events.map(ev => <option key={ev.id} value={ev.id}>{ev.title}</option>)}
@@ -55,18 +55,18 @@ export function UserPanel() {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Photo</Label>
+        <Label className="text-fg-secondary">Photo</Label>
         <input
           type="file"
           accept="image/*"
           onChange={e => { setFile(e.target.files?.[0] ?? null); setStatus("idle"); setMessage("") }}
-          className="text-sm text-white/60 file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-sm file:text-white hover:file:bg-white/20"
+          className="text-sm text-fg-secondary file:mr-3 file:rounded-md file:border-0 file:bg-surface-2 file:px-3 file:py-1 file:text-sm file:text-foreground hover:file:bg-surface-3"
         />
       </div>
 
-      {status === "uploading" && <p className="text-sm text-white/50">Uploading…</p>}
-      {status === "done" && <p className="text-sm text-green-400">{message}</p>}
-      {status === "error" && <p className="text-sm text-red-400">{message}</p>}
+      {status === "uploading" && <p className="text-sm text-fg-muted">Uploading…</p>}
+      {status === "done" && <p className="text-sm text-success">{message}</p>}
+      {status === "error" && <p className="text-sm text-destructive">{message}</p>}
 
       <Button onClick={handleUpload} disabled={status === "uploading" || !file || !selectedEventId} className="w-fit">
         Upload photo

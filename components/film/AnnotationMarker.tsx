@@ -25,8 +25,8 @@ export function AnnotationMarker({ annotation, durationMs, onSeek, pointData }: 
 
   const isPointMarker = !!pointData
   const dotColor = isPointMarker
-    ? (POINT_DOT_COLORS[`${pointData.lineType}-${pointData.outcome}`] ?? "bg-white/50")
-    : "bg-purple-400"
+    ? (POINT_DOT_COLORS[`${pointData.lineType}-${pointData.outcome}`] ?? "bg-foreground/50")
+    : "bg-brand"
 
   const tooltipText = isPointMarker
     ? `Point ${pointData.pointNumber} · ${pointData.lineType}-line · ${pointData.voidScoreBefore}–${pointData.opponentScoreBefore}${annotation.text ? `\n${annotation.text}` : ""}`
@@ -34,7 +34,7 @@ export function AnnotationMarker({ annotation, durationMs, onSeek, pointData }: 
 
   return (
     <button
-      className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 border border-white/40 hover:scale-150 transition-transform z-10 focus:outline-none ${dotColor} ${isPointMarker ? "w-3 h-3 rounded-sm" : "w-2.5 h-2.5 rounded-full"}`}
+      className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 border border-border-strong hover:scale-150 transition-transform z-10 ${dotColor} ${isPointMarker ? "w-3 h-3 rounded-sm" : "w-2.5 h-2.5 rounded-full"}`}
       style={{ left: `${pct}%` }}
       onClick={e => { e.stopPropagation(); onSeek(annotation.videoTimestampMs) }}
       onMouseEnter={() => setShowTooltip(true)}
@@ -42,15 +42,15 @@ export function AnnotationMarker({ annotation, durationMs, onSeek, pointData }: 
       title={tooltipText}
     >
       {showTooltip && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-black/90 border border-white/10 rounded-lg px-2 py-1.5 text-left pointer-events-none z-20">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-black/90 border border-white/10 rounded-md px-2 py-1.5 text-left pointer-events-none z-20">
           {isPointMarker && (
-            <p className="text-[10px] font-mono text-white/50 mb-0.5">
+            <p className="text-[11px] font-mono text-white/70 mb-0.5">
               Point {pointData.pointNumber} · {pointData.lineType} · {pointData.voidScoreBefore}–{pointData.opponentScoreBefore}
             </p>
           )}
           {annotation.text && <p className="text-xs text-white/80 line-clamp-2">{annotation.text}</p>}
           {!isPointMarker && authorLabel(annotation.authorDisplayName) && (
-            <p className="text-[10px] text-white/40 mt-0.5">{authorLabel(annotation.authorDisplayName)}</p>
+            <p className="text-[11px] text-white/70 mt-0.5">{authorLabel(annotation.authorDisplayName)}</p>
           )}
         </div>
       )}

@@ -10,6 +10,7 @@ import { useFilmClips } from "@/hooks/use-film-clips"
 import type { GameItem } from "@/lib/aws/games"
 import type { FilmClipItem } from "@/lib/aws/film-clips"
 import type { FilmAnnotationItem } from "@/lib/aws/film-annotations"
+import { Spinner } from "@/components/ui/spinner"
 
 const FilmViewer = dynamic(
   () => import("@/components/film/FilmViewer").then(m => m.FilmViewer),
@@ -17,9 +18,9 @@ const FilmViewer = dynamic(
 )
 
 const RESULT_COLORS: Record<string, string> = {
-  WIN: "text-green-400",
-  LOSS: "text-red-400",
-  TIE: "text-yellow-400",
+  WIN: "text-success",
+  LOSS: "text-destructive",
+  TIE: "text-warning",
 }
 
 function GameRow({ game, eventId }: { game: GameItem; eventId: string }) {
@@ -37,33 +38,33 @@ function GameRow({ game, eventId }: { game: GameItem; eventId: string }) {
     <button
       onClick={() => router.push(href)}
       onMouseEnter={handleMouseEnter}
-      className="flex items-center gap-4 px-4 py-3 rounded-lg border border-white/10 hover:border-white/20 hover:bg-white/3 transition-colors text-left group"
+      className="flex items-center gap-4 px-4 py-3 rounded-xl border border-border hover:border-border-strong hover:bg-surface-2 transition-colors text-left group"
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm">vs {game.opponent}</span>
-          {game.round && <span className="text-white/30 text-xs">{game.round}</span>}
+          {game.round && <span className="text-fg-muted text-xs">{game.round}</span>}
         </div>
       </div>
       <div className="flex items-center gap-3 shrink-0">
         {game.status !== "SCHEDULED" && (
           <span className="font-mono text-sm">
-            <span className={game.result === "WIN" ? "text-green-400" : game.result === "LOSS" ? "text-red-400" : ""}>{game.scoreVoid}</span>
+            <span className={game.result === "WIN" ? "text-success" : game.result === "LOSS" ? "text-destructive" : ""}>{game.scoreVoid}</span>
             {" – "}
-            <span className={game.result === "LOSS" ? "text-green-400" : game.result === "WIN" ? "text-red-400" : ""}>{game.scoreOpponent}</span>
+            <span className={game.result === "LOSS" ? "text-success" : game.result === "WIN" ? "text-destructive" : ""}>{game.scoreOpponent}</span>
           </span>
         )}
         {game.result && (
           <span className={`text-xs font-bold ${RESULT_COLORS[game.result] ?? ""}`}>{game.result}</span>
         )}
         {game.status === "SCHEDULED" && (
-          <span className="text-white/30 text-xs">Scheduled</span>
+          <span className="text-fg-muted text-xs">Scheduled</span>
         )}
         {game.status === "IN_PROGRESS" && (
-          <span className="text-yellow-400/70 text-xs font-medium">Live</span>
+          <span className="text-warning/70 text-xs font-medium">Live</span>
         )}
       </div>
-      <span className="text-white/20 group-hover:text-white/40 text-xs transition-colors">→</span>
+      <span className="text-fg-faint group-hover:text-foreground text-xs transition-colors">→</span>
     </button>
   )
 }
@@ -108,7 +109,7 @@ function GameClipList({
   }
 
   if (loading) {
-    return <div className="w-3 h-3 border border-white/20 border-t-white/60 rounded-full animate-spin ml-1" />
+    return <Spinner size="xs" className="ml-1" />
   }
 
   const readyCount = clips.filter(c => c.status === "READY").length
@@ -116,24 +117,24 @@ function GameClipList({
   return (
     <div className="flex flex-col gap-2">
       {clips.length === 0 && !isCoachOrAdmin && (
-        <p className="text-white/30 text-xs pl-1">No film for this game.</p>
+        <p className="text-fg-muted text-xs pl-1">No film for this game.</p>
       )}
       {readyCount > 0 && (
         <button
           onClick={handleWatchAll}
-          className="text-xs text-white/50 hover:text-white/80 transition-colors text-left pl-1"
+          className="text-xs text-fg-muted hover:text-foreground transition-colors text-left pl-1"
         >
           Watch Game Film → {readyCount > 1 ? `(${readyCount} clips)` : ""}
         </button>
       )}
       {clips.map(clip => (
-        <div key={clip.id} className="flex flex-col gap-1.5 px-3 py-2.5 rounded-lg border border-white/10 text-sm group">
+        <div key={clip.id} className="flex flex-col gap-1.5 px-3 py-2.5 rounded-md border border-border text-sm group">
           <div className="flex items-center gap-3">
-            <span className="flex-1 text-white/80 truncate">{clip.title ?? "Game Film"}</span>
+            <span className="flex-1 text-foreground truncate">{clip.title ?? "Game Film"}</span>
             {isCoachOrAdmin && (
               <button
                 onClick={() => { if (confirm(`Delete "${clip.title ?? "Game Film"}"?`)) deleteClip(clip.id) }}
-                className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-400 transition-all text-xs p-1"
+                className="opacity-0 group-hover:opacity-100 text-fg-muted hover:text-destructive transition-all text-xs p-1"
                 aria-label="Delete clip"
               >
                 ✕
@@ -151,19 +152,19 @@ function GameClipList({
               value={importUrl}
               onChange={e => { setImportUrl(e.target.value); setImportError(null) }}
               onKeyDown={e => { if (e.key === "Enter") handleImport() }}
-              className="flex-1 min-w-0 bg-transparent border border-dashed border-white/15 hover:border-white/30 focus:border-white/30 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/40 focus:outline-none transition-colors"
+              className="flex-1 min-w-0 bg-transparent border border-dashed border-border hover:border-border-strong focus:border-border-strong rounded-md px-3 py-2 text-xs text-foreground placeholder:text-fg-faint transition-colors"
             />
             {importUrl.trim() && (
               <button
                 onClick={handleImport}
                 disabled={importing}
-                className="text-xs text-white/50 hover:text-white transition-colors px-2 disabled:opacity-50"
+                className="text-xs text-fg-muted hover:text-foreground transition-colors px-2 disabled:opacity-50"
               >
                 {importing ? "Adding…" : "Add"}
               </button>
             )}
           </div>
-          {importError && <p className="text-xs text-red-400/80 pl-1">{importError}</p>}
+          {importError && <p className="text-xs text-destructive/80 pl-1">{importError}</p>}
         </div>
       )}
     </div>
@@ -203,11 +204,11 @@ function EventFilmSection({
   }
 
   if (games === null) {
-    return <div className="w-4 h-4 border border-white/20 border-t-white/60 rounded-full animate-spin" />
+    return <Spinner size="sm" />
   }
 
   if (games.length === 0) {
-    return <p className="text-white/30 text-sm">No games logged for this event yet.</p>
+    return <p className="text-fg-muted text-sm">No games logged for this event yet.</p>
   }
 
   return (
@@ -218,10 +219,10 @@ function EventFilmSection({
             onClick={() => toggle(game.id)}
             className="flex items-center gap-2 text-sm text-left group"
           >
-            <span className="text-white/30 text-xs transition-transform" style={{ transform: expanded.has(game.id) ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
-            <span className="font-medium text-white/80 group-hover:text-white transition-colors">
+            <span className="text-fg-muted text-xs transition-transform" style={{ transform: expanded.has(game.id) ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+            <span className="font-medium text-foreground group-hover:text-foreground transition-colors">
               vs {game.opponent}
-              {game.round && <span className="text-white/40 font-normal ml-1.5">{game.round}</span>}
+              {game.round && <span className="text-fg-muted font-normal ml-1.5">{game.round}</span>}
             </span>
           </button>
           {expanded.has(game.id) && (
@@ -246,10 +247,10 @@ function GamesList({ eventId }: { eventId: string }) {
       .finally(() => setLoading(false))
   }, [eventId])
 
-  if (loading) return <div className="w-4 h-4 border border-white/20 border-t-white/60 rounded-full animate-spin" />
+  if (loading) return <Spinner size="sm" />
 
   if (games.length === 0) {
-    return <p className="text-white/30 text-sm">No games logged for this event yet.</p>
+    return <p className="text-fg-muted text-sm">No games logged for this event yet.</p>
   }
 
   const sorted = [...games].sort((a, b) => {
@@ -304,16 +305,16 @@ export default function LiveEventPage() {
 
   if (isLoading || !user) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+      <div className="flex items-center justify-center min-h-[50dvh]">
+        <Spinner size="md" />
       </div>
     )
   }
 
   if (eventLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+      <div className="flex items-center justify-center min-h-[50dvh]">
+        <Spinner size="md" />
       </div>
     )
   }
@@ -321,10 +322,10 @@ export default function LiveEventPage() {
   if (error || !event) {
     return (
       <div className="flex flex-col p-8 lg:px-16 gap-4">
-        <button onClick={() => router.push("/live")} className="text-white/40 hover:text-white/70 text-sm flex items-center gap-1 transition-colors w-fit">
+        <button onClick={() => router.push("/live")} className="text-fg-muted hover:text-foreground text-sm flex items-center gap-1 transition-colors w-fit">
           ← Back
         </button>
-        <p className="text-white/40 text-sm">{error || "Event not found."}</p>
+        <p className="text-fg-muted text-sm">{error || "Event not found."}</p>
       </div>
     )
   }
@@ -341,16 +342,16 @@ export default function LiveEventPage() {
       <div>
         <button
           onClick={() => router.push("/live")}
-          className="text-white/40 hover:text-white/70 text-sm mb-4 flex items-center gap-1 transition-colors"
+          className="text-fg-muted hover:text-foreground text-sm mb-4 flex items-center gap-1 transition-colors"
         >
           ← Back
         </button>
-        <h1 className="text-4xl font-black">{event.title}</h1>
-        <p className="text-white/50 mt-1 text-sm">
+        <h1 className="text-4xl font-display leading-none tracking-wide">{event.title}</h1>
+        <p className="text-fg-muted mt-1 text-sm">
           {dateLabel}{event.location ? ` · ${event.location}` : ""}
         </p>
         {event.description && (
-          <p className="text-white/60 text-sm mt-2 max-w-prose">{event.description}</p>
+          <p className="text-fg-secondary text-sm mt-2 max-w-prose">{event.description}</p>
         )}
       </div>
 
@@ -362,12 +363,12 @@ export default function LiveEventPage() {
             <h2 className="text-lg font-bold">Photos</h2>
             <Link
               href={`/gallery/${event.id}`}
-              className="text-sm text-white/40 hover:text-white transition-colors"
+              className="text-sm text-fg-muted hover:text-foreground transition-colors"
             >
               View gallery →
             </Link>
           </div>
-          <p className="text-white/30 text-sm">Photos uploaded for this event appear in the gallery.</p>
+          <p className="text-fg-muted text-sm">Photos uploaded for this event appear in the gallery.</p>
         </section>
 
         {/* Stats */}
@@ -390,14 +391,14 @@ export default function LiveEventPage() {
       {/* Film viewer overlay */}
       {filmViewer && (
         <div className="fixed inset-0 z-50 bg-black/90 flex flex-col">
-          <div className="flex items-center gap-4 px-6 py-4 border-b border-white/10">
+          <div className="flex items-center gap-4 px-6 py-4 border-b border-border">
             <button
               onClick={() => setFilmViewer(null)}
-              className="text-white/40 hover:text-white/70 text-sm transition-colors"
+              className="text-fg-muted hover:text-foreground text-sm transition-colors"
             >
               ← Back
             </button>
-            <span className="text-sm text-white/60">
+            <span className="text-sm text-fg-secondary">
               {filmViewer.clips.length > 1 ? `Game Film (${filmViewer.clips.length} clips)` : (filmViewer.clips[0]?.title ?? "Game Film")}
             </span>
           </div>

@@ -15,9 +15,9 @@ export function PhotoGrid({ photos, onPhotoClick }: PhotoGridProps) {
         <button
           key={photo.id}
           onClick={() => onPhotoClick(i)}
-          className="break-inside-avoid mb-4 w-full block text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg overflow-hidden"
+          className="break-inside-avoid mb-4 w-full block text-left focus-visible:ring-2 focus-visible:ring-ring rounded-xl overflow-hidden"
         >
-          <div className="relative max-h-96 overflow-hidden w-full rounded-lg">
+          <div className="relative max-h-96 overflow-hidden w-full rounded-xl">
             <Image
               src={photo.url}
               alt={photo.alt}

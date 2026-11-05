@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import type { Editor } from "@tiptap/react"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
 import { PROSE_CSS } from "@/lib/newsletter-prose-css"
+import { Spinner } from "@/components/ui/spinner"
 
 function NewsletterPreview({ newsletter }: { newsletter: NewsletterItem }) {
   const dateLabel = new Date(newsletter.date).toLocaleDateString("en-US", {
@@ -29,14 +30,14 @@ function NewsletterPreview({ newsletter }: { newsletter: NewsletterItem }) {
           <img src={coverUrl} alt={newsletter.title} className="w-full h-full object-cover object-center" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
           <div className="absolute bottom-0 inset-x-0 px-8 pb-8">
-            <h1 className="text-4xl sm:text-5xl font-black leading-tight mb-1 drop-shadow-lg">{newsletter.title}</h1>
-            <p className="text-white/60 text-sm">{dateLabel}</p>
+            <h1 className="text-4xl sm:text-5xl font-display tracking-wide leading-none mb-1 drop-shadow-lg">{newsletter.title}</h1>
+            <p className="text-fg-secondary text-sm">{dateLabel}</p>
           </div>
         </div>
       ) : (
         <div className="mb-10">
-          <h1 className="text-4xl sm:text-5xl font-black leading-tight mb-2">{newsletter.title}</h1>
-          <p className="text-white/40 text-sm">{dateLabel}</p>
+          <h1 className="text-4xl sm:text-5xl font-display tracking-wide leading-none mb-2">{newsletter.title}</h1>
+          <p className="text-fg-muted text-sm">{dateLabel}</p>
         </div>
       )}
 
@@ -45,11 +46,11 @@ function NewsletterPreview({ newsletter }: { newsletter: NewsletterItem }) {
       )}
 
       {(newsletter.entries ?? []).length > 0 && (
-        <div className="bg-white/[0.03] border border-white/10 rounded-2xl divide-y divide-white/[0.18] overflow-hidden">
+        <div className="bg-surface border border-border rounded-xl divide-y divide-white/[0.18] overflow-hidden">
           {newsletter.entries.map(entry => (
             <article key={entry.id} className="px-6 sm:px-10 py-8">
-              <h2 className="text-2xl sm:text-3xl font-black mb-1 tracking-tight">{entry.title}</h2>
-              {entry.date && <p className="text-white/35 text-xs mb-6">{entry.date}</p>}
+              <h2 className="text-2xl sm:text-3xl font-display leading-none tracking-wide mb-1">{entry.title}</h2>
+              {entry.date && <p className="text-fg-muted text-xs mb-6">{entry.date}</p>}
               <div className="tiptap-prose" dangerouslySetInnerHTML={{ __html: entry.body }} />
             </article>
           ))}
@@ -411,8 +412,8 @@ export default function ManageNewsletterPage() {
 
   if (authLoading || isLoading) {
     return (
-      <div className="flex items-center justify-center h-full p-8">
-        <div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+      <div className="flex items-center justify-center min-h-[50dvh] p-8">
+        <Spinner size="md" />
       </div>
     )
   }
@@ -420,7 +421,7 @@ export default function ManageNewsletterPage() {
   if (error || !newsletter) {
     return (
       <div className="p-8 lg:px-16">
-        <p className="text-red-400">{error || "Newsletter not found"}</p>
+        <p className="text-destructive">{error || "Newsletter not found"}</p>
       </div>
     )
   }
@@ -438,7 +439,7 @@ export default function ManageNewsletterPage() {
           <button
             onClick={handleBack}
             disabled={isFlushing}
-            className="text-white/40 hover:text-white/70 text-sm flex items-center gap-1 transition-colors disabled:opacity-50"
+            className="text-fg-muted hover:text-foreground text-sm flex items-center gap-1 transition-colors disabled:opacity-50"
           >
             {isFlushing ? "Saving…" : "← Back"}
           </button>
@@ -451,31 +452,31 @@ export default function ManageNewsletterPage() {
             if (hasError) return (
               <button
                 onClick={() => flushAllPendingSaves()}
-                className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                className="text-xs text-destructive hover:text-destructive transition-colors"
               >
                 Save failed — Retry
               </button>
             )
-            if (hasActivity) return <span className="text-xs text-white/30">Saving…</span>
-            if (hasSaved) return <span className="text-xs text-white/30">Saved ✓</span>
+            if (hasActivity) return <span className="text-xs text-fg-muted">Saving…</span>
+            if (hasSaved) return <span className="text-xs text-fg-muted">Saved ✓</span>
             return null
           })()}
         </div>
-        <h1 className="text-3xl font-black">{newsletter.title}</h1>
-        <p className="text-white/50 text-sm -mt-2">{dateLabel}</p>
+        <h1 className="text-3xl font-display leading-none tracking-wide">{newsletter.title}</h1>
+        <p className="text-fg-muted text-sm -mt-2">{dateLabel}</p>
 
         {/* Publish toggle */}
         <button
           onClick={handleTogglePublished}
           disabled={isToggling}
-          className="relative flex items-center bg-white/[0.06] border border-white/10 rounded-full p-1 gap-1 disabled:opacity-50"
+          className="relative flex items-center bg-surface border border-border rounded-full p-1 gap-1 disabled:opacity-50"
           aria-label="Toggle published state"
         >
           <span
             className={`px-4 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
               !newsletter.published
-                ? "bg-white/15 text-white"
-                : "text-white/40"
+                ? "bg-surface-2 text-foreground"
+                : "text-fg-muted"
             }`}
           >
             Draft
@@ -483,8 +484,8 @@ export default function ManageNewsletterPage() {
           <span
             className={`px-4 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
               newsletter.published
-                ? "bg-white text-black"
-                : "text-white/40"
+                ? "bg-foreground text-background"
+                : "text-fg-muted"
             }`}
           >
             {isToggling ? "…" : "Published"}
@@ -496,14 +497,14 @@ export default function ManageNewsletterPage() {
           href={`/api/newsletters/${id}/export`}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-xs text-white/30 hover:text-white/60 transition-colors"
+          className="text-xs text-fg-muted hover:text-foreground transition-colors"
         >
           Export HTML ↗
         </a>
         <div className="flex items-center gap-3">
           <button
             onClick={() => setShowSettings(s => !s)}
-            className={`text-xs transition-colors ${showSettings ? "text-white/60" : "text-white/30 hover:text-white/60"}`}
+            className={`text-xs transition-colors ${showSettings ? "text-fg-secondary" : "text-fg-muted hover:text-foreground"}`}
           >
             Settings
           </button>
@@ -512,44 +513,44 @@ export default function ManageNewsletterPage() {
 
       {/* Settings panel */}
       {showSettings && (
-        <div className="bg-white/[0.03] border border-white/10 rounded-xl p-5 flex flex-col gap-4">
+        <div className="bg-surface border border-border rounded-xl p-5 flex flex-col gap-4">
           <h2 className="text-sm font-semibold">Newsletter settings</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
-              <Label className="text-xs text-white/50">Title</Label>
+              <Label className="text-xs text-fg-muted">Title</Label>
               <Input
                 value={newsletter.title}
                 onChange={e => handleMetaChange("title", e.target.value)}
-                className="bg-white/5 border-white/10 text-white h-8 text-sm"
+                className="bg-surface border-border text-foreground h-8 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label className="text-xs text-white/50">Slug</Label>
+              <Label className="text-xs text-fg-muted">Slug</Label>
               <Input
                 value={newsletter.slug}
                 onChange={e => handleMetaChange("slug", e.target.value)}
-                className="bg-white/5 border-white/10 text-white h-8 text-sm font-mono"
+                className="bg-surface border-border text-foreground h-8 text-sm font-mono"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label className="text-xs text-white/50">Date</Label>
+              <Label className="text-xs text-fg-muted">Date</Label>
               <Input
                 type="date"
                 value={newsletter.date}
                 onChange={e => handleMetaChange("date", e.target.value)}
-                className="bg-white/5 border-white/10 text-white h-8 text-sm"
+                className="bg-surface border-border text-foreground h-8 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label className="text-xs text-white/50">Cover photo</Label>
+              <Label className="text-xs text-fg-muted">Cover photo</Label>
               {newsletter.coverPhotoKey && (
-                <p className="text-xs text-white/30 font-mono truncate">{newsletter.coverPhotoKey}</p>
+                <p className="text-xs text-fg-muted font-mono truncate">{newsletter.coverPhotoKey}</p>
               )}
               <input
                 type="file"
                 accept="image/*"
                 onChange={e => { const f = e.target.files?.[0]; if (f) handleCoverUpload(f) }}
-                className="text-xs text-white/50 file:mr-2 file:rounded file:border-0 file:bg-white/10 file:px-2 file:py-1 file:text-xs file:text-white hover:file:bg-white/20"
+                className="text-xs text-fg-muted file:mr-2 file:rounded-md file:border-0 file:bg-surface-2 file:px-2 file:py-1 file:text-xs file:text-foreground hover:file:bg-surface-3"
               />
             </div>
           </div>
@@ -557,7 +558,7 @@ export default function ManageNewsletterPage() {
       )}
 
       {/* Tab selector */}
-      <div className="flex justify-center border-b border-white/10">
+      <div className="flex justify-center border-b border-border">
         {(["edit", "preview"] as const).map(t => (
           <button
             key={t}
@@ -584,8 +585,8 @@ export default function ManageNewsletterPage() {
             }}
             className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors capitalize ${
               tab === t
-                ? "border-white text-white"
-                : "border-transparent text-white/40 hover:text-white/60"
+                ? "border-foreground text-foreground"
+                : "border-transparent text-fg-muted hover:text-foreground"
             }`}
           >
             {t}
@@ -622,12 +623,12 @@ export default function ManageNewsletterPage() {
           <div className="flex flex-col gap-3">
             <div className="text-center">
               <h2 className="text-base font-semibold">Newsletter header</h2>
-              <p className="text-white/40 text-xs mt-0.5">Displayed before entries.</p>
+              <p className="text-fg-muted text-xs mt-0.5">Displayed before entries.</p>
             </div>
 
             {/* Checkbox + picker stacked centered */}
             <div className="flex flex-col items-center gap-2">
-              <label className="flex items-center gap-2 text-sm text-white/60 cursor-pointer select-none">
+              <label className="flex items-center gap-2 text-sm text-fg-secondary cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={useSameHeader}
@@ -646,12 +647,12 @@ export default function ManageNewsletterPage() {
                       setHeaderTab("website")
                     }
                   }}
-                  className="w-3.5 h-3.5 rounded accent-white cursor-pointer"
+                  className="w-3.5 h-3.5 rounded-md accent-white cursor-pointer"
                 />
                 Use same header for email/website
               </label>
 
-              <div className={`flex items-center bg-white/[0.06] border border-white/10 rounded-full p-1 gap-1 transition-opacity duration-200 ${useSameHeader ? "opacity-30 pointer-events-none" : ""}`}>
+              <div className={`flex items-center bg-surface border border-border rounded-full p-1 gap-1 transition-opacity duration-200 ${useSameHeader ? "opacity-30 pointer-events-none" : ""}`}>
                 <button
                   onClick={() => {
                     if (emailBodyDebounceRef.current) clearTimeout(emailBodyDebounceRef.current)
@@ -659,7 +660,7 @@ export default function ManageNewsletterPage() {
                     setHeaderTab("website")
                   }}
                   className={`px-4 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
-                    headerTab === "website" ? "bg-white/15 text-white" : "text-white/40"
+                    headerTab === "website" ? "bg-surface-2 text-foreground" : "text-fg-muted"
                   }`}
                 >
                   Website
@@ -671,7 +672,7 @@ export default function ManageNewsletterPage() {
                     setHeaderTab("email")
                   }}
                   className={`px-4 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
-                    headerTab === "email" ? "bg-white/15 text-white" : "text-white/40"
+                    headerTab === "email" ? "bg-surface-2 text-foreground" : "text-fg-muted"
                   }`}
                 >
                   Email
@@ -700,11 +701,11 @@ export default function ManageNewsletterPage() {
           {/* Entries list */}
           <div className="flex flex-col gap-3">
             <h2 className="text-base font-semibold">
-              Entries <span className="text-white/30 font-normal">({newsletter.entries?.length ?? 0})</span>
+              Entries <span className="text-fg-muted font-normal">({newsletter.entries?.length ?? 0})</span>
             </h2>
 
             {(newsletter.entries ?? []).length === 0 ? (
-              <p className="text-white/40 text-sm">No entries yet.</p>
+              <p className="text-fg-muted text-sm">No entries yet.</p>
             ) : (
               <div className="flex flex-col gap-2">
                 {newsletter.entries.map((entry, i) => {
@@ -713,26 +714,26 @@ export default function ManageNewsletterPage() {
                   const isLast = i === newsletter.entries.length - 1
                   const isExpanded = editingEntryId === entry.id
                   return (
-                    <div key={entry.id} className="bg-white/[0.03] border border-white/10 rounded-lg overflow-hidden">
+                    <div key={entry.id} className="bg-surface border border-border rounded-xl overflow-hidden">
                       {/* Header row */}
                       <div className="relative flex items-center gap-3 px-4 py-3">
                         {/* Centered title */}
                         <div className="absolute inset-x-0 text-center pointer-events-none">
                           <p className="font-medium text-sm">{entry.title}</p>
-                          {entry.date && <p className="text-white/40 text-xs mt-0.5">{entry.date}</p>}
+                          {entry.date && <p className="text-fg-muted text-xs mt-0.5">{entry.date}</p>}
                         </div>
                         {/* Reorder */}
                         <div className="flex flex-col gap-0.5 shrink-0">
                           <button
                             onClick={() => moveEntry(i, -1)}
                             disabled={isFirst}
-                            className="text-white/30 hover:text-white/70 disabled:opacity-20 disabled:cursor-not-allowed leading-none transition-colors"
+                            className="text-fg-muted hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed leading-none transition-colors"
                             aria-label="Move up"
                           >▲</button>
                           <button
                             onClick={() => moveEntry(i, 1)}
                             disabled={isLast}
-                            className="text-white/30 hover:text-white/70 disabled:opacity-20 disabled:cursor-not-allowed leading-none transition-colors"
+                            className="text-fg-muted hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed leading-none transition-colors"
                             aria-label="Move down"
                           >▼</button>
                         </div>
@@ -765,8 +766,8 @@ export default function ManageNewsletterPage() {
                           }}
                           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors shrink-0 ${
                             isExpanded
-                              ? "bg-white/15 text-white"
-                              : "bg-white/[0.06] text-white/50 hover:bg-white/10 hover:text-white/80"
+                              ? "bg-surface-2 text-foreground"
+                              : "bg-surface text-fg-muted hover:bg-surface-2 hover:text-foreground"
                           }`}
                           aria-label="Edit entry"
                         >
@@ -782,7 +783,7 @@ export default function ManageNewsletterPage() {
                           <button
                             onClick={() => handleDeleteEntry(entry.id)}
                             disabled={deletingEntryId === entry.id}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-red-500/10 text-red-400/70 hover:bg-red-500/20 hover:text-red-400 transition-colors shrink-0 disabled:opacity-40"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-destructive/10 text-destructive/70 hover:bg-destructive/20 hover:text-destructive transition-colors shrink-0 disabled:opacity-40"
                           >
                             {deletingEntryId === entry.id ? (
                               "…"
@@ -804,26 +805,26 @@ export default function ManageNewsletterPage() {
 
                       {/* Expanded editor */}
                       {isExpanded && (
-                        <div className="border-t border-white/10 px-4 py-4 flex flex-col gap-3">
+                        <div className="border-t border-border px-4 py-4 flex flex-col gap-3">
                           <div className="flex flex-col gap-1.5">
-                            <label className="text-xs text-white/50">Title</label>
+                            <label className="text-xs text-fg-muted">Title</label>
                             <input
                               value={entry.title}
                               onChange={e => handleEntryFieldChange(entry.id, "title", e.target.value)}
-                              className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm text-white placeholder:text-white/20 outline-none focus:border-white/30"
+                              className="bg-surface border border-border rounded-md px-3 py-1.5 text-sm text-foreground placeholder:text-fg-faint outline-none focus:border-border-strong"
                             />
                           </div>
                           <div className="flex flex-col gap-1.5">
-                            <label className="text-xs text-white/50">Date <span className="text-white/25">(optional)</span></label>
+                            <label className="text-xs text-fg-muted">Date <span className="text-fg-faint">(optional)</span></label>
                             <input
                               value={entry.date ?? ""}
                               onChange={e => handleEntryFieldChange(entry.id, "date", e.target.value)}
                               placeholder="March 2026"
-                              className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm text-white placeholder:text-white/20 outline-none focus:border-white/30"
+                              className="bg-surface border border-border rounded-md px-3 py-1.5 text-sm text-foreground placeholder:text-fg-faint outline-none focus:border-border-strong"
                             />
                           </div>
                           <div className="flex flex-col gap-1.5">
-                            <label className="text-xs text-white/50">Body</label>
+                            <label className="text-xs text-fg-muted">Body</label>
                             <SimpleEditor
                               initialContent={entry.body}
                               onEditorReady={editor => { entryEditorRefs.current[entry.id] = editor }}
@@ -843,7 +844,7 @@ export default function ManageNewsletterPage() {
           <button
             onClick={handleAddEntry}
             disabled={isAddingEntry}
-            className="self-center text-sm text-white/40 hover:text-white/70 border border-dashed border-white/15 hover:border-white/30 rounded-lg px-4 py-2.5 transition-colors disabled:opacity-40"
+            className="self-center text-sm text-fg-muted hover:text-foreground border border-dashed border-border hover:border-border-strong rounded-xl px-4 py-2.5 transition-colors disabled:opacity-40"
           >
             {isAddingEntry ? "Adding…" : "+ New entry"}
           </button>
