@@ -6,7 +6,7 @@ import { getPlayer } from "@/lib/aws/players"
 export async function GET(request: NextRequest) {
   const auth = await requireUser(request)
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
+  const { payload } = auth
 
   try {
     const link = await getPlayerLink(payload.sub)

@@ -10,7 +10,6 @@ export async function DELETE(
 
   const auth = await requireUser(request, { roles: ADMIN_ONLY })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   try {
     await deletePlayerLink(cognitoSub)

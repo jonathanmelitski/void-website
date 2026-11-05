@@ -11,7 +11,6 @@ const GROUPS = ["USER", "COACH", "ADMIN"]
 export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: ADMIN_ONLY })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   const { username, role } = await request.json()
   if (!username || !role || !GROUPS.includes(role)) {

@@ -5,7 +5,6 @@ import { getPresignedUploadUrl } from "@/lib/aws/s3"
 export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   const { newsletterId, contentType = "image/jpeg" } = await request.json()
   if (!newsletterId) {

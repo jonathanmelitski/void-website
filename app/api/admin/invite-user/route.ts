@@ -11,7 +11,6 @@ const GROUPS = ["USER", "COACH", "ADMIN"]
 export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: ADMIN_ONLY })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   const { email, role = "USER" } = await request.json()
   if (!email) return NextResponse.json({ error: "email is required" }, { status: 400 })

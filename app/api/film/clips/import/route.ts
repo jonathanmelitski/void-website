@@ -41,7 +41,7 @@ async function fetchDurationSeconds(videoId: string): Promise<number | undefined
 export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
+  const { payload } = auth
 
   const { gameId, youtubeUrl, title, sortOrder, trackId } = await request.json()
   if (!gameId) return NextResponse.json({ error: "gameId is required" }, { status: 400 })

@@ -16,7 +16,6 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   const { first_name, last_name, number, team, is_captain, jersey_name_text, is_active } =
     await request.json()

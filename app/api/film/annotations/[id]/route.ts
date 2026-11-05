@@ -11,7 +11,7 @@ export async function PATCH(
 
   const auth = await requireUser(request)
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
+  const { payload } = auth
 
   const annotation = await getAnnotation(id)
   if (!annotation) return NextResponse.json({ error: "Not found" }, { status: 404 })
@@ -49,7 +49,7 @@ export async function DELETE(
 
   const auth = await requireUser(request)
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
+  const { payload } = auth
 
   const annotation = await getAnnotation(id)
   if (!annotation) return NextResponse.json({ error: "Not found" }, { status: 404 })

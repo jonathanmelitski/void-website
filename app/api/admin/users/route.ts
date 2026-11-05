@@ -11,7 +11,6 @@ const GROUPS = ["USER", "COACH", "ADMIN"]
 export async function GET(request: NextRequest) {
   const auth = await requireUser(request, { roles: ADMIN_ONLY })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   const poolId = process.env.COGNITO_USER_POOL_ID!
 

@@ -27,7 +27,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   const { pointId, upserts = [], deletes = [] } = await request.json() as {
     pointId?: string

@@ -4,7 +4,6 @@ import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
 export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: ADMIN_ONLY })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   const { emails: rawEmails, role = "USER" } = await request.json()
   if (!rawEmails) return NextResponse.json({ error: "emails is required" }, { status: 400 })

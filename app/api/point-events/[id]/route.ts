@@ -10,7 +10,6 @@ interface Props {
 export async function DELETE(request: NextRequest, { params }: Props) {
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   const { id } = await params
   const gameId = request.nextUrl.searchParams.get("gameId")

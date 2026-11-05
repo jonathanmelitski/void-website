@@ -60,7 +60,6 @@ export async function PATCH(
 
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   const body = await request.json()
   const { title, durationSeconds, syncPoints } = body as { title?: string; durationSeconds?: number; syncPoints?: unknown }
@@ -94,7 +93,6 @@ export async function DELETE(
 
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   try {
     await deleteClip(id)

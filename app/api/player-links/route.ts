@@ -5,7 +5,6 @@ import { listPlayerLinks, createPlayerLink } from "@/lib/aws/player-links"
 export async function GET(request: NextRequest) {
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   try {
     const links = await listPlayerLinks()
@@ -19,7 +18,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
+  const { payload } = auth
 
   const { cognitoSub, playerId } = await request.json()
   if (!cognitoSub || !playerId) {

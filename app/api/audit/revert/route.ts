@@ -5,7 +5,7 @@ import { getAuditLog, checkRevertConflicts, revertAuditLog } from "@/lib/aws/aud
 export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: ADMIN_ONLY })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
+  const { payload } = auth
 
   const actorUsername = (payload["cognito:username"] ?? payload.sub ?? "") as string
 

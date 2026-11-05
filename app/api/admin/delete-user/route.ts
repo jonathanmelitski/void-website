@@ -6,7 +6,6 @@ import { AdminDeleteUserCommand } from "@aws-sdk/client-cognito-identity-provide
 export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: ADMIN_ONLY })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   const { username } = await request.json()
   if (!username) return NextResponse.json({ error: "username is required" }, { status: 400 })

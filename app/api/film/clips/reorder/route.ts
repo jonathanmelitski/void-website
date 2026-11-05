@@ -5,7 +5,6 @@ import { updateClip } from "@/lib/aws/film-clips"
 export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
-  const { payload, groups } = auth
 
   const body = await request.json()
   if (!Array.isArray(body) || body.length === 0) {
