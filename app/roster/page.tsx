@@ -3,6 +3,7 @@ import RosterView from "./RosterView"
 import { Team, type Player } from "@/models/RosterModels"
 import { listPlayers } from "@/lib/aws/players"
 import { EmptyState } from "@/components/ui/empty-state"
+import { PageContainer } from "@/components/ui/page"
 
 // The roster changes rarely; serve a cached render and refresh it in the background
 export const revalidate = 300
@@ -38,8 +39,8 @@ export default async function Roster() {
   }
 
   return (
-    <div className="lg:px-16 not-lg:px-4">
+    <PageContainer width="wide" className="pt-4 md:pt-6 lg:pt-8">
       <RosterView initialPlayers={players} />
-    </div>
+    </PageContainer>
   )
 }
