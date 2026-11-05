@@ -1,23 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { getPresignedUploadUrl } from "@/lib/aws/s3"
 import { randomUUID } from "crypto"
 
 export async function POST(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
-
-  const groups = payload["cognito:groups"] ?? []
-  if (!groups.includes("COACH") && !groups.includes("ADMIN")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  if (!auth.ok) return auth.response
 
   const { contentType = "image/jpeg" } = await request.json()
 

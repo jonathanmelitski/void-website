@@ -1,21 +1,23 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { getCallerEmail, requireUser } from "@/lib/auth/server"
+import { EMAIL_COOKIE, USERNAME_COOKIE } from "@/lib/auth/cookies"
 
 export async function GET(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
+  const auth = await requireUser(request)
+  if (!auth.ok) return auth.response
+  const { payload } = auth
 
-  if (!token) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-  }
-
-  try {
-    const payload = await verifyToken(token)
-    return NextResponse.json({
+  // Access tokens carry no email: look it up (cached); fall back to the display cookie.
+  const legacy = request.cookies.get(USERNAME_COOKIE)?.value ?? ""
+  const stored = request.cookies.get(EMAIL_COOKIE)?.value ?? legacy
+  const email = (await getCallerEmail(payload)) ?? (stored.includes("@") ? stored : "")
+  return NextResponse.json(
+    {
       username: payload["cognito:username"] ?? payload.username ?? payload.sub,
-      email: payload.email ?? "",
+      email,
       groups: payload["cognito:groups"] ?? [],
-    })
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
+      expiresAt: payload.exp * 1000,
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  )
 }

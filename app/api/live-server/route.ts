@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda"
 import {
   SSMClient,
@@ -22,17 +22,6 @@ export const maxDuration = 300 // respected by Vercel; ignored by Amplify (see l
 
 // ---- Auth ----
 
-async function requireAdmin(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return null
-  try {
-    const payload = await verifyToken(token)
-    const groups: string[] = payload["cognito:groups"] ?? []
-    return groups.includes("ADMIN") ? payload : null
-  } catch {
-    return null
-  }
-}
 
 // ---- Lambda async invocation (production / Amplify) ----
 
@@ -104,7 +93,8 @@ export type LiveServerInfo = {
 // ---- GET /api/live-server ----
 
 export async function GET(request: NextRequest) {
-  if (!await requireAdmin(request)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  if (!auth.ok) return auth.response
 
   try {
     const [instance, job] = await Promise.all([describeWsInstance(), getJob()])
@@ -153,7 +143,8 @@ export async function GET(request: NextRequest) {
 // ---- POST /api/live-server ----
 
 export async function POST(request: NextRequest) {
-  if (!await requireAdmin(request)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  if (!auth.ok) return auth.response
 
   const { action } = await request.json()
 

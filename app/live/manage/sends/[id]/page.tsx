@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { useAuth } from "@/lib/use-auth"
 import { Spinner } from "@/components/ui/spinner"
+import { useRequireAuth } from "@/hooks/use-require-auth"
 
 type StatsResponse = {
   sendId: string
@@ -34,7 +34,7 @@ function pct(n: number, total: number) {
 export default function SendStatsPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
-  const { user, isLoading: authLoading } = useAuth()
+  const { user, isLoading: authLoading } = useRequireAuth({ roles: ["ADMIN"], forbiddenHref: "/live/manage" })
 
   const [send, setSend] = useState<SendRecord | null>(null)
   const [stats, setStats] = useState<StatsResponse | null>(null)
@@ -43,14 +43,6 @@ export default function SendStatsPage() {
   const [statsError, setStatsError] = useState("")
 
   const isAdmin = user?.groups.includes("ADMIN") ?? false
-
-  useEffect(() => {
-    if (!authLoading && !user) router.replace("/live/login")
-  }, [user, authLoading, router])
-
-  useEffect(() => {
-    if (!authLoading && user && !isAdmin) router.replace("/live/manage")
-  }, [user, authLoading, isAdmin, router])
 
   useEffect(() => {
     if (!id) return

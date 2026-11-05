@@ -1,38 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { listEvents, createEvent } from "@/lib/aws/dynamo"
 import { logAudit } from "@/lib/aws/audit"
+import { canViewEvent, getCaller } from "@/lib/event-access"
 import { randomUUID } from "crypto"
-
-async function getCallerInfo(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return null
-  try {
-    const payload = await verifyToken(token)
-    return payload
-  } catch {
-    return null
-  }
-}
 
 export async function GET(request: NextRequest) {
   try {
-    const events = await listEvents()
-    const payload = await getCallerInfo(request)
-    const groups: string[] = payload?.["cognito:groups"] ?? []
-    const isPrivileged = groups.includes("COACH") || groups.includes("ADMIN")
-
-    if (isPrivileged) {
-      return NextResponse.json(events)
-    }
-
-    const callerEmail: string | undefined = payload?.email
-    const visible = events.filter(e => {
-      if (!e.isPrivate) return true
-      if (!callerEmail) return false
-      return e.allowedUsers?.includes(callerEmail) ?? false
-    })
-    return NextResponse.json(visible)
+    const [events, caller] = await Promise.all([listEvents(), getCaller(request)])
+    return NextResponse.json(events.filter((e) => canViewEvent(e, caller)))
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to fetch events"
     return NextResponse.json({ error: message }, { status: 500 })
@@ -40,20 +16,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
-
-  const groups = payload["cognito:groups"] ?? []
-  if (!groups.includes("COACH") && !groups.includes("ADMIN")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  if (!auth.ok) return auth.response
+  const { payload } = auth
 
   const { title, date, location, description, coverPhotoKey, isPrivate, allowedUsers } = await request.json()
   if (!title || !date) {

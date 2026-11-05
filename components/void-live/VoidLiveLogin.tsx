@@ -13,7 +13,7 @@ export function VoidLiveLogin() {
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const { refreshAuth } = useAuth()
+  const { reportSignedIn } = useAuth()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -31,7 +31,7 @@ export function VoidLiveLogin() {
         setError(data.error ?? "Login failed")
         return
       }
-      await refreshAuth()
+      await reportSignedIn()
     } catch {
       setError("An unexpected error occurred")
     } finally {

@@ -3,7 +3,8 @@ import {
   InitiateAuthCommand,
   AuthFlowType,
 } from "@aws-sdk/client-cognito-identity-provider"
-import { cognitoClient } from "@/lib/aws/cognito"
+import { cognitoClient, cognitoUsernameFromAccessToken } from "@/lib/aws/cognito"
+import { setSessionCookies } from "@/lib/auth/cookies"
 import { secretHash } from "@/lib/aws/cognito-secret"
 
 export async function POST(request: NextRequest) {
@@ -41,25 +42,13 @@ export async function POST(request: NextRequest) {
     }
 
     const response = NextResponse.json({ ok: true })
-
-    const cookieOptions = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax" as const,
-      path: "/",
-    }
-
-    response.cookies.set("access_token", tokens.AccessToken, {
-      ...cookieOptions,
-      maxAge: tokens.ExpiresIn ?? 3600,
-    })
-    response.cookies.set("refresh_token", tokens.RefreshToken, {
-      ...cookieOptions,
-      maxAge: 30 * 24 * 60 * 60,
-    })
-    response.cookies.set("cognito_username", email, {
-      ...cookieOptions,
-      maxAge: 30 * 24 * 60 * 60,
+    // Store Cognito's real username (UUID), not the email: refresh SECRET_HASH is computed from it.
+    setSessionCookies(response.cookies, {
+      accessToken: tokens.AccessToken,
+      expiresIn: tokens.ExpiresIn,
+      refreshToken: tokens.RefreshToken,
+      username: cognitoUsernameFromAccessToken(tokens.AccessToken) ?? email,
+      email,
     })
 
     return response

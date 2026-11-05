@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser } from "@/lib/auth/server"
 import { getAnnotation, updateAnnotation, deleteAnnotation } from "@/lib/aws/film-annotations"
 import { pushFilmUpdate } from "@/lib/ws-push"
 
@@ -9,15 +9,9 @@ export async function PATCH(
 ) {
   const { id } = await params
 
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
+  const auth = await requireUser(request)
+  if (!auth.ok) return auth.response
+  const { payload } = auth
 
   const annotation = await getAnnotation(id)
   if (!annotation) return NextResponse.json({ error: "Not found" }, { status: 404 })
@@ -53,15 +47,9 @@ export async function DELETE(
 ) {
   const { id } = await params
 
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
+  const auth = await requireUser(request)
+  if (!auth.ok) return auth.response
+  const { payload } = auth
 
   const annotation = await getAnnotation(id)
   if (!annotation) return NextResponse.json({ error: "Not found" }, { status: 404 })

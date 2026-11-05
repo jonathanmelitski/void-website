@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
 import { cognitoClient } from "@/lib/aws/cognito"
 import {
   AdminAddUserToGroupCommand,
@@ -9,19 +9,8 @@ import {
 const GROUPS = ["USER", "COACH", "ADMIN"]
 
 export async function POST(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
-
-  if (!(payload["cognito:groups"] ?? []).includes("ADMIN")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  if (!auth.ok) return auth.response
 
   const { username, role } = await request.json()
   if (!username || !role || !GROUPS.includes(role)) {

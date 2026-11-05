@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
-import { useAuth } from "@/lib/use-auth"
+import { useRequireAuth } from "@/hooks/use-require-auth"
 import { Badge } from "@/components/ui/badge"
 import type { GameItem, GameStatus } from "@/lib/aws/games"
 import type { PlayerItem } from "@/lib/aws/players"
@@ -60,7 +60,7 @@ function toPlayerStats(stats: GameStats, players: PlayerItem[]): PlayerStat[] {
 }
 
 export default function GameDetailPage() {
-  const { user, isLoading } = useAuth()
+  const { user, isLoading } = useRequireAuth()
   const router = useRouter()
   const { eventId, gameId } = useParams<{ eventId: string; gameId: string }>()
 
@@ -70,10 +70,6 @@ export default function GameDetailPage() {
   const [pointEvents, setPointEvents] = useState<PointEventItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
-
-  useEffect(() => {
-    if (!isLoading && !user) router.replace("/live/login")
-  }, [user, isLoading, router])
 
   useEffect(() => {
     if (!user) return

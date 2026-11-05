@@ -1,20 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser } from "@/lib/auth/server"
 import { listClipsByGame } from "@/lib/aws/film-clips"
+import { denyIfGameHidden } from "@/lib/event-access"
 
 export async function GET(request: NextRequest) {
   const gameId = request.nextUrl.searchParams.get("gameId")
   if (!gameId) return NextResponse.json({ error: "gameId is required" }, { status: 400 })
 
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-  try {
-    await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
+  const auth = await requireUser(request)
+  if (!auth.ok) return auth.response
 
   try {
+    const denied = await denyIfGameHidden(request, gameId)
+    if (denied) return denied
     const clips = await listClipsByGame(gameId)
     return NextResponse.json(clips)
   } catch (err) {

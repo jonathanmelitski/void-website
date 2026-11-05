@@ -1,21 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { getEvent, deleteEvent, updateEvent } from "@/lib/aws/dynamo"
 import { logAudit } from "@/lib/aws/audit"
+import { canViewEvent, getCaller } from "@/lib/event-access"
 
 interface Props {
   params: Promise<{ id: string }>
 }
 
-async function resolveCallerInfo(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return null
-  try {
-    return await verifyToken(token)
-  } catch {
-    return null
-  }
-}
 
 export async function GET(request: NextRequest, { params }: Props) {
   const { id } = await params
@@ -23,15 +15,8 @@ export async function GET(request: NextRequest, { params }: Props) {
     const event = await getEvent(id)
     if (!event) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
-    if (event.isPrivate) {
-      const payload = await resolveCallerInfo(request)
-      if (!payload) return NextResponse.json({ error: "Not found" }, { status: 404 })
-      const groups: string[] = payload["cognito:groups"] ?? []
-      const isPrivileged = groups.includes("COACH") || groups.includes("ADMIN")
-      const callerEmail: string | undefined = payload.email
-      if (!isPrivileged && !event.allowedUsers?.includes(callerEmail ?? "")) {
-        return NextResponse.json({ error: "Not found" }, { status: 404 })
-      }
+    if (event.isPrivate && !canViewEvent(event, await getCaller(request))) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 })
     }
 
     return NextResponse.json(event)
@@ -42,20 +27,9 @@ export async function GET(request: NextRequest, { params }: Props) {
 }
 
 export async function PATCH(request: NextRequest, { params }: Props) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
-
-  const groups = payload["cognito:groups"] ?? []
-  if (!groups.includes("COACH") && !groups.includes("ADMIN")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  if (!auth.ok) return auth.response
+  const { payload } = auth
 
   const { id } = await params
   const body = await request.json()
@@ -85,20 +59,9 @@ export async function PATCH(request: NextRequest, { params }: Props) {
 }
 
 export async function DELETE(request: NextRequest, { params }: Props) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
-
-  const groups = payload["cognito:groups"] ?? []
-  if (!groups.includes("COACH") && !groups.includes("ADMIN")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  if (!auth.ok) return auth.response
+  const { payload } = auth
 
   const { id } = await params
   try {

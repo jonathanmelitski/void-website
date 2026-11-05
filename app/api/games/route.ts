@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { listGamesByEvent, createGame } from "@/lib/aws/games"
+import { denyIfEventHidden } from "@/lib/event-access"
 import { randomUUID } from "crypto"
 
 export async function GET(request: NextRequest) {
@@ -9,6 +10,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "eventId query param is required" }, { status: 400 })
   }
   try {
+    const denied = await denyIfEventHidden(request, eventId)
+    if (denied) return denied
     const games = await listGamesByEvent(eventId)
     return NextResponse.json(games)
   } catch (err: unknown) {
@@ -18,20 +21,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
-
-  const groups = payload["cognito:groups"] ?? []
-  if (!groups.includes("COACH") && !groups.includes("ADMIN")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  if (!auth.ok) return auth.response
 
   const { eventId, opponent, round, scheduledTime, cap, voidReceivingFirst, notes } =
     await request.json()
