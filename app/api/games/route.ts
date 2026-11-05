@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { listGamesByEvent, createGame } from "@/lib/aws/games"
+import { denyIfEventHidden } from "@/lib/event-access"
 import { randomUUID } from "crypto"
 
 export async function GET(request: NextRequest) {
@@ -9,6 +10,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "eventId query param is required" }, { status: 400 })
   }
   try {
+    const denied = await denyIfEventHidden(request, eventId)
+    if (denied) return denied
     const games = await listGamesByEvent(eventId)
     return NextResponse.json(games)
   } catch (err: unknown) {

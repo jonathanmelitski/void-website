@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getOptionalUser, requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { getEvent, deleteEvent, updateEvent } from "@/lib/aws/dynamo"
 import { logAudit } from "@/lib/aws/audit"
+import { canViewEvent, getCaller } from "@/lib/event-access"
 
 interface Props {
   params: Promise<{ id: string }>
@@ -14,15 +15,8 @@ export async function GET(request: NextRequest, { params }: Props) {
     const event = await getEvent(id)
     if (!event) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
-    if (event.isPrivate) {
-      const payload = await getOptionalUser(request)
-      if (!payload) return NextResponse.json({ error: "Not found" }, { status: 404 })
-      const groups: string[] = payload["cognito:groups"] ?? []
-      const isPrivileged = groups.includes("COACH") || groups.includes("ADMIN")
-      const callerEmail: string | undefined = payload.email
-      if (!isPrivileged && !event.allowedUsers?.includes(callerEmail ?? "")) {
-        return NextResponse.json({ error: "Not found" }, { status: 404 })
-      }
+    if (event.isPrivate && !canViewEvent(event, await getCaller(request))) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 })
     }
 
     return NextResponse.json(event)

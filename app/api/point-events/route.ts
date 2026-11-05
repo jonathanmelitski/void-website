@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { listEventsByPoint, listEventsByGame, createPointEvent, POINT_EVENT_TYPES, PLAYERLESS_EVENT_TYPES } from "@/lib/aws/point-events"
 import { pushGameUpdate } from "@/lib/ws-push"
+import { getPoint } from "@/lib/aws/points"
+import { denyIfGameHidden } from "@/lib/event-access"
 import { randomUUID } from "crypto"
 
 export async function GET(request: NextRequest) {
@@ -13,6 +15,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const scopeGameId = pointId ? (await getPoint(pointId))?.gameId : gameId
+    if (scopeGameId) {
+      const denied = await denyIfGameHidden(request, scopeGameId)
+      if (denied) return denied
+    }
     const events = pointId
       ? await listEventsByPoint(pointId)
       : await listEventsByGame(gameId!)

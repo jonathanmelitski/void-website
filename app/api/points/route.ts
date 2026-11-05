@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { listPointsByGame, listPointsByPlayer, createPoint } from "@/lib/aws/points"
+import { denyIfGameHidden } from "@/lib/event-access"
 import { randomUUID } from "crypto"
 
 export async function GET(request: NextRequest) {
@@ -25,6 +26,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const denied = await denyIfGameHidden(request, gameId!)
+    if (denied) return denied
     const points = await listPointsByGame(gameId!)
     return NextResponse.json(points)
   } catch (err: unknown) {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { AuthError, verifyToken, type TokenPayload } from "@/lib/aws/cognito"
+import { AdminGetUserCommand } from "@aws-sdk/client-cognito-identity-provider"
+import { AuthError, cognitoClient, verifyToken, type TokenPayload } from "@/lib/aws/cognito"
 import { ACCESS_COOKIE } from "./cookies"
 
 export type Role = "ADMIN" | "COACH" | "USER"
@@ -59,6 +60,31 @@ export async function requireUser(
   }
 
   return { ok: true, payload, groups, username: payload["cognito:username"] ?? payload.sub ?? "" }
+}
+
+// Cognito access tokens carry no `email` claim, so look it up (read-only AdminGetUser) and cache it
+// per username in this server instance. Never taken from a cookie: it's used for authorization
+// (private-event allowedUsers).
+const emailCache = new Map<string, { email: string | null; at: number }>()
+const EMAIL_TTL_MS = 60 * 60 * 1000
+
+export async function getCallerEmail(payload: TokenPayload): Promise<string | undefined> {
+  if (payload.email) return payload.email
+  const username = payload.username ?? payload["cognito:username"] ?? payload.sub
+  if (!username) return undefined
+  const hit = emailCache.get(username)
+  if (hit && Date.now() - hit.at < EMAIL_TTL_MS) return hit.email ?? undefined
+  try {
+    const res = await cognitoClient.send(
+      new AdminGetUserCommand({ UserPoolId: process.env.COGNITO_USER_POOL_ID!, Username: username })
+    )
+    const email = res.UserAttributes?.find((a) => a.Name === "email")?.Value ?? null
+    emailCache.set(username, { email, at: Date.now() })
+    return email ?? undefined
+  } catch (err) {
+    console.warn("[auth] email lookup failed:", err instanceof Error ? err.name : "unknown")
+    return undefined // fail closed: private events stay hidden
+  }
 }
 
 /**

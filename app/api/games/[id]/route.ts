@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { getGame, updateGame, deleteGame } from "@/lib/aws/games"
+import { canViewGame, getCaller } from "@/lib/event-access"
 import { pushGameUpdate } from "@/lib/ws-push"
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda"
 
@@ -24,11 +25,13 @@ interface Props {
   params: Promise<{ id: string }>
 }
 
-export async function GET(_request: NextRequest, { params }: Props) {
+export async function GET(request: NextRequest, { params }: Props) {
   const { id } = await params
   try {
     const game = await getGame(id)
-    if (!game) return NextResponse.json({ error: "Not found" }, { status: 404 })
+    if (!game || !(await canViewGame(game, await getCaller(request)))) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 })
+    }
     return NextResponse.json(game)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to fetch game"

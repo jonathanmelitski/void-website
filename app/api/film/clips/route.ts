@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireUser } from "@/lib/auth/server"
 import { listClipsByGame } from "@/lib/aws/film-clips"
+import { denyIfGameHidden } from "@/lib/event-access"
 
 export async function GET(request: NextRequest) {
   const gameId = request.nextUrl.searchParams.get("gameId")
@@ -10,6 +11,8 @@ export async function GET(request: NextRequest) {
   if (!auth.ok) return auth.response
 
   try {
+    const denied = await denyIfGameHidden(request, gameId)
+    if (denied) return denied
     const clips = await listClipsByGame(gameId)
     return NextResponse.json(clips)
   } catch (err) {

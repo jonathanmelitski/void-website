@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { listGamePlayers, createGamePlayer } from "@/lib/aws/game-players"
 import { pushGameUpdate } from "@/lib/ws-push"
+import { denyIfGameHidden } from "@/lib/event-access"
 import { randomUUID } from "crypto"
 
 export async function GET(request: NextRequest) {
@@ -10,6 +11,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "gameId query param is required" }, { status: 400 })
   }
   try {
+    const denied = await denyIfGameHidden(request, gameId)
+    if (denied) return denied
     const gamePlayers = await listGamePlayers(gameId)
     return NextResponse.json(gamePlayers)
   } catch (err: unknown) {
