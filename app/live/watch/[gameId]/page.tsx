@@ -8,7 +8,10 @@ import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { LiveGameMessage } from "@/lib/live-types"
 import { deriveGameStats, displayScore } from "@/lib/stats/derive"
-import { Spinner } from "@/components/ui/spinner"
+import { formatGameTime } from "@/lib/format-date"
+import { Skeleton } from "@/components/ui/skeleton"
+import { EmptyState } from "@/components/ui/empty-state"
+import { Radio } from "lucide-react"
 
 // --- Connection status ---
 type ConnStatus = "connecting" | "connected" | "reconnecting" | "polling" | "final"
@@ -22,7 +25,7 @@ const EVENT_LABELS: Record<PointEventType, string> = {
   TURNOVER: "Turnover",
   BLOCK: "Block",
   PULL: "Pull",
-  PULL_FINISHED: "Pull Finished",
+  PULL_FINISHED: "Pull landed",
   SUBSTITUTION: "Sub",
   TIMEOUT: "Timeout",
 }
@@ -54,6 +57,7 @@ export default function LiveWatchPage() {
   const [pointEvents, setPointEvents] = useState<PointEventItem[]>([])
   const [players, setPlayers] = useState<PlayerItem[]>([])
   const [connStatus, setConnStatus] = useState<ConnStatus>("connecting")
+  const [notFound, setNotFound] = useState(false)
   const [flashEZ, setFlashEZ] = useState<"LEFT" | "RIGHT" | null>(null)
   const [scorePulse, setScorePulse] = useState<"VOID" | "OPP" | null>(null)
 
@@ -122,7 +126,6 @@ export default function LiveWatchPage() {
   // --- HTTP polling fallback ---
   const startPolling = useCallback(() => {
     if (pollIntervalRef.current) return
-    setConnStatus("polling")
 
     async function poll() {
       try {
@@ -132,7 +135,10 @@ export default function LiveWatchPage() {
           fetch(`/api/point-events?gameId=${gameId}`),
           fetch("/api/players"),
         ])
-        if (!gameRes.ok) return
+        if (!gameRes.ok) {
+          if (gameRes.status === 404) setNotFound(true)
+          return
+        }
         const [gameData, pointsData, eventsData, playersData] = await Promise.all([
           gameRes.json(), pointsRes.json(), eventsRes.json(), playersRes.json(),
         ])
@@ -163,8 +169,9 @@ export default function LiveWatchPage() {
 
     setConnStatus(attemptsRef.current === 0 ? "connecting" : "reconnecting")
 
-    // Switch to polling after 3 consecutive WS failures
+    // Give up on the socket after 3 consecutive failures; polling (already running) keeps the page current
     if (attemptsRef.current >= 3) {
+      setConnStatus("polling")
       startPolling()
       return
     }
@@ -178,6 +185,11 @@ export default function LiveWatchPage() {
       ws.onopen = () => {
         attemptsRef.current = 0
         setConnStatus("connected")
+        // Live pushes take over from polling
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current)
+          pollIntervalRef.current = null
+        }
       }
 
       ws.onmessage = e => {
@@ -194,6 +206,8 @@ export default function LiveWatchPage() {
         }
         if (unmountedRef.current) return
         setConnStatus("reconnecting")
+        // Keep the score moving over HTTP while the socket is down
+        startPolling()
         const delay = Math.min(1_000 * Math.pow(2, attemptsRef.current++), 30_000)
         reconnectRef.current = setTimeout(connect, delay)
       }
@@ -211,6 +225,8 @@ export default function LiveWatchPage() {
 
   useEffect(() => {
     unmountedRef.current = false
+    // Load the game over HTTP straight away; don't wait for socket retries (the WS server may be unreachable)
+    startPolling()
     connect()
 
     return () => {
@@ -223,7 +239,7 @@ export default function LiveWatchPage() {
         wsRef.current = null
       }
     }
-  }, [connect])
+  }, [connect, startPolling])
 
   // --- Derived state ---
 
@@ -254,9 +270,17 @@ export default function LiveWatchPage() {
     const receivingThisHalf = isSecondHalf ? !game.voidReceivingFirst : game.voidReceivingFirst
     return (pointsThisHalf % 2 === 0) === receivingThisHalf
   })()
-  const recentEvents = [...pointEvents]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 20)
+  const derivedById = new Map((stats?.points ?? []).map(p => [p.id, p]))
+  const playByPlay = [...points]
+    .sort((a, b) => b.pointNumber - a.pointNumber)
+    .map(point => ({
+      point,
+      events: pointEvents
+        .filter(e => e.pointId === point.id && e.eventType !== "PULL_FINISHED")
+        .sort((a, b) => b.sortOrder - a.sortOrder),
+    }))
+    .filter(g => g.events.length > 0)
+    .slice(0, 8)
   const possession = inferPossession(activePoint)
   const activeLinePlayers = activePoint
     ? activePoint.playerIds
@@ -264,86 +288,94 @@ export default function LiveWatchPage() {
         .filter(Boolean) as PlayerItem[]
     : []
 
-  const STATUS_INDICATOR: Record<ConnStatus, { label: string; color: string; pulse: boolean }> = {
-    connecting:   { label: "Connecting…",   color: "text-fg-muted", pulse: false },
-    connected:    { label: "Live",           color: "text-success", pulse: true },
-    reconnecting: { label: "Reconnecting…", color: "text-fg-muted", pulse: false },
-    polling:      { label: "Live",           color: "text-warning", pulse: true },
-    final:        { label: "Final",          color: "text-fg-muted", pulse: false },
-  }
-  const si = STATUS_INDICATOR[connStatus]
-
-  if (!game && (connStatus === "connecting" || connStatus === "reconnecting")) {
+  if (!game && notFound) {
     return (
-      <div className="flex items-center justify-center min-h-[50dvh]">
-        <Spinner size="md" />
-      </div>
+      <EmptyState
+        variant="page"
+        icon={<Radio />}
+        title="Game not found"
+        description="Check the link. The game may have been removed."
+      />
     )
   }
 
-  if (!game) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-3">
-        <p className="text-fg-muted text-sm">Game not found or not yet started.</p>
-      </div>
-    )
-  }
+  if (!game) return <WatchSkeleton />
+
+  // Status comes from the game, not the connection. A game scored only in film can still be stored as
+  // SCHEDULED; once it has points, don't call it scheduled.
+  const isLive = game.status === "IN_PROGRESS"
+  const isFinal = game.status === "FINAL"
+  const hasPoints = points.length > 0
+  const startTime = formatGameTime(game.scheduledTime)
+  const scoreUs = shown?.score.us ?? game.scoreVoid
+  const scoreThem = shown?.score.them ?? game.scoreOpponent
+  const resultLine = shownResult === "WIN" ? `Void wins ${scoreUs}–${scoreThem}`
+    : shownResult === "LOSS" ? `${game.opponent} wins ${scoreThem}–${scoreUs}`
+    : shownResult === "TIE" ? `Tied ${scoreUs}–${scoreThem}` : null
 
   return (
-    <div className="flex flex-col gap-0 text-left max-w-3xl mx-auto px-4 py-6 w-full">
+    <div className="flex flex-col gap-0 text-left max-w-3xl mx-auto px-4 sm:px-6 py-6 w-full">
 
       {/* Header bar */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <span className={`flex items-center gap-1.5 text-xs font-medium ${si.color}`}>
-            {si.pulse && (
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-75" />
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 mb-4">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          {isLive ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-destructive">
+              <span className="relative flex h-2 w-2" aria-hidden>
+                <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-current" />
               </span>
-            )}
-            {si.label}
-          </span>
-          <span className="text-fg-faint text-xs">·</span>
-          <span className="text-fg-secondary text-sm font-medium">VOID vs. {game.opponent}</span>
+              Live
+            </span>
+          ) : isFinal ? (
+            <span className="text-xs font-medium text-fg-secondary">Final</span>
+          ) : !hasPoints ? (
+            <span className="text-xs font-medium text-fg-muted">Scheduled{startTime ? ` · ${startTime}` : ""}</span>
+          ) : null}
+          <h1 className="text-sm font-medium text-foreground">Void vs {game.opponent}</h1>
           {game.round && <span className="text-fg-muted text-xs">{game.round}</span>}
         </div>
-        <span className="text-fg-faint text-xs">Cap {game.cap}</span>
+        <span className="text-fg-muted text-xs">
+          {isLive && connStatus === "reconnecting" ? "Reconnecting…" : `Game to ${game.cap}`}
+        </span>
       </div>
 
       {/* Score */}
-      <div className="flex items-center justify-center gap-8 py-4 mb-4">
+      <div className="flex items-center justify-center gap-8 pt-4 pb-2">
         <div className="flex flex-col items-center gap-1">
-          <span className="text-fg-muted text-xs font-medium tracking-widest uppercase">VOID</span>
-          <span className={`text-7xl font-bold font-mono transition-transform duration-300 ${scorePulse === "VOID" ? "scale-125 text-success" : "text-foreground"}`}>
-            {shown?.score.us ?? game.scoreVoid}
+          <span className="text-fg-muted text-xs font-medium">Void</span>
+          <span className={`text-7xl font-bold font-mono tabular-nums transition-transform duration-300 motion-reduce:transition-none ${scorePulse === "VOID" ? "scale-125 text-success" : "text-foreground"}`}>
+            {scoreUs}
           </span>
         </div>
-        <span className="text-fg-faint text-3xl font-thin">–</span>
+        <span className="text-fg-muted text-3xl font-thin" aria-hidden>–</span>
         <div className="flex flex-col items-center gap-1">
-          <span className="text-fg-muted text-xs font-medium tracking-widest uppercase">{game.opponent}</span>
-          <span className={`text-7xl font-bold font-mono transition-transform duration-300 ${scorePulse === "OPP" ? "scale-125 text-success" : "text-foreground"}`}>
-            {shown?.score.them ?? game.scoreOpponent}
+          <span className="text-fg-muted text-xs font-medium max-w-32 truncate">{game.opponent}</span>
+          <span className={`text-7xl font-bold font-mono tabular-nums transition-transform duration-300 motion-reduce:transition-none text-foreground ${scorePulse === "OPP" ? "scale-125" : ""}`}>
+            {scoreThem}
           </span>
         </div>
       </div>
+      <p className="text-center text-sm text-fg-secondary mb-4 min-h-5">
+        {(isFinal || (!isLive && hasPoints)) && resultLine ? `${isFinal ? "Final · " : ""}${resultLine}` : ""}
+      </p>
 
-      {/* Field */}
-      <FieldView
+      {/* Field (only while the game can still be played) */}
+      {!isFinal && <FieldView
         opponent={game.opponent}
         possession={possession}
         voidAttacksRight={voidAttacksRight}
         flashEZ={game.status !== "FINAL" ? flashEZ : null}
         linePlayers={activeLinePlayers}
         isActive={game.status === "IN_PROGRESS" && !!activePoint}
-      />
+      />}
 
       {/* Active point info */}
       {activePoint && (
         <div className="flex items-center gap-2 mt-3 px-1 text-xs text-fg-muted">
           <span>P{activePoint.pointNumber}</span>
           <span>·</span>
-          <span className={activePoint.lineType === "O" ? "text-brand-text/70" : "text-warning/70"}>
+          <span className={`whitespace-nowrap shrink-0 ${activePoint.lineType === "O" ? "text-brand-text" : "text-warning"}`}>
             {activePoint.lineType}-line
           </span>
           {activeLinePlayers.length > 0 && (
@@ -355,33 +387,39 @@ export default function LiveWatchPage() {
         </div>
       )}
 
-      {/* Event log */}
-      {recentEvents.length > 0 && (
+      {/* Play by play: latest point first, events within a point newest first */}
+      {playByPlay.length > 0 && (
         <section className="mt-6">
-          <h2 className="text-xs font-medium text-fg-muted uppercase tracking-widest mb-3">Play by Play</h2>
-          <div className="flex flex-col gap-1.5">
-            {recentEvents.map((ev, i) => {
-              const point = points.find(p => p.id === ev.pointId)
+          <h2 className="text-lg font-semibold mb-3">Play by play</h2>
+          <div className="flex flex-col gap-4">
+            {playByPlay.map(({ point, events }) => {
+              const d = derivedById.get(point.id)
+              const score = point.status === "IN_PROGRESS" || !d ? d?.scoreBefore : d.scoreAfter
               return (
-                <div
-                  key={ev.id}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-                    i === 0 ? "bg-surface border border-border" : ""
-                  }`}
-                >
-                  {point && (
-                    <span className="text-fg-faint font-mono text-xs w-5 shrink-0">P{point.pointNumber}</span>
-                  )}
-                  <span className={`font-medium shrink-0 ${EVENT_COLORS[ev.eventType]}`}>
-                    {EVENT_LABELS[ev.eventType]}
-                  </span>
-                  <span className="text-fg-secondary truncate">
-                    {ev.eventType === "TIMEOUT"
-                      ? (ev.team === "VOID" ? "VOID" : "Opp")
-                      : ev.eventType === "SUBSTITUTION"
-                        ? `${getPlayerName(ev.playerId)} → ${ev.playerInId ? getPlayerName(ev.playerInId) : "?"}`
-                        : getPlayerName(ev.playerId)}
-                  </span>
+                <div key={point.id} className="rounded-xl border border-border">
+                  <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-xs text-fg-muted">
+                    <span>
+                      Point {point.pointNumber} · {point.lineType}-line
+                      {point.status === "IN_PROGRESS" && <span className="text-destructive"> · Now</span>}
+                    </span>
+                    {score && <span className="font-mono tabular-nums text-fg-secondary">{score.us}–{score.them}</span>}
+                  </div>
+                  <ul className="flex flex-col py-1">
+                    {events.map(ev => (
+                      <li key={ev.id} className="flex items-center gap-3 px-3 py-1.5 text-sm">
+                        <span className={`w-20 shrink-0 font-medium ${EVENT_COLORS[ev.eventType]}`}>
+                          {EVENT_LABELS[ev.eventType]}
+                        </span>
+                        <span className="text-fg-secondary truncate">
+                          {ev.eventType === "TIMEOUT"
+                            ? (ev.team === "VOID" ? "Void" : game.opponent)
+                            : ev.eventType === "SUBSTITUTION"
+                              ? `${getPlayerName(ev.playerId)} → ${ev.playerInId ? getPlayerName(ev.playerInId) : "?"}`
+                              : getPlayerName(ev.playerId)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )
             })}
@@ -392,21 +430,21 @@ export default function LiveWatchPage() {
       {/* Completed points summary */}
       {pointChips.length > 0 && (
         <section className="mt-6">
-          <h2 className="text-xs font-medium text-fg-muted uppercase tracking-widest mb-3">Points</h2>
+          <h2 className="text-lg font-semibold mb-3">Points</h2>
           <div className="flex flex-wrap gap-1.5">
             {pointChips.map(point => {
               const { voidScored } = point
               return (
                 <span
                   key={point.id}
-                  title={`P${point.pointNumber}: ${point.outcome} (${point.lineType}-line)`}
-                  className={`text-xs px-2 py-0.5 rounded-md font-mono ${
+                  title={`Point ${point.pointNumber}: ${voidScored ? "Void scored" : `${game.opponent} scored`} (${point.lineType}-line)`}
+                  className={`text-xs px-2 py-0.5 rounded-md font-mono border ${
                     voidScored
-                      ? "bg-success/15 text-success"
-                      : "bg-destructive/15 text-destructive"
+                      ? "bg-success/15 border-success/30 text-success"
+                      : "border-destructive/30 text-destructive"
                   }`}
                 >
-                  P{point.pointNumber}
+                  {voidScored ? "✓ " : ""}P{point.pointNumber}
                 </span>
               )
             })}
@@ -414,19 +452,20 @@ export default function LiveWatchPage() {
         </section>
       )}
 
-      {/* Final banner */}
-      {game.status === "FINAL" && (
-        <div className="mt-8 border border-border rounded-xl px-6 py-5 text-center">
-          <p className={`text-2xl font-display leading-none tracking-wide ${
-            shownResult === "WIN" ? "text-success" :
-            shownResult === "LOSS" ? "text-destructive" :
-            "text-warning"
-          }`}>
-            {shownResult === "WIN" ? "VOID Wins" : shownResult === "LOSS" ? `${game.opponent} Wins` : "Tie"}
-          </p>
-          <p className="text-fg-muted text-sm mt-1">Final · {shown?.score.us ?? game.scoreVoid} – {shown?.score.them ?? game.scoreOpponent}</p>
-        </div>
-      )}
+    </div>
+  )
+}
+
+function WatchSkeleton() {
+  return (
+    <div className="flex flex-col max-w-3xl mx-auto px-4 sm:px-6 py-6 w-full" aria-busy aria-label="Loading game">
+      <Skeleton className="h-5 w-48 mb-4" />
+      <div className="flex items-center justify-center gap-8 pt-4 pb-2">
+        <Skeleton className="h-24 w-20" />
+        <Skeleton className="h-24 w-20" />
+      </div>
+      <div className="min-h-5 mb-4" />
+      <Skeleton className="w-full rounded-xl" style={{ aspectRatio: "2.5 / 1" }} />
     </div>
   )
 }
@@ -490,7 +529,7 @@ function FieldView({
                 {leftIsAttack ? "ATTACK" : "DEFEND"}
               </span>
             )}
-            {flashEZ === "LEFT" && <div className="absolute inset-0 bg-success/20 animate-ping" />}
+            {flashEZ === "LEFT" && <div className="absolute inset-0 bg-success/20 motion-safe:animate-ping" />}
           </div>
 
           {/* Main field */}
@@ -504,7 +543,7 @@ function FieldView({
                 {[0, 1, 2, 3, 4, 5, 6, 7].map(i => (
                   <span
                     key={i}
-                    className="absolute select-none text-fg-faint font-light"
+                    className="absolute select-none text-fg-faint font-light motion-reduce:[animation:none!important] motion-reduce:opacity-50"
                     style={{
                       fontSize: "18px",
                       left: `${3 + i * 13}%`,
@@ -528,7 +567,7 @@ function FieldView({
                       ? "text-success bg-success/15 border border-success/25"
                       : "text-fg-muted bg-surface border border-border"
                   }`}>
-                    {voidOnOffense ? "O-line" : "D-line"}
+                    <span className="whitespace-nowrap">{voidOnOffense ? "O-line" : "D-line"}</span>
                   </div>
                   {linePlayers.slice(0, 7).map(p => (
                     <div
@@ -560,7 +599,7 @@ function FieldView({
                 {rightIsAttack ? "ATTACK" : "DEFEND"}
               </span>
             )}
-            {flashEZ === "RIGHT" && <div className="absolute inset-0 bg-success/20 animate-ping" />}
+            {flashEZ === "RIGHT" && <div className="absolute inset-0 bg-success/20 motion-safe:animate-ping" />}
           </div>
         </div>
       </div>
