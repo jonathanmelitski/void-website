@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { getOptionalUser, requireUser, ADMIN_ONLY, COACH_OR_ADMIN } from "@/lib/auth/server"
 import {
   getNewsletter,
   getNewsletterBySlug,
@@ -14,16 +14,11 @@ import { logAudit } from "@/lib/aws/audit"
 type Params = { params: Promise<{ id: string }> }
 
 async function getCallerInfo(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return null
-  try {
-    const payload = await verifyToken(token)
-    return {
-      groups: (payload["cognito:groups"] ?? []) as string[],
-      username: (payload["cognito:username"] ?? payload.sub ?? "") as string,
-    }
-  } catch {
-    return null
+  const payload = await getOptionalUser(request)
+  if (!payload) return null
+  return {
+    groups: (payload["cognito:groups"] ?? []) as string[],
+    username: (payload["cognito:username"] ?? payload.sub ?? "") as string,
   }
 }
 
@@ -46,9 +41,8 @@ export async function GET(request: NextRequest, { params }: Params) {
 
 export async function PATCH(request: NextRequest, { params }: Params) {
   const { id } = await params
-  const caller = await getCallerInfo(request)
-  if (!caller) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-  if (!isCoachOrAdmin(caller.groups)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  const caller = await requireUser(request, { roles: COACH_OR_ADMIN })
+  if (!caller.ok) return caller.response
 
   const newsletter = await getNewsletter(id)
   if (!newsletter) return NextResponse.json({ error: "Not found" }, { status: 404 })
@@ -69,9 +63,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
 export async function PUT(request: NextRequest, { params }: Params) {
   const { id } = await params
-  const caller = await getCallerInfo(request)
-  if (!caller) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-  if (!isCoachOrAdmin(caller.groups)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  const caller = await requireUser(request, { roles: COACH_OR_ADMIN })
+  if (!caller.ok) return caller.response
 
   const newsletter = await getNewsletter(id)
 
@@ -116,9 +109,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
 export async function DELETE(request: NextRequest, { params }: Params) {
   const { id } = await params
-  const caller = await getCallerInfo(request)
-  if (!caller) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-  if (!caller.groups.includes("ADMIN")) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  const caller = await requireUser(request, { roles: ADMIN_ONLY })
+  if (!caller.ok) return caller.response
 
   const newsletter = await getNewsletter(id)
   await deleteNewsletter(id)

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
 import { deletePlayerLink } from "@/lib/aws/player-links"
 
 export async function DELETE(
@@ -8,20 +8,9 @@ export async function DELETE(
 ) {
   const { cognitoSub } = await params
 
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
-
-  const groups = payload["cognito:groups"] ?? []
-  if (!groups.includes("ADMIN")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  if (!auth.ok) return auth.response
+  const { payload, groups } = auth
 
   try {
     await deletePlayerLink(cognitoSub)

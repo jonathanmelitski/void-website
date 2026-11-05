@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { getPoint } from "@/lib/aws/points"
 import {
   listEventsByPoint,
@@ -25,20 +25,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // Saves the film editor's changes to one point's events in a single transaction
 export async function POST(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
-
-  const groups = payload["cognito:groups"] ?? []
-  if (!groups.includes("COACH") && !groups.includes("ADMIN")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  if (!auth.ok) return auth.response
+  const { payload, groups } = auth
 
   const { pointId, upserts = [], deletes = [] } = await request.json() as {
     pointId?: string

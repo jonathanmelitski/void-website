@@ -1,26 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken, cognitoClient } from "@/lib/aws/cognito"
+import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
+import { cognitoClient } from "@/lib/aws/cognito"
 import {
   DescribeUserPoolCommand,
   UpdateUserPoolCommand,
 } from "@aws-sdk/client-cognito-identity-provider"
 
-async function requireAdmin(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return null
-  try {
-    const payload = await verifyToken(token)
-    if (!(payload["cognito:groups"] ?? []).includes("ADMIN")) return null
-    return payload
-  } catch {
-    return null
-  }
-}
 
 export async function GET(request: NextRequest) {
-  if (!await requireAdmin(request)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  if (!auth.ok) return auth.response
 
   try {
     const poolId = process.env.COGNITO_USER_POOL_ID!
@@ -38,9 +27,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  if (!await requireAdmin(request)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  if (!auth.ok) return auth.response
 
   const { subject, bodyHtml } = await request.json()
   if (!subject || !bodyHtml) {

@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser } from "@/lib/auth/server"
 import { getPlayerLink } from "@/lib/aws/player-links"
 import { getPlayer } from "@/lib/aws/players"
 
 export async function GET(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
+  const auth = await requireUser(request)
+  if (!auth.ok) return auth.response
+  const { payload, groups } = auth
 
   try {
     const link = await getPlayerLink(payload.sub)

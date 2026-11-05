@@ -1,25 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
 import { listContacts, createContact, deleteContact } from "@/lib/aws/ses"
 
 type Params = { params: Promise<{ name: string }> }
 
-async function requireAdmin(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return null
-  try {
-    const payload = await verifyToken(token)
-    const groups: string[] = payload["cognito:groups"] ?? []
-    if (!groups.includes("ADMIN")) return null
-    return { username: (payload["cognito:username"] ?? payload.sub ?? "") as string }
-  } catch {
-    return null
-  }
-}
 
 export async function GET(request: NextRequest, { params }: Params) {
-  const caller = await requireAdmin(request)
-  if (!caller) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  const caller = await requireUser(request, { roles: ADMIN_ONLY })
+  if (!caller.ok) return caller.response
 
   const { name } = await params
   const contacts = await listContacts(name)
@@ -27,8 +15,8 @@ export async function GET(request: NextRequest, { params }: Params) {
 }
 
 export async function POST(request: NextRequest, { params }: Params) {
-  const caller = await requireAdmin(request)
-  if (!caller) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  const caller = await requireUser(request, { roles: ADMIN_ONLY })
+  if (!caller.ok) return caller.response
 
   const { name } = await params
   const { email } = await request.json()
@@ -39,8 +27,8 @@ export async function POST(request: NextRequest, { params }: Params) {
 }
 
 export async function DELETE(request: NextRequest, { params }: Params) {
-  const caller = await requireAdmin(request)
-  if (!caller) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  const caller = await requireUser(request, { roles: ADMIN_ONLY })
+  if (!caller.ok) return caller.response
 
   const { name } = await params
   const { email } = await request.json()

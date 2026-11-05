@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { appendNewsletterEntry, updateNewsletterEntries, getNewsletter } from "@/lib/aws/newsletters"
 import { logAudit } from "@/lib/aws/audit"
 import { randomUUID } from "crypto"
@@ -8,22 +8,9 @@ type Params = { params: Promise<{ id: string }> }
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { id } = await params
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let username: string
-  let groups: string[]
-  try {
-    const payload = await verifyToken(token)
-    groups = payload["cognito:groups"] ?? []
-    username = payload["cognito:username"] ?? payload.sub ?? ""
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
-
-  if (!groups.includes("COACH") && !groups.includes("ADMIN")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  if (!auth.ok) return auth.response
+  const { username } = auth
 
   const { title, body, date } = await request.json()
   if (!title || !body) {
@@ -55,18 +42,8 @@ export async function POST(request: NextRequest, { params }: Params) {
 
 export async function PUT(request: NextRequest, { params }: Params) {
   const { id } = await params
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  try {
-    const payload = await verifyToken(token)
-    const groups = payload["cognito:groups"] ?? []
-    if (!groups.includes("COACH") && !groups.includes("ADMIN")) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
+  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  if (!auth.ok) return auth.response
 
   const { entries } = await request.json()
   await updateNewsletterEntries(id, entries)

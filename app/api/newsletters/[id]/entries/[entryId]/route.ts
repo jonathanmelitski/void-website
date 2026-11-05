@@ -1,23 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser } from "@/lib/auth/server"
 import { getNewsletter, removeNewsletterEntry } from "@/lib/aws/newsletters"
 
 type Params = { params: Promise<{ id: string; entryId: string }> }
 
 export async function DELETE(request: NextRequest, { params }: Params) {
   const { id, entryId } = await params
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let username: string
-  let groups: string[]
-  try {
-    const payload = await verifyToken(token)
-    groups = payload["cognito:groups"] ?? []
-    username = payload["cognito:username"] ?? payload.sub ?? ""
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
+  // Any signed-in user; ownership (author or ADMIN) is checked below.
+  const auth = await requireUser(request)
+  if (!auth.ok) return auth.response
+  const { username, groups } = auth
 
   const newsletter = await getNewsletter(id)
   if (!newsletter) return NextResponse.json({ error: "Not found" }, { status: 404 })

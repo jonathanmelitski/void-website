@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
+import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { randomUUID } from "crypto"
 import { AdminGetUserCommand } from "@aws-sdk/client-cognito-identity-provider"
-import { verifyToken, cognitoClient } from "@/lib/aws/cognito"
+import { cognitoClient } from "@/lib/aws/cognito"
 import { getPlayerLink } from "@/lib/aws/player-links"
 import { getPlayer } from "@/lib/aws/players"
 import { listAnnotationsByClip, createAnnotation } from "@/lib/aws/film-annotations"
@@ -12,13 +13,8 @@ export async function GET(request: NextRequest) {
   const clipId = request.nextUrl.searchParams.get("clipId")
   if (!clipId) return NextResponse.json({ error: "clipId is required" }, { status: 400 })
 
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-  try {
-    await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
+  const auth = await requireUser(request)
+  if (!auth.ok) return auth.response
 
   try {
     const annotations = await listAnnotationsByClip(clipId)
@@ -48,20 +44,9 @@ async function resolveAuthorName(sub: string, username: string): Promise<string>
 }
 
 export async function POST(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-
-  let payload
-  try {
-    payload = await verifyToken(token)
-  } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 })
-  }
-
-  const groups = payload["cognito:groups"] ?? []
-  if (!groups.includes("COACH") && !groups.includes("ADMIN")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  }
+  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  if (!auth.ok) return auth.response
+  const { payload, groups } = auth
 
   const { clipId, videoTimestampMs, text, pointEventId, pointId } = await request.json()
   if (!clipId || videoTimestampMs === undefined || (!text && !pointId)) {

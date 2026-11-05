@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto"
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/aws/cognito"
+import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
 import { verifyTOTP } from "@/lib/totp"
 import { getSend, logSend } from "@/lib/aws/sends"
 import { getNewsletter } from "@/lib/aws/newsletters"
@@ -9,25 +9,13 @@ import { logAudit } from "@/lib/aws/audit"
 
 export const maxDuration = 60
 
-async function requireAdmin(request: NextRequest) {
-  const token = request.cookies.get("access_token")?.value
-  if (!token) return null
-  try {
-    const payload = await verifyToken(token)
-    const groups: string[] = payload["cognito:groups"] ?? []
-    if (!groups.includes("ADMIN")) return null
-    return { username: (payload["cognito:username"] ?? payload.sub ?? "") as string }
-  } catch {
-    return null
-  }
-}
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const caller = await requireAdmin(request)
-  if (!caller) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  const caller = await requireUser(request, { roles: ADMIN_ONLY })
+  if (!caller.ok) return caller.response
 
   const body = await request.json().catch(() => ({}))
   const { totpCode } = body as { totpCode?: string }

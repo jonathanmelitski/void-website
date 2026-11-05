@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server"
 import { refreshSession, accessTokenExpiresAt } from "@/lib/auth/refresh"
 import {
   ACCESS_COOKIE,
+  EMAIL_COOKIE,
   REFRESH_COOKIE,
+  REFRESH_MAX_AGE_SECONDS,
   USERNAME_COOKIE,
+  clearSessionCookies,
   cookieOptions,
   setSessionCookies,
 } from "@/lib/auth/cookies"
@@ -29,8 +32,10 @@ async function handle(request: NextRequest) {
       )
     }
     const res = NextResponse.json({ error: "Session ended", code: "SESSION_EXPIRED" }, { status: 401 })
-    // The refresh token is dead; drop the stale access cookie but keep nothing that can't work.
-    res.cookies.set(ACCESS_COOKIE, "", { ...cookieOptions, maxAge: 0 })
+    // The refresh token is dead: drop the session cookies (keep the display email for the sign-in form).
+    clearSessionCookies(res.cookies)
+    const email = request.cookies.get(EMAIL_COOKIE)?.value ?? (storedUsername?.includes("@") ? storedUsername : undefined)
+    if (email) res.cookies.set(EMAIL_COOKIE, email, { ...cookieOptions, maxAge: REFRESH_MAX_AGE_SECONDS })
     return res
   }
 
