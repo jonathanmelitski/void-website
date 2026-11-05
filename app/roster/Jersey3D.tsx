@@ -1,383 +1,289 @@
 "use client"
-import React, { Suspense, useMemo } from 'react'
-import { Canvas, useThree } from '@react-three/fiber'
-import { useGLTF, useTexture, OrbitControls, Center, Html, ContactShadows } from '@react-three/drei'
-import * as THREE from 'three'
+/**
+ * The roster's one WebGL canvas: the hero jersey. Loaded lazily by JerseyStage (next/dynamic, ssr:false)
+ * so three.js never sits on the critical path.
+ *
+ * - frameloop="demand": nothing renders unless something moves (spin, idle sway, drag).
+ * - Re-dressing for a new player is a single 360° spin; the name/number texture is redrawn while the
+ *   jersey is edge-on, so the change is never visible as a pop.
+ * - One 1024² CanvasTexture is reused for every player.
+ */
+import { Suspense, useEffect, useMemo, useRef } from "react"
+import { Canvas, useFrame, useThree } from "@react-three/fiber"
+import { useGLTF, useTexture, Center } from "@react-three/drei"
+import * as THREE from "three"
 
-// Font loading resource for Suspense
-let fontPromise: Promise<void> | null = null;
-let fontLoaded = false;
+const MODEL = "/jersey/updated_shirt.glb"
+const BASE_TEXTURE = "/jersey/void skyline 2.png"
+const TEX = 1024
+const TAU = Math.PI * 2
 
-function useFont(fontName: string, fontUrl: string) {
-    if (fontLoaded) return;
+export type JerseyPrint = { name: string; number: string }
+export type JerseySide = "back" | "front"
 
-    if (!fontPromise) {
-        fontPromise = new Promise<void>((resolve) => {
-            const font = new FontFace(fontName, `url(${fontUrl})`)
-            font.load().then((loadedFont) => {
-                document.fonts.add(loadedFont)
-                fontLoaded = true
-                resolve()
-            }).catch((err) => {
-                console.error(`Failed to load font ${fontName}:`, err)
-                // Resolve anyway to avoid blocking forever on font failure
-                fontLoaded = true
-                resolve()
-            })
-        })
+type Props = {
+  print: JerseyPrint
+  side: JerseySide
+  /** Stage is on screen; idle sway only runs while visible. */
+  active: boolean
+  reducedMotion: boolean
+  onReady?: () => void
+}
+
+type Motion = {
+  angle: number
+  tween: { from: number; to: number; start: number; dur: number; swapAt?: number; onDone?: () => void } | null
+  swayStart: number | null
+  dragging: boolean
+  shown: string
+  pending: JerseyPrint | null
+}
+
+const restAngle = (side: JerseySide) => (side === "back" ? Math.PI : 0)
+/** The rest angle equivalent (rest + 2πk) closest to `angle`. */
+const nearestRest = (angle: number, side: JerseySide) => {
+  const r = restAngle(side)
+  return r + Math.round((angle - r) / TAU) * TAU
+}
+const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
+const printKey = (p: JerseyPrint) => `${p.number}|${p.name}`
+
+function fontFamily() {
+  const v = getComputedStyle(document.documentElement).getPropertyValue("--font-bebas").trim()
+  return v || "Impact, sans-serif"
+}
+
+function drawPrint(ctx: CanvasRenderingContext2D, base: CanvasImageSource, print: JerseyPrint, family: string) {
+  const s = TEX / 2048
+  ctx.clearRect(0, 0, TEX, TEX)
+  ctx.drawImage(base, 0, 0, TEX, TEX)
+  const box = (text: string, x1: number, y1: number, x2: number, y2: number, rot: number, condense = 1) => {
+    if (!text) return
+    const w = (x2 - x1) * s, h = (y2 - y1) * s
+    ctx.save()
+    ctx.translate(((x1 + x2) / 2) * s, ((y1 + y2) / 2) * s)
+    ctx.rotate(rot)
+    ctx.scale(condense, 1)
+    let size = h / 0.75
+    ctx.font = `${size}px ${family}`
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    const tw = ctx.measureText(text).width
+    if (tw > w / condense) {
+      size *= w / condense / tw
+      ctx.font = `${size}px ${family}`
     }
-
-    throw fontPromise;
+    ctx.fillStyle = "white"
+    ctx.fillText(text, 0, 0)
+    ctx.restore()
+  }
+  box(print.number, 120, 1450, 563, 1700, Math.PI) // back number (texture is upside down)
+  box(print.number, 1014, 771, 1209, 945, 0) // chest number
+  box(print.name, 109, 1815, 564, 1904, Math.PI, 0.75) // back name, condensed
 }
 
-type Jersey3DProps = {
-    number: string | number
-    text: string
-    fontUrl?: string
-    modelPath?: string
-    texturePath?: string
-    scale?: number
-}
+function JerseyModel({ print, side, active, reducedMotion, onReady }: Props) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { nodes, materials } = useGLTF(MODEL) as any
+  const base = useTexture(BASE_TEXTURE)
+  const invalidate = useThree(s => s.invalidate)
+  const group = useRef<THREE.Group>(null)
 
-function JerseyModel({ number, text, fontUrl, modelPath = "/jersey/updated_shirt.glb", texturePath = "/jersey/void skyline 2.png" }: Jersey3DProps) {
-    const { nodes, materials } = useGLTF(modelPath) as any
-    const baseTexture = useTexture(texturePath)
+  const { ctx, texture } = useMemo(() => {
+    const canvas = document.createElement("canvas")
+    canvas.width = canvas.height = TEX
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.flipY = false
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.anisotropy = 4
+    return { ctx: canvas.getContext("2d")!, texture }
+  }, [])
 
-    // Suspend until font is loaded
-    useFont('Bebas Neue Custom', '/jersey/BebasNeue-Regular.ttf')
+  const material = useMemo(() => {
+    const src = Object.values(materials ?? {})[0] as THREE.MeshStandardMaterial | undefined
+    const mat = src ? src.clone() : new THREE.MeshStandardMaterial()
+    mat.roughness = 1
+    mat.metalness = 0
+    mat.map = texture
+    mat.needsUpdate = true
+    return mat
+  }, [materials, texture])
 
-    // Global cache for generated canvases to avoid expensive 2D drawing on every mount
-    // We store the HTMLCanvasElement, which can be reused as a source for textures in different WebGL contexts
-    const textureCache = useMemo(() => {
-        if (!(window as any).__jerseyTextureCache) {
-            (window as any).__jerseyTextureCache = new Map<string, HTMLCanvasElement>();
-        }
-        return (window as any).__jerseyTextureCache as Map<string, HTMLCanvasElement>;
-    }, []);
+  useEffect(() => () => { texture.dispose(); material.dispose() }, [texture, material])
 
-    // Create dynamic texture
-    const dynamicTexture = useMemo(() => {
-        const cacheKey = `${number}-${text}`;
+  const m = useRef<Motion>({ angle: restAngle(side), tween: null, swayStart: null, dragging: false, shown: "", pending: null })
+  const family = useRef<string>("")
+  const sideRef = useRef(side)
+  const reducedRef = useRef(reducedMotion)
+  const activeRef = useRef(active)
+  const printRef = useRef(print)
+  useEffect(() => {
+    reducedRef.current = reducedMotion
+    activeRef.current = active
+    printRef.current = print
+  })
 
-        // Check cache first
-        if (textureCache.has(cacheKey)) {
-            const cachedCanvas = textureCache.get(cacheKey)!;
-            const texture = new THREE.CanvasTexture(cachedCanvas);
-            texture.flipY = false;
-            texture.colorSpace = THREE.SRGBColorSpace;
-            return texture;
-        }
+  const paint = (p: JerseyPrint) => {
+    drawPrint(ctx, base.image as CanvasImageSource, p, family.current)
+    texture.needsUpdate = true
+    m.current.shown = printKey(p)
+  }
 
-        const canvas = document.createElement('canvas')
-        canvas.width = 2048
-        canvas.height = 2048
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return null
+  // First dress: wait for Bebas so the canvas never paints the fallback face.
+  useEffect(() => {
+    let cancelled = false
+    family.current = fontFamily()
+    document.fonts.load(`100px ${family.current}`).catch(() => {}).finally(() => {
+      if (cancelled) return
+      paint(printRef.current)
+      m.current.swayStart = reducedRef.current ? null : performance.now()
+      invalidate()
+      requestAnimationFrame(() => onReady?.())
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-        // Draw base texture
-        const img = baseTexture.image
-        if (img && img instanceof HTMLImageElement) {
-            canvas.width = img.width
-            canvas.height = img.height
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-        } else {
-            // Fallback if image isn't loaded yet or valid
-            return null
-        }
+  const spinTo = (p: JerseyPrint) => {
+    const s = m.current
+    if (!s.shown) return // first paint not done yet; it will pick up the latest print
+    if (reducedRef.current) { paint(p); invalidate(); return }
+    s.pending = p
+    if (s.tween || s.dragging) return // the frame loop starts another spin when this motion ends
+    const baseAngle = nearestRest(s.angle, sideRef.current)
+    s.swayStart = null
+    s.tween = {
+      from: s.angle, to: baseAngle + TAU, start: performance.now(), dur: 1100,
+      swapAt: baseAngle + Math.PI / 2,
+      onDone: () => { s.swayStart = performance.now() },
+    }
+    invalidate()
+  }
 
-        // Helper to draw text in a box with rotation
-        const drawTextInBox = (
-            text: string,
-            x1: number,
-            y1: number,
-            x2: number,
-            y2: number,
-            rotation: number = 0,
-            fontFamily: string = "Bebas Neue Custom",
-            condenseX: number = 1.0 // Factor to horizontally squeeze text
-        ) => {
-            const width = Math.abs(x2 - x1)
-            const height = Math.abs(y2 - y1)
-            const cx = (x1 + x2) / 2
-            const cy = (y1 + y2) / 2
+  useEffect(() => {
+    if (printKey(print) !== m.current.shown) spinTo(print)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [print.name, print.number])
 
-            ctx.save()
-            ctx.translate(cx, cy)
-            ctx.rotate(rotation)
+  useEffect(() => {
+    if (sideRef.current === side) return
+    sideRef.current = side
+    const s = m.current
+    const target = s.angle + Math.PI
+    if (reducedRef.current) { s.angle = nearestRest(target, side); invalidate(); return }
+    s.swayStart = null
+    s.tween = { from: s.angle, to: nearestRest(target, side), start: performance.now(), dur: 700, onDone: () => { s.swayStart = performance.now() } }
+    invalidate()
+  }, [side, invalidate])
 
-            // Apply extra condensation if requested
-            if (condenseX !== 1.0) {
-                ctx.scale(condenseX, 1.0)
-            }
+  useEffect(() => { if (active) invalidate() }, [active, invalidate])
 
-            // Dynamic font scaling
-            // Font size in pixels is usually larger than the visible character height (cap height).
-            // For Arial, cap height is approx 0.7 of font size.
-            // We want the character to fill the height, so we scale up.
-            let fontSize = height / 0.75
-            ctx.font = `bold ${fontSize}px '${fontFamily}'`
-            ctx.textAlign = 'center'
-            ctx.textBaseline = 'middle'
+  // Drag-to-turn (horizontal only; the stage keeps `touch-action: pan-y` so the page still scrolls).
+  const gl = useThree(s => s.gl)
+  useEffect(() => {
+    const el = gl.domElement
+    let lastX = 0
+    const down = (e: PointerEvent) => {
+      const s = m.current
+      if (s.tween) return
+      s.dragging = true
+      s.swayStart = null
+      lastX = e.clientX
+      el.setPointerCapture(e.pointerId)
+    }
+    const move = (e: PointerEvent) => {
+      const s = m.current
+      if (!s.dragging) return
+      s.angle += (e.clientX - lastX) * 0.012
+      lastX = e.clientX
+      invalidate()
+    }
+    const up = () => {
+      const s = m.current
+      if (!s.dragging) return
+      s.dragging = false
+      const to = nearestRest(s.angle, sideRef.current)
+      s.tween = { from: s.angle, to, start: performance.now(), dur: reducedRef.current ? 1 : 600 }
+      invalidate()
+    }
+    el.addEventListener("pointerdown", down)
+    el.addEventListener("pointermove", move)
+    el.addEventListener("pointerup", up)
+    el.addEventListener("pointercancel", up)
+    return () => {
+      el.removeEventListener("pointerdown", down)
+      el.removeEventListener("pointermove", move)
+      el.removeEventListener("pointerup", up)
+      el.removeEventListener("pointercancel", up)
+    }
+  }, [gl, invalidate])
 
-            // Measure and scale down if needed to fit width (taking condenseX into account for available width)
-            // If we scaled the context by condenseX, the available width effectively increases relative to the text
-            // So we check against width / condenseX
-            let textWidth = ctx.measureText(text).width
-            if (textWidth > (width / condenseX)) {
-                fontSize = fontSize * ((width / condenseX) / textWidth)
-                ctx.font = `bold ${fontSize}px '${fontFamily}'`
-            }
+  useFrame(() => {
+    const s = m.current
+    const now = performance.now()
+    let moving = false
+    if (s.tween) {
+      const t = s.tween
+      const p = Math.min(1, (now - t.start) / t.dur)
+      s.angle = t.from + (t.to - t.from) * easeInOut(p)
+      if (t.swapAt !== undefined && s.angle >= t.swapAt && s.pending) {
+        paint(s.pending)
+        t.swapAt = undefined
+        s.pending = null
+      }
+      if (p >= 1) {
+        s.tween = null
+        // Every tween ends on a rest pose; snap back to the base one so the angle never grows.
+        s.angle = restAngle(sideRef.current)
+        t.onDone?.()
+        // A new player was picked mid-motion: one more spin to dress them.
+        const next = s.pending
+        s.pending = null
+        if (next && printKey(next) !== s.shown) spinTo(next)
+      }
+      moving = true
+    } else if (!s.dragging && s.swayStart !== null && !reducedRef.current && activeRef.current) {
+      // A slow ±16° sway for 6 s after the jersey settles, then it holds still (and stops rendering).
+      const t = (now - s.swayStart) / 6000
+      const rest = nearestRest(s.angle, sideRef.current)
+      if (t >= 1) { s.angle = rest; s.swayStart = null }
+      else { s.angle = rest + 0.28 * Math.sin(t * TAU) * Math.sin(t * Math.PI); moving = true }
+    }
+    if (group.current) group.current.rotation.y = s.angle
+    if (moving || s.dragging) invalidate()
+  })
 
-            // Vertical centering adjustment
-            // Since we are drawing with 'middle' baseline, but the font has descenders/ascenders space,
-            // and numbers are usually centered on cap height, we might need a slight offset.
-            // However, 'middle' is usually good enough for simple centering.
-            // If it looks too low, we can adjust. For now, let's stick to the center.
-            ctx.fillStyle = "white"
-            ctx.fillText(text, 0, 0)
-            // Outline Style
-            // ctx.lineWidth = fontSize * 0.03 // Proportional line width
-            // ctx.strokeStyle = 'white'
-            // ctx.strokeText(text, 0, 0 + (height * 0.03))
-
-            // // No fillText, as requested "transparent center"
-
-            ctx.restore()
-        }
-
-        // Coordinate Scaling Factor (User provided coords for likely 1024x1024, but we use image size)
-        // We'll assume user coords are for 1024x1024 and scale if image is different
-        const scaleX = canvas.width / 2048
-        const scaleY = canvas.height / 2048
-
-        // 1. Back Number (Upside Down)
-        // (72, 740) to (250, 890)
-        drawTextInBox(
-            String(number),
-            120 * scaleX, 1450 * scaleY,
-            563 * scaleX, 1700 * scaleY,
-            Math.PI // 180 degrees
-        )
-
-        // 2. Front Number (Right Side Up)
-        // (534, 286) to (620, 360)
-        drawTextInBox(
-            String(number),
-            1014 * scaleX, 771 * scaleY,
-            1209 * scaleX, 945 * scaleY,
-            0
-        )
-
-        // 3. Back Name (Upside Down)
-        // (45, 927) to (288, 967)
-        // Use Arial Narrow AND extra condensation
-        drawTextInBox(
-            text.toUpperCase(),
-            109 * scaleX, 1815 * scaleY,
-            564 * scaleX, 1904 * scaleY,
-            Math.PI,
-            "Bebas Neue Custom",
-            0.75 // Squeeze it to 75% width
-        )
-
-        // Cache the generated canvas
-        textureCache.set(cacheKey, canvas);
-
-        const texture = new THREE.CanvasTexture(canvas)
-        texture.flipY = false
-        texture.colorSpace = THREE.SRGBColorSpace
-        return texture
-    }, [baseTexture, number, text, textureCache])
-
-    // Apply texture to material
-    // We need to find the correct mesh. Usually it's the first child or named specifically.
-    // For now, we'll apply it to all meshes found in the GLTF or specific one if known.
-    // Inspecting the GLTF structure would be ideal, but we'll try to apply to the main mesh.
-
-    // Clone the material to avoid sharing it across instances if we modify it
-    const material = useMemo(() => {
-        if (!materials || !Object.values(materials)[0]) return new THREE.MeshStandardMaterial();
-        const mat = (Object.values(materials)[0] as THREE.MeshStandardMaterial).clone()
-
-        // Fabric material properties - Fully matte
-        mat.roughness = 1.0 // No shine
-        mat.metalness = 0.0 // Non-metallic
-
-        if (dynamicTexture) {
-            mat.map = dynamicTexture
-            mat.needsUpdate = true
-        }
-        return mat
-    }, [materials, dynamicTexture])
-
-
-    return (
-        <group dispose={null}>
-            {/* Render all meshes in the GLTF, applying the dynamic material */}
-            {Object.entries(nodes).map(([name, node]: [string, any]) => {
-                if (node.isMesh) {
-                    return (
-                        <mesh
-                            key={name}
-                            geometry={node.geometry}
-                            material={material}
-                        />
-                    )
-                }
-                return null
-            })}
+  return (
+    <group ref={group} dispose={null}>
+      <Center>
+        <group>
+          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+          {Object.entries(nodes).map(([name, node]: [string, any]) =>
+            node.isMesh ? <mesh key={name} geometry={node.geometry} material={material} /> : null
+          )}
         </group>
-    )
+      </Center>
+    </group>
+  )
 }
 
-function Loader() {
-    return <Html center></Html>
+export default function Jersey3D(props: Props) {
+  return (
+    <Canvas
+      frameloop="demand"
+      dpr={[1, 1.5]}
+      gl={{ antialias: true, alpha: true, powerPreference: "low-power" }}
+      // Framing must match the poster (/jersey/poster-back.webp, captured from this camera at 1:1).
+      camera={{ position: [0, 0, 1.2], fov: 45 }}
+      style={{ touchAction: "pan-y" }}
+      aria-hidden
+    >
+      <ambientLight intensity={2.4} />
+      <directionalLight position={[2, 4, 3]} intensity={1.1} />
+      <directionalLight position={[-3, 1, -4]} intensity={0.9} color="#8b7bff" />
+      <Suspense fallback={null}>
+        <JerseyModel {...props} />
+      </Suspense>
+    </Canvas>
+  )
 }
-
-export default function Jersey3D(props: Jersey3DProps & { showBack?: boolean }) {
-    return (
-        <div className="w-full h-full">
-            <Canvas camera={{ position: [0, 0, 1.5], fov: 45 }}>
-                {/* Even, Bright Scene Lighting */}
-                <ambientLight intensity={3.0} /> {/* High ambient for evenness */}
-                <directionalLight position={[5, 5, 5]} intensity={0.5} /> {/* Soft directional for slight depth */}
-                <pointLight position={[-10, -10, -10]} intensity={0.5} />
-
-                <Suspense fallback={<Loader />}>
-                    <Center>
-                        <group scale={props.scale ?? 1}>
-                            <JerseyModel {...props} />
-                        </group>
-                    </Center>
-                    <ContactShadows
-                        position={[0, -0.8, 0]}
-                        opacity={0.7}
-                        scale={10}
-                        blur={2}
-                        far={4}
-                    />
-                </Suspense>
-
-                {/* Animated Controls */}
-                <AnimatedControls showBack={props.showBack ?? false} />
-            </Canvas>
-        </div>
-    )
-}
-
-// Custom component to handle the full-spin animation
-function AnimatedControls({ showBack }: { showBack: boolean }) {
-    const { gl, camera } = useThree();
-    const controlsRef = React.useRef<any>(null);
-    const animationStartTime = React.useRef<number>(0);
-    const animationDuration = 600; // 0.6 seconds to match drawer transition
-    const isAnimating = React.useRef<boolean>(false);
-    const animationFrameId = React.useRef<number | null>(null);
-    const previousShowBack = React.useRef<boolean>(showBack);
-    const startAzimuth = React.useRef<number>(0);
-
-    React.useEffect(() => {
-        if (showBack !== previousShowBack.current) {
-            if (showBack) {
-                // Start the spin animation to back
-                isAnimating.current = true;
-                animationStartTime.current = Date.now();
-
-                if (controlsRef.current) {
-                    startAzimuth.current = controlsRef.current.getAzimuthalAngle();
-                }
-
-                const animate = () => {
-                    if (!controlsRef.current || !isAnimating.current) return;
-
-                    const elapsed = Date.now() - animationStartTime.current;
-                    const progress = Math.min(elapsed / animationDuration, 1);
-
-                    // Ease-out cubic for smooth deceleration
-                    const eased = 1 - Math.pow(1 - progress, 3);
-
-                    // Calculate rotation: do a full 360° spin and end at PI (back)
-                    // Total rotation = 2*PI (360°) + (PI - startAzimuth)
-                    const targetRotation = 2 * Math.PI + (Math.PI - startAzimuth.current);
-                    const currentRotation = startAzimuth.current + (targetRotation * eased);
-
-                    controlsRef.current.setAzimuthalAngle(currentRotation);
-
-                    if (progress < 1) {
-                        animationFrameId.current = requestAnimationFrame(animate);
-                    } else {
-                        // Animation complete, settle at back
-                        controlsRef.current.setAzimuthalAngle(Math.PI);
-                        isAnimating.current = false;
-                    }
-                };
-
-                animate();
-            } else {
-                // Spin back to front
-                if (animationFrameId.current) {
-                    cancelAnimationFrame(animationFrameId.current);
-                }
-
-                isAnimating.current = true;
-                animationStartTime.current = Date.now();
-
-                if (controlsRef.current) {
-                    startAzimuth.current = controlsRef.current.getAzimuthalAngle();
-                }
-
-                const animateBack = () => {
-                    if (!controlsRef.current || !isAnimating.current) return;
-
-                    const elapsed = Date.now() - animationStartTime.current;
-                    const progress = Math.min(elapsed / animationDuration, 1);
-
-                    // Ease-out cubic for smooth deceleration
-                    const eased = 1 - Math.pow(1 - progress, 3);
-
-                    // Calculate rotation: spin back to 0 (front)
-                    const targetRotation = -Math.PI; // Spin backwards
-                    const currentRotation = startAzimuth.current + (targetRotation * eased);
-
-                    controlsRef.current.setAzimuthalAngle(currentRotation);
-
-                    if (progress < 1) {
-                        animationFrameId.current = requestAnimationFrame(animateBack);
-                    } else {
-                        // Animation complete, settle at front
-                        controlsRef.current.setAzimuthalAngle(0);
-                        isAnimating.current = false;
-                    }
-                };
-
-                animateBack();
-            }
-            previousShowBack.current = showBack;
-        }
-
-        return () => {
-            if (animationFrameId.current) {
-                cancelAnimationFrame(animationFrameId.current);
-            }
-        };
-    }, [showBack]);
-
-    // Safeguard: if no domElement, don't render controls
-    if (!gl.domElement) return null;
-
-    return (
-        <OrbitControls
-            ref={controlsRef}
-            domElement={gl.domElement}
-            camera={camera}
-            autoRotate={!showBack && !isAnimating.current}
-            autoRotateSpeed={4}
-            enableZoom={false}
-            minPolarAngle={Math.PI / 2}
-            maxPolarAngle={Math.PI / 2}
-            enableRotate={!showBack && !isAnimating.current}
-        />
-    );
-}
-
-useGLTF.preload("/jersey/shirt_baked.glb")
