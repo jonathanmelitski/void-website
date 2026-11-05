@@ -7,6 +7,7 @@ import dynamic from "next/dynamic"
 import { useAuth } from "@/lib/use-auth"
 import { usePrefetchIntent } from "@/hooks/use-prefetch-intent"
 import { useFilmClips } from "@/hooks/use-film-clips"
+import { useGameStats } from "@/hooks/use-game-stats"
 import type { GameItem } from "@/lib/aws/games"
 import type { FilmClipItem } from "@/lib/aws/film-clips"
 import type { FilmAnnotationItem } from "@/lib/aws/film-annotations"
@@ -25,6 +26,12 @@ const RESULT_COLORS: Record<string, string> = {
 function GameRow({ game, eventId }: { game: GameItem; eventId: string }) {
   const router = useRouter()
   const href = `/live/events/${eventId}/games/${game.id}`
+  // Score and W/L derived from the point record (film edits included); stored fields until it loads
+  const stats = useGameStats(game.id)
+  const scoreVoid = stats?.score.us ?? game.scoreVoid
+  const scoreOpponent = stats?.score.them ?? game.scoreOpponent
+  const result = stats ? stats.result : game.result
+  const hasScoredPoints = !!stats?.points.some(p => p.scorer)
 
   const handleMouseEnter = useCallback(() => {
     router.prefetch(href)
@@ -46,17 +53,17 @@ function GameRow({ game, eventId }: { game: GameItem; eventId: string }) {
         </div>
       </div>
       <div className="flex items-center gap-3 shrink-0">
-        {game.status !== "SCHEDULED" && (
+        {(game.status !== "SCHEDULED" || hasScoredPoints) && (
           <span className="font-mono text-sm">
-            <span className={game.result === "WIN" ? "text-green-400" : game.result === "LOSS" ? "text-red-400" : ""}>{game.scoreVoid}</span>
+            <span className={result === "WIN" ? "text-green-400" : result === "LOSS" ? "text-red-400" : ""}>{scoreVoid}</span>
             {" – "}
-            <span className={game.result === "LOSS" ? "text-green-400" : game.result === "WIN" ? "text-red-400" : ""}>{game.scoreOpponent}</span>
+            <span className={result === "LOSS" ? "text-green-400" : result === "WIN" ? "text-red-400" : ""}>{scoreOpponent}</span>
           </span>
         )}
-        {game.result && (
-          <span className={`text-xs font-bold ${RESULT_COLORS[game.result] ?? ""}`}>{game.result}</span>
+        {result && (
+          <span className={`text-xs font-bold ${RESULT_COLORS[result] ?? ""}`}>{result}</span>
         )}
-        {game.status === "SCHEDULED" && (
+        {game.status === "SCHEDULED" && !hasScoredPoints && (
           <span className="text-white/30 text-xs">Scheduled</span>
         )}
         {game.status === "IN_PROGRESS" && (
