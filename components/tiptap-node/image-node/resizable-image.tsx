@@ -48,6 +48,9 @@ export function ResizableImageView({ node, updateAttributes, selected }: NodeVie
     align: Align
   }
 
+  const parsedWidth = parseInt(String(width ?? ""), 10)
+  const pxWidth = Number.isFinite(parsedWidth) && parsedWidth > 0 ? parsedWidth : null
+
   const imgRef = useRef<HTMLImageElement>(null)
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
@@ -69,7 +72,7 @@ export function ResizableImageView({ node, updateAttributes, selected }: NodeVie
     const onMouseMove = (e: MouseEvent) => {
       const dx = (e.clientX - startXRef.current) * directionRef.current
       const newWidth = Math.max(80, startWidthRef.current + dx)
-      updateAttributes({ width: `${Math.round(newWidth)}px` })
+      updateAttributes({ width: String(Math.round(newWidth)) })
     }
 
     const onMouseUp = () => setIsResizing(false)
@@ -174,6 +177,30 @@ export function ResizableImageView({ node, updateAttributes, selected }: NodeVie
               >
                 Reset
               </button>
+
+              <div style={{ width: 1, height: 16, background: "rgba(255,255,255,0.15)", margin: "0 3px" }} />
+
+              {/* Alt text: what readers see when email images are blocked, and what screen readers say */}
+              <input
+                type="text"
+                aria-label="Image description (alt text)"
+                placeholder="Describe image…"
+                value={alt ?? ""}
+                onChange={(e) => updateAttributes({ alt: e.target.value, title: null })}
+                onKeyDown={(e) => e.stopPropagation()}
+                style={{
+                  width: 160,
+                  height: 22,
+                  padding: "0 6px",
+                  borderRadius: 4,
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "white",
+                  fontSize: 11,
+                  fontFamily: "inherit",
+                  outline: "none",
+                }}
+              />
             </div>
           )}
 
@@ -185,7 +212,7 @@ export function ResizableImageView({ node, updateAttributes, selected }: NodeVie
             title={title}
             draggable={false}
             style={{
-              width: width ?? "auto",
+              width: pxWidth ? `${pxWidth}px` : "auto",
               maxWidth: "100%",
               display: "block",
               borderRadius: 6,

@@ -9,8 +9,15 @@ export const ResizableImage = Image.extend({
       ...this.parent?.(),
       width: {
         default: null,
-        parseHTML: (el) => el.getAttribute("width") || null,
-        renderHTML: (attrs) => (attrs.width ? { width: attrs.width } : {}),
+        // Stored as an integer string ("694"); legacy "694px" is parsed back to an integer.
+        parseHTML: (el) => {
+          const n = parseInt(el.getAttribute("width") ?? "", 10)
+          return Number.isFinite(n) && n > 0 ? String(n) : null
+        },
+        renderHTML: (attrs) => {
+          const n = parseInt(String(attrs.width ?? ""), 10)
+          return Number.isFinite(n) && n > 0 ? { width: String(n) } : {}
+        },
       },
       align: {
         default: "left",
