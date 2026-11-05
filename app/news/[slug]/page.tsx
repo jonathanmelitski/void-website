@@ -1,8 +1,9 @@
 import type { Metadata } from "next"
 import { notFound } from "next/navigation"
-import Image from "next/image"
 import Link from "next/link"
 import { ArrowLeft } from "lucide-react"
+import { NewsletterCover } from "@/components/newsletters/NewsletterCover"
+import { webifyImages } from "@/lib/email-html"
 import { getNewsletterBySlug } from "@/lib/aws/newsletters"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
 import { PROSE_CSS } from "@/lib/newsletter-prose-css"
@@ -77,7 +78,7 @@ export default async function NewsletterDetailPage({ params }: Props) {
       <header className="mb-10">
         {coverUrl ? (
           <div className="relative h-64 sm:h-80 rounded-xl overflow-hidden">
-            <Image src={coverUrl} alt={newsletter.title} fill className="object-cover object-center" priority />
+            <NewsletterCover src={coverUrl} sizes="100vw" priority />
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
             <div className="absolute bottom-0 inset-x-0 px-6 pb-6 sm:px-8 sm:pb-8 text-white">
               <h1 className="text-4xl sm:text-5xl font-display tracking-wide leading-none mb-1 drop-shadow-lg">{newsletter.title}</h1>
@@ -94,7 +95,7 @@ export default async function NewsletterDetailPage({ params }: Props) {
 
       {/* Content */}
       {newsletter.body && newsletter.body !== "<p></p>" && (
-        <div className="tiptap-prose mb-12 max-w-[68ch]" dangerouslySetInnerHTML={{ __html: newsletter.body }} />
+        <div className="tiptap-prose mb-12 max-w-[68ch]" dangerouslySetInnerHTML={{ __html: webifyImages(newsletter.body) }} />
       )}
 
       {(newsletter.entries ?? []).length > 0 && (
@@ -103,7 +104,7 @@ export default async function NewsletterDetailPage({ params }: Props) {
             <section key={entry.id} aria-labelledby={`entry-${entry.id}`} className="py-10">
               <h2 id={`entry-${entry.id}`} className="text-3xl sm:text-4xl font-display leading-none tracking-wide text-foreground">{entry.title}</h2>
               {entry.date && <p className="mt-2 text-fg-muted text-sm">{entry.date}</p>}
-              <div className="tiptap-prose mt-6 max-w-[68ch]" dangerouslySetInnerHTML={{ __html: entry.body }} />
+              <div className="tiptap-prose mt-6 max-w-[68ch]" dangerouslySetInnerHTML={{ __html: webifyImages(entry.body) }} />
             </section>
           ))}
         </div>

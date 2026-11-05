@@ -7,13 +7,16 @@ import {
   TextSelection,
 } from "@tiptap/pm/state"
 import { cellAround, CellSelection } from "@tiptap/pm/tables"
+import { apiFetch } from "@/lib/api-fetch"
+import { prepareImageForUpload, putToPresignedUrl, MAX_SOURCE_BYTES } from "@/lib/image-prep"
 import {
   findParentNodeClosestToPos,
   type Editor,
   type NodeWithPos,
 } from "@tiptap/react"
 
-export const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
+// Max size of the picked original; uploads are downscaled first (lib/image-prep.ts).
+export const MAX_FILE_SIZE = MAX_SOURCE_BYTES
 
 export const MAC_SYMBOLS: Record<string, string> = {
   mod: "⌘",
@@ -374,18 +377,22 @@ export const handleImageUpload = async (
     )
   }
 
-  onProgress?.({ progress: 10 })
-  const presignRes = await fetch("/api/upload/newsletter-image-presign", {
+  // Downscale + re-encode (JPEG, ≤1600px) so emails and /news don't ship camera originals.
+  const image = await prepareImageForUpload(file)
+
+  onProgress?.({ progress: 20 })
+  const presignRes = await apiFetch("/api/upload/newsletter-image-presign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ contentType: file.type }),
+    body: JSON.stringify({ contentType: image.contentType }),
     signal: abortSignal,
+    waitForSession: true,
   })
-  if (!presignRes.ok) throw new Error("Failed to get upload URL")
+  if (!presignRes.ok) throw new Error("Couldn't start the upload. Try again.")
   const { url, publicUrl } = await presignRes.json()
 
   onProgress?.({ progress: 40 })
-  await fetch(url, { method: "PUT", body: file, headers: { "Content-Type": file.type }, signal: abortSignal })
+  await putToPresignedUrl(url, image, abortSignal)
 
   onProgress?.({ progress: 100 })
   return publicUrl

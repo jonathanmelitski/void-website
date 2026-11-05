@@ -22,6 +22,7 @@ import { toast } from "@/components/ui/sonner"
 import { NEWSLETTER_TEMPLATE, parseNewsletterTemplate } from "@/lib/newsletter-template"
 import { CONNECTION_HINT, deleteMany, friendlyError } from "./api-helpers"
 import { FormFooter } from "./form-footer"
+import { IMAGE_ACCEPT, ImagePrepError, prepareImageForUpload, putToPresignedUrl } from "@/lib/image-prep"
 
 type NewsletterRow = {
   id: string
@@ -433,21 +434,31 @@ function CreateNewsletterForm({
       })
       if (!res.ok) { setError(await friendlyError(res, "Couldn't create the newsletter. Try again.")); return }
       const data = await res.json()
-
       if (coverFile) {
-        const presignRes = await apiFetch("/api/upload/newsletter-cover-presign", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ newsletterId: data.id, contentType: coverFile.type }),
-          waitForSession: true,
-        })
-        const uploadRes = presignRes.ok
-          ? await (async () => {
-              const { url } = await presignRes.json()
-              return fetch(url, { method: "PUT", body: coverFile, headers: { "Content-Type": coverFile.type } })
-            })()
-          : null
-        if (!uploadRes?.ok) toast.error("Newsletter created, but the cover photo didn't upload. Add it from the editor.")
+        // The newsletter already exists at this point, so a cover failure must not block
+        // (or duplicate) the create: report it and let the author add the cover in the editor.
+        try {
+          const image = await prepareImageForUpload(coverFile)
+          const presignRes = await apiFetch("/api/upload/newsletter-cover-presign", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ newsletterId: data.id, contentType: image.contentType }),
+            waitForSession: true,
+          })
+          if (!presignRes.ok) throw new ImagePrepError("Couldn't start the cover upload.")
+          const { url, key } = await presignRes.json()
+          await putToPresignedUrl(url, image)
+          const saveRes = await apiFetch(`/api/newsletters/${data.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ coverPhotoKey: key }),
+            waitForSession: true,
+          })
+          if (!saveRes.ok) throw new ImagePrepError("Couldn't save the cover photo.")
+        } catch (err) {
+          const why = err instanceof ImagePrepError ? `${err.message} ` : ""
+          toast.error(`Newsletter created, but the cover wasn't added. ${why}Add it from the editor.`)
+        }
       }
 
       onCreated({ id: data.id, title, date, published: false })
@@ -485,7 +496,7 @@ function CreateNewsletterForm({
       <Field label="Cover photo" hint="Optional">
         <input
           type="file"
-          accept="image/*"
+          accept={IMAGE_ACCEPT}
           onChange={e => setCoverFile(e.target.files?.[0] ?? null)}
           className="text-sm text-fg-secondary file:mr-3 file:rounded-md file:border-0 file:bg-surface-2 file:px-3 file:py-1 file:text-sm file:text-foreground hover:file:bg-surface-3"
         />

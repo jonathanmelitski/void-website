@@ -66,6 +66,8 @@ import { useCursorVisibility } from "@/hooks/use-cursor-visibility"
 
 // --- Lib ---
 import { handleImageUpload, MAX_FILE_SIZE } from "@/lib/tiptap-utils"
+import { IMAGE_ACCEPT } from "@/lib/image-prep"
+import { toast } from "@/components/ui/sonner"
 
 // --- Styles ---
 import "@/components/tiptap-templates/simple/simple-editor.scss"
@@ -216,11 +218,11 @@ export function SimpleEditor({ onChange, onEditorReady, initialContent = "" }: S
       Subscript,
       Selection,
       ImageUploadNode.configure({
-        accept: "image/*",
+        accept: IMAGE_ACCEPT,
         maxSize: MAX_FILE_SIZE,
         limit: 3,
         upload: handleImageUpload,
-        onError: (error) => console.error("Upload failed:", error),
+        onError: (error) => toast.error(error.message || "Image upload failed. Try again."),
       }),
     ],
     content: initialContent,

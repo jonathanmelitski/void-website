@@ -457,19 +457,16 @@ export const ImageUploadNode: React.FC<NodeViewProps> = (props) => {
       const pos = props.getPos()
 
       if (isValidPosition(pos)) {
-        const imageNodes = urls.map((url, index) => {
-          const filename =
-            files[index]?.name.replace(/\.[^/.]+$/, "") || "unknown"
-          return {
-            type: extension.options.type,
-            attrs: {
-              ...extension.options,
-              src: url,
-              alt: filename,
-              title: filename,
-            },
-          }
-        })
+        // Camera/OS filenames ("IMG_1234", "Screenshot …") make poor alt text, so new
+        // images start decorative (alt=""); authors can describe them from the image toolbar.
+        const imageNodes = urls.map((url) => ({
+          type: extension.options.type,
+          attrs: {
+            ...extension.options,
+            src: url,
+            alt: "",
+          },
+        }))
 
         props.editor
           .chain()

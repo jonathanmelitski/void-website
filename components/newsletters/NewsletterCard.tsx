@@ -1,5 +1,5 @@
 import Link from "next/link"
-import Image from "next/image"
+import { NewsletterCover } from "@/components/newsletters/NewsletterCover"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
 import { formatDate } from "@/lib/format-date"
 
@@ -33,11 +33,8 @@ export function NewsletterCard({ newsletter }: NewsletterCardProps) {
     <Link href={`/news/${newsletter.slug ?? newsletter.id}`} className="block group">
       <div className="bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden">
         <div className="relative aspect-[4/3] hover:scale-[1.02] transition-transform">
-          <Image
+          <NewsletterCover
             src={coverUrl}
-            alt={newsletter.title}
-            fill
-            className="object-cover"
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
