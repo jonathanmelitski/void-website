@@ -51,10 +51,10 @@ export default function MobileRosterCarousel({ players }: Props) {
 
     return (
         <div className="flex flex-col" style={{ height: "calc(100svh - 4rem)" }}>
-            <h1 className="text-4xl font-black px-6 pt-4 pb-2 shrink-0">Roster</h1>
+            <h1 className="text-4xl font-display leading-none tracking-wide px-6 pt-4 pb-2 shrink-0">Roster</h1>
 
             {/* Card */}
-            <div className="flex-1 relative mx-4 mb-2 rounded-2xl overflow-hidden border border-white/10 bg-gradient-to-b from-zinc-900 to-black min-h-0">
+            <div className="flex-1 relative mx-4 mb-2 rounded-xl overflow-hidden border border-border bg-card min-h-0">
                 {/* Jersey — single persistent WebGL context */}
                 <div ref={jerseyScope} className="h-[58%] relative">
                     <Jersey3D
@@ -66,7 +66,7 @@ export default function MobileRosterCarousel({ players }: Props) {
                 </div>
 
                 {/* Player info — animates on navigation */}
-                <div className="h-[42%] relative overflow-hidden border-t border-white/10">
+                <div className="h-[42%] relative overflow-hidden border-t border-border">
                     <AnimatePresence mode="wait" custom={direction}>
                         <motion.div
                             key={selectedIndex}
@@ -79,14 +79,14 @@ export default function MobileRosterCarousel({ players }: Props) {
                             className="absolute inset-0 flex flex-col items-center justify-center text-center px-4 gap-1"
                         >
                             {/* Ghost number behind the name */}
-                            <span className="absolute text-[7rem] font-black leading-none select-none pointer-events-none text-white/[0.06] -translate-y-2">
+                            <span className="absolute text-[7rem] font-display tracking-wide leading-none select-none pointer-events-none text-foreground/[0.06] -translate-y-2">
                                 {player.number}
                             </span>
 
-                            <p className="text-xs text-white/40 uppercase tracking-[0.2em] font-medium z-10">
+                            <p className="text-xs text-fg-muted uppercase tracking-[0.2em] font-medium z-10">
                                 {player.first_name}
                             </p>
-                            <h2 className="text-4xl font-black uppercase tracking-tighter leading-none text-white z-10">
+                            <h2 className="text-4xl font-display tracking-wide uppercase leading-none text-foreground z-10">
                                 {player.last_name}
                             </h2>
                             {player.jersey_name_text && player.jersey_name_text !== player.last_name && (
@@ -96,13 +96,13 @@ export default function MobileRosterCarousel({ players }: Props) {
                             )}
 
                             <div className="flex items-center gap-2 mt-1 z-10">
-                                <span className="text-xs text-white/30 uppercase tracking-widest font-bold">
+                                <span className="text-xs text-fg-muted uppercase tracking-widest font-bold">
                                     {player.team}
                                 </span>
                                 {player.is_captain && (
                                     <>
-                                        <span className="text-white/20">·</span>
-                                        <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 rounded text-xs font-bold uppercase tracking-widest">
+                                        <span className="text-fg-faint">·</span>
+                                        <span className="px-2 py-0.5 bg-warning/20 text-warning border border-warning/50 rounded-md text-xs font-bold uppercase tracking-widest">
                                             Captain
                                         </span>
                                     </>
@@ -111,7 +111,7 @@ export default function MobileRosterCarousel({ players }: Props) {
 
                             <button
                                 onClick={() => setShowStats(s => !s)}
-                                className="mt-2 text-xs px-4 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white/60 font-medium transition-colors z-10"
+                                className="mt-2 text-xs px-4 py-1.5 rounded-full bg-surface-2 hover:bg-surface-3 text-fg-secondary font-medium transition-colors z-10"
                             >
                                 {showStats ? "← Jersey" : "Stats →"}
                             </button>
@@ -137,7 +137,7 @@ export default function MobileRosterCarousel({ players }: Props) {
 
                 {/* Position indicator */}
                 <div className="absolute top-3 left-0 right-0 flex justify-center z-10">
-                    <span className="text-xs text-white/30 font-mono">
+                    <span className="text-xs text-fg-muted font-mono">
                         {selectedIndex + 1} / {players.length}
                     </span>
                 </div>
@@ -146,7 +146,7 @@ export default function MobileRosterCarousel({ players }: Props) {
             {/* Selector drawer */}
             <div
                 ref={drawerRef}
-                className="shrink-0 flex gap-2 px-4 py-3 overflow-x-auto border-t border-white/10"
+                className="shrink-0 flex gap-2 px-4 py-3 overflow-x-auto border-t border-border"
                 style={{ scrollbarWidth: "none" }}
             >
                 {players.map((p, i) => (
@@ -156,11 +156,11 @@ export default function MobileRosterCarousel({ players }: Props) {
                         onClick={() => goTo(i)}
                         className={`shrink-0 flex flex-col items-center px-3 py-2 rounded-xl font-bold transition-all duration-200 ${
                             i === selectedIndex
-                                ? "bg-white text-black scale-105"
-                                : "bg-white/10 text-white/60 hover:bg-white/20"
+                                ? "bg-foreground text-background scale-105"
+                                : "bg-surface-2 text-fg-secondary hover:bg-surface-3"
                         }`}
                     >
-                        <span className="text-base font-black leading-none">#{p.number}</span>
+                        <span className="text-base font-display tracking-wide leading-none">#{p.number}</span>
                         <span className="mt-0.5 text-xs">{p.last_name}</span>
                     </button>
                 ))}

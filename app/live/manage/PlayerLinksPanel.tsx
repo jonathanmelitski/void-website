@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { VoidPlayerLinkItem } from "@/lib/aws/player-links"
+import { Spinner } from "@/components/ui/spinner"
 
 export function PlayerLinksPanel() {
   const [players, setPlayers] = useState<PlayerItem[]>([])
@@ -51,16 +52,16 @@ export function PlayerLinksPanel() {
   }, [load])
 
   if (loading) {
-    return <div className="w-4 h-4 border border-white/20 border-t-white/60 rounded-full animate-spin" />
+    return <Spinner size="sm" />
   }
 
   const linkedPlayerIds = new Set(links.map(l => l.playerId))
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-sm text-white/50">
+      <p className="text-sm text-fg-muted">
         Link each player&apos;s Cognito account to their roster entry. Players can find their account ID by visiting{" "}
-        <span className="text-white/70 font-mono">/live/me</span> while logged in.
+        <span className="text-fg-secondary font-mono">/live/me</span> while logged in.
       </p>
 
       <div className="flex flex-col gap-2">
@@ -71,13 +72,13 @@ export function PlayerLinksPanel() {
           return (
             <div
               key={player.id}
-              className="flex flex-col gap-2 px-4 py-3 rounded-lg border border-white/10"
+              className="flex flex-col gap-2 px-4 py-3 rounded-xl border border-border"
             >
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-sm font-medium">#{player.number} {player.first_name} {player.last_name}</span>
                   {link && (
-                    <p className="text-xs text-white/40 font-mono mt-0.5 truncate max-w-xs">{link.cognitoSub}</p>
+                    <p className="text-xs text-fg-muted font-mono mt-0.5 truncate max-w-xs">{link.cognitoSub}</p>
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -85,7 +86,7 @@ export function PlayerLinksPanel() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="text-red-400/60 hover:text-red-400"
+                      className="text-destructive/60 hover:text-destructive"
                       onClick={() => unlinkPlayer(link.cognitoSub)}
                     >
                       Unlink
@@ -108,7 +109,7 @@ export function PlayerLinksPanel() {
                     value={cognitoSubInput}
                     onChange={e => setCognitoSubInput(e.target.value)}
                     placeholder="Paste Cognito sub ID from player's /live/me page"
-                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/20 font-mono"
+                    className="flex-1 bg-surface border border-border rounded-md px-3 py-1.5 text-sm text-foreground placeholder:text-fg-faint focus:border-border-strong font-mono"
                   />
                   <Button size="sm" onClick={linkPlayer} disabled={!cognitoSubInput.trim() || submitting}>
                     {submitting ? "Saving…" : "Save"}

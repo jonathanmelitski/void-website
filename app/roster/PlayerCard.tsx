@@ -57,7 +57,7 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
     return (
         <div ref={cardRef} className="w-full relative">
             {/* Desktop View - Curtain Animation */}
-            <div className="hidden md:flex bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden group h-64 transition-all hover:bg-white/20 relative">
+            <div className="hidden md:flex bg-surface-2 border border-border backdrop-blur-sm rounded-xl overflow-hidden group h-64 transition-all hover:bg-surface-3 relative">
                 {/* Stats Curtain (Left Side) */}
                 <AnimatePresence>
                     {showStats && (
@@ -83,7 +83,7 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                     {/* Jersey Container */}
                     <motion.div
                         layout
-                        className="h-full relative bg-gradient-to-r from-white/5 to-transparent min-w-full order-1"
+                        className="h-full relative bg-gradient-to-r from-surface to-transparent min-w-full order-1"
                     >
                         {shouldRender && isDesktop ? (
                             <Jersey3D
@@ -94,14 +94,14 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                         ) : (
                             <div className="w-full h-full flex items-center justify-center">
                                 {/* Placeholder to prevent layout shift */}
-                                <div className="w-32 h-32 rounded-full bg-white/5 animate-pulse" />
+                                <div className="w-32 h-32 rounded-full bg-surface animate-pulse" />
                             </div>
                         )}
 
                         {/* Toggle Button */}
                         <button
                             onClick={() => setShowStats(!showStats)}
-                            className="absolute bottom-4 left-4 z-20 px-3 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors backdrop-blur-sm text-sm font-bold flex items-center gap-1"
+                            className="absolute bottom-4 left-4 z-20 px-3 py-2 rounded-full bg-surface-2 hover:bg-surface-3 text-foreground transition-colors backdrop-blur-sm text-sm font-bold flex items-center gap-1"
                             title={showStats ? "Hide Stats" : "View Stats"}
                         >
                             {showStats ? (
@@ -129,10 +129,10 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                                 transition={{ duration: 0.3 }}
                                 className="flex-1 flex flex-col justify-center items-start text-left z-10 order-2"
                             >
-                                <h2 className="text-6xl font-black tracking-tighter uppercase italic relative">
+                                <h2 className="text-6xl font-display leading-none tracking-wide uppercase relative">
                                     <div>
-                                        <span className="block text-white/80 text-3xl mb-1">{player.first_name}</span>
-                                        <span className="block text-transparent bg-clip-text bg-gradient-to-r from-white via-gray-200 to-gray-500">
+                                        <span className="block text-foreground text-3xl mb-1">{player.first_name}</span>
+                                        <span className="block text-transparent bg-clip-text bg-gradient-to-r from-foreground via-foreground/85 to-foreground/55">
                                             {player.last_name}
                                         </span>
                                     </div>
@@ -145,11 +145,11 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                                 )}
 
                                 <div className="mt-4 flex items-center gap-3">
-                                    <span className="text-6xl font-black opacity-20 select-none">
+                                    <span className="text-6xl font-display leading-none tracking-wide opacity-20 select-none">
                                         #{player.number}
                                     </span>
                                     {player.is_captain && (
-                                        <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 rounded text-xs font-bold uppercase tracking-widest">
+                                        <span className="px-3 py-1 bg-warning/20 text-warning border border-warning/50 rounded-md text-xs font-bold uppercase tracking-widest">
                                             Captain
                                         </span>
                                     )}
@@ -170,7 +170,7 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                 >
                     {/* Front of Card - Player Info */}
                     <div
-                        className="absolute inset-0 backface-hidden bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden p-6 flex flex-col bg-gradient-to-b from-white/5 to-transparent"
+                        className="absolute inset-0 backface-hidden bg-surface-2 border border-border backdrop-blur-sm rounded-xl overflow-hidden p-6 flex flex-col"
                         style={{ backfaceVisibility: "hidden" }}
                     >
                         <div className="h-48 relative mb-4">
@@ -183,16 +183,16 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                                 />
                             ) : (
                                 <div className="w-full h-full flex items-center justify-center">
-                                    <div className="w-32 h-32 rounded-full bg-white/5 animate-pulse" />
+                                    <div className="w-32 h-32 rounded-full bg-surface animate-pulse" />
                                 </div>
                             )}
                         </div>
 
                         <div className="flex-1 flex flex-col justify-center items-center text-center">
-                            <h2 className="text-4xl font-black tracking-tighter uppercase italic relative">
+                            <h2 className="text-4xl font-display leading-none tracking-wide uppercase relative">
                                 <div>
-                                    <span className="block text-white/80 text-2xl mb-1">{player.first_name}</span>
-                                    <span className="block text-transparent bg-clip-text bg-gradient-to-r from-white via-gray-200 to-gray-500">
+                                    <span className="block text-foreground text-2xl mb-1">{player.first_name}</span>
+                                    <span className="block text-transparent bg-clip-text bg-gradient-to-r from-foreground via-foreground/85 to-foreground/55">
                                         {player.last_name}
                                     </span>
                                 </div>
@@ -205,11 +205,11 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                             )}
 
                             <div className="mt-4 flex items-center gap-3">
-                                <span className="text-6xl font-black opacity-20 select-none">
+                                <span className="text-6xl font-display leading-none tracking-wide opacity-20 select-none">
                                     #{player.number}
                                 </span>
                                 {player.is_captain && (
-                                    <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 rounded text-xs font-bold uppercase tracking-widest">
+                                    <span className="px-3 py-1 bg-warning/20 text-warning border border-warning/50 rounded-md text-xs font-bold uppercase tracking-widest">
                                         Captain
                                     </span>
                                 )}
@@ -219,7 +219,7 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                         {/* Toggle Button - Front */}
                         <button
                             onClick={() => setShowStats(!showStats)}
-                            className="mt-4 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors backdrop-blur-sm text-sm font-bold flex items-center gap-1 self-center"
+                            className="mt-4 px-4 py-2 rounded-full bg-surface-2 hover:bg-surface-3 text-foreground transition-colors backdrop-blur-sm text-sm font-bold flex items-center gap-1 self-center"
                         >
                             <span>Stats</span>
                             <ChevronRight size={16} />
@@ -228,7 +228,7 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
 
                     {/* Back of Card - Stats */}
                     <div
-                        className="absolute inset-0 backface-hidden bg-white/10 backdrop-blur-sm rounded-lg overflow-hidden p-6 flex flex-col bg-gradient-to-b from-white/5 to-transparent"
+                        className="absolute inset-0 backface-hidden bg-surface-2 border border-border backdrop-blur-sm rounded-xl overflow-hidden p-6 flex flex-col"
                         style={{
                             backfaceVisibility: "hidden",
                             transform: "rotateY(180deg)"
@@ -239,7 +239,7 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                         {/* Toggle Button - Back */}
                         <button
                             onClick={() => setShowStats(!showStats)}
-                            className="mt-4 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors backdrop-blur-sm text-sm font-bold flex items-center gap-1 self-center"
+                            className="mt-4 px-4 py-2 rounded-full bg-surface-2 hover:bg-surface-3 text-foreground transition-colors backdrop-blur-sm text-sm font-bold flex items-center gap-1 self-center"
                         >
                             <ChevronLeft size={16} />
                             <span>Close</span>

@@ -655,28 +655,28 @@ export function PointEventEditor({
     <div
       ref={rootRef}
       tabIndex={-1}
-      className={`relative flex flex-col rounded-xl border bg-black/40 focus:outline-none select-none transition-colors ${editable ? "border-amber-300/40" : "border-white/10"}`}
+      className={`relative flex flex-col rounded-xl border bg-surface select-none transition-colors ${editable ? "border-amber-300/40" : "border-white/10"}`}
     >
       {/* Header */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 border-b border-white/10 text-xs">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 border-b border-border text-xs">
         {onCollapse && (
-          <button type="button" onClick={onCollapse} title="Hide point timeline" aria-label="Hide point timeline" aria-expanded className="-ml-1 p-0.5 rounded text-white/40 hover:text-white hover:bg-white/10">
+          <button type="button" onClick={onCollapse} title="Hide point timeline" aria-label="Hide point timeline" aria-expanded className="-ml-1 p-0.5 rounded-md text-fg-muted hover:text-foreground hover:bg-surface-2">
             <ChevronRight size={13} className="rotate-90" />
           </button>
         )}
-        <span className="font-semibold text-white/80">Point {point.pointNumber}</span>
-        <span className="text-white/40">{point.lineType}-line</span>
-        <span className="font-mono text-white/40">{point.voidScoreBefore}–{point.opponentScoreBefore}</span>
-        <span className="hidden sm:inline text-white/25">· {events.length} event{events.length === 1 ? "" : "s"}</span>
+        <span className="font-semibold text-foreground">Point {point.pointNumber}</span>
+        <span className="text-fg-muted">{point.lineType}-line</span>
+        <span className="font-mono text-fg-muted">{point.voidScoreBefore}–{point.opponentScoreBefore}</span>
+        <span className="hidden sm:inline text-fg-faint">· {events.length} event{events.length === 1 ? "" : "s"}</span>
         <button
           type="button"
           onClick={editable ? () => setLineOpen(o => !o) : undefined}
           disabled={!editable}
           title={editable ? "Edit line (⇧L)" : "Line"}
-          className={`flex items-center gap-1 min-w-0 px-1.5 py-0.5 rounded-md border transition-colors disabled:cursor-default ${lineOpen ? "border-white/30 bg-white/10" : editable ? "border-white/10 hover:border-white/25" : "border-transparent"}`}
+          className={`flex items-center gap-1 min-w-0 px-1.5 py-0.5 rounded-md border transition-colors disabled:cursor-default ${lineOpen ? "border-border-strong bg-surface-2" : editable ? "border-border hover:border-border-strong" : "border-transparent"}`}
         >
-          <span className="text-white/40">Line</span>
-          <span className={`font-mono truncate ${point.playerIds.length === 7 || !editable ? "text-white/70" : "text-amber-300"}`}>
+          <span className="text-fg-muted">Line</span>
+          <span className={`font-mono truncate ${point.playerIds.length === 7 || !editable ? "text-fg-secondary" : "text-warning"}`}>
             {point.playerIds.length === 0
               ? "—"
               : point.playerIds
@@ -691,10 +691,10 @@ export function PointEventEditor({
           {editable && (
             <>
               <SaveIndicator status={saveStatus} error={saveError} incomplete={incomplete} onRetry={onRetrySave} />
-              <span className="w-px h-4 bg-white/10 mx-1.5" />
+              <span className="w-px h-4 bg-surface-2 mx-1.5" />
               <IconButton label="Undo (⌘Z)" onClick={undo} disabled={!canUndo}><Undo2 size={14} /></IconButton>
               <IconButton label="Redo (⇧⌘Z)" onClick={redo} disabled={!canRedo}><Redo2 size={14} /></IconButton>
-              <span className="w-px h-4 bg-white/10 mx-1.5" />
+              <span className="w-px h-4 bg-surface-2 mx-1.5" />
               <IconButton label={`Snapping ${snapEnabled ? "on" : "off"} (hold Alt to bypass)`} onClick={() => setSnapEnabled(s => !s)} active={snapEnabled}>
                 <Magnet size={14} />
               </IconButton>
@@ -709,7 +709,7 @@ export function PointEventEditor({
               type="button"
               onClick={onToggleEdit}
               title={editable ? "Done editing (E)" : "Edit events (E)"}
-              className={`ml-1.5 flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] transition-colors ${editable ? "border-amber-300/50 bg-amber-300/15 text-amber-200 hover:bg-amber-300/25" : "border-white/15 text-white/60 hover:text-white hover:border-white/30"}`}
+              className={`ml-1.5 flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] transition-colors ${editable ? "border-warning/50 bg-warning/15 text-warning hover:bg-warning/25" : "border-border text-fg-secondary hover:text-foreground hover:border-border-strong"}`}
             >
               {editable ? <Check size={12} /> : <Pencil size={11} />}
               {editable ? "Done" : "Edit"}
@@ -720,10 +720,10 @@ export function PointEventEditor({
 
       {/* Tracks */}
       <div className="flex">
-        <div className="shrink-0 border-r border-white/5" style={{ width: GUTTER }}>
+        <div className="shrink-0 border-r border-border" style={{ width: GUTTER }}>
           <div style={{ height: RULER_H }} />
           {LANES.map(l => (
-            <div key={l.key} className="flex items-center px-2 text-[10px] uppercase tracking-wider text-white/30 border-t border-white/5" style={{ height: laneHeight(l.rows) }}>
+            <div key={l.key} className="flex items-center px-2 text-[11px] uppercase tracking-wider text-fg-muted border-t border-border" style={{ height: laneHeight(l.rows) }}>
               {l.label}
             </div>
           ))}
@@ -739,11 +739,11 @@ export function PointEventEditor({
           onPointerCancel={() => setInter(null)}
         >
           {/* Ruler */}
-          <div className="absolute inset-x-0 top-0 cursor-ew-resize bg-white/[0.02] border-b border-white/10" style={{ height: RULER_H }}>
+          <div className="absolute inset-x-0 top-0 cursor-ew-resize bg-surface border-b border-border" style={{ height: RULER_H }}>
             {ticks.list.map(t => (
               <div key={t} className="absolute top-0 bottom-0" style={{ left: msToX(t) }}>
-                <div className={`absolute bottom-0 w-px ${t === 0 ? "h-full bg-white/50" : "h-1.5 bg-white/20"}`} />
-                <span className="absolute top-0.5 left-1 text-[9px] font-mono text-white/35 whitespace-nowrap">
+                <div className={`absolute bottom-0 w-px ${t === 0 ? "h-full bg-foreground/50" : "h-1.5 bg-surface-3"}`} />
+                <span className="absolute top-0.5 left-1 text-[11px] font-mono text-fg-muted whitespace-nowrap">
                   {formatPointTime(t, ticks.step < 1000)}
                 </span>
               </div>
@@ -752,10 +752,10 @@ export function PointEventEditor({
 
           {/* Lane separators + gridlines */}
           {LANES.map((l, i) => (
-            <div key={l.key} className="absolute inset-x-0 border-t border-white/5 pointer-events-none" style={{ top: LANE_TOPS[i], height: laneHeight(l.rows) }} />
+            <div key={l.key} className="absolute inset-x-0 border-t border-border pointer-events-none" style={{ top: LANE_TOPS[i], height: laneHeight(l.rows) }} />
           ))}
           {ticks.list.map(t => (
-            <div key={`g${t}`} className={`absolute w-px pointer-events-none ${t === 0 ? "bg-white/20" : "bg-white/[0.04]"}`} style={{ left: msToX(t), top: RULER_H, bottom: 0 }} />
+            <div key={`g${t}`} className={`absolute w-px pointer-events-none ${t === 0 ? "bg-surface-3" : "bg-surface"}`} style={{ left: msToX(t), top: RULER_H, bottom: 0 }} />
           ))}
 
           {/* Before the point starts — events can't go here */}
@@ -769,7 +769,7 @@ export function PointEventEditor({
 
           {/* Snap guide */}
           {drag?.snapMs != null && (
-            <div className="absolute top-0 bottom-0 w-px bg-amber-300/80 pointer-events-none z-20" style={{ left: msToX(drag.snapMs) }} />
+            <div className="absolute top-0 bottom-0 w-px bg-warning/80 pointer-events-none z-20" style={{ left: msToX(drag.snapMs) }} />
           )}
 
           {/* Chips */}
@@ -785,10 +785,10 @@ export function PointEventEditor({
                 onDoubleClick={isGhost || !editable ? undefined : () => editPlayers(ev)}
                 title={`${meta.label}${detail ? ` · ${detail}` : ""} · ${formatPointTime(displayOffset(ev), true)}`}
                 className={[
-                  "absolute flex items-center gap-1 pr-1.5 rounded-md text-[10px] font-medium whitespace-nowrap overflow-hidden transition-[box-shadow,background-color] duration-75",
-                  isGhost ? "border border-dashed border-white/50 bg-white/10 text-white/70"
-                    : isSel ? `bg-white/25 text-white ring-1 ring-white/90 z-10 ${editable ? "cursor-grab" : "cursor-pointer"}`
-                    : `bg-white/[0.08] text-white/80 hover:bg-white/15 ${editable ? "cursor-grab" : "cursor-pointer"}`,
+                  "absolute flex items-center gap-1 pr-1.5 rounded-md text-[11px] font-medium whitespace-nowrap overflow-hidden transition-[box-shadow,background-color] duration-75",
+                  isGhost ? "border border-dashed border-border-strong bg-surface-2 text-fg-secondary"
+                    : isSel ? `bg-surface-3 text-foreground ring-1 ring-foreground z-10 ${editable ? "cursor-grab" : "cursor-pointer"}`
+                    : `bg-surface-2 text-foreground hover:bg-surface-2 ${editable ? "cursor-grab" : "cursor-pointer"}`,
                   !complete && !isGhost && editable ? "outline outline-1 outline-dashed outline-amber-300/70" : "",
                 ].join(" ")}
                 style={{ left: x, top: y, width: w, height: CHIP_H }}
@@ -802,7 +802,7 @@ export function PointEventEditor({
           {/* Marquee */}
           {interaction?.kind === "marquee" && interaction.moved && (
             <div
-              className="absolute border border-sky-300/70 bg-sky-300/10 pointer-events-none z-20"
+              className="absolute border border-brand/70 bg-brand/10 pointer-events-none z-20"
               style={{
                 left: Math.min(interaction.x0, interaction.x1),
                 top: Math.min(interaction.y0, interaction.y1),
@@ -814,15 +814,15 @@ export function PointEventEditor({
 
           {/* Drag delta readout */}
           {drag && (
-            <div className="absolute top-0.5 right-2 z-30 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-mono text-white/80 pointer-events-none">
+            <div className="absolute top-0.5 right-2 z-30 px-1.5 py-0.5 rounded-md bg-black/80 text-[11px] font-mono text-white/90 pointer-events-none">
               {drag.deltaMs >= 0 ? "+" : "−"}{(Math.abs(drag.deltaMs) / 1000).toFixed(2)}s
             </div>
           )}
 
           {/* Playhead */}
           <div ref={playheadRef} className="absolute top-0 bottom-0 left-0 pointer-events-none z-30" style={{ opacity: 0 }}>
-            <div className="absolute top-0 bottom-0 w-px bg-red-400" />
-            <div className="absolute top-0 -translate-x-1/2 w-2.5 h-2.5 rotate-45 -mt-1.5 bg-red-400" />
+            <div className="absolute top-0 bottom-0 w-px bg-destructive" />
+            <div className="absolute top-0 -translate-x-1/2 w-2.5 h-2.5 rotate-45 -mt-1.5 bg-destructive" />
             <span ref={playheadLabelRef} className="absolute top-0.5 left-1.5 text-[9px] font-mono text-red-300 bg-black/70 rounded px-0.5" />
           </div>
 
@@ -844,17 +844,17 @@ export function PointEventEditor({
       </div>
 
       {/* Inspector / hints */}
-      <div className="flex items-center gap-3 px-3 py-1.5 border-t border-white/10 min-h-[34px] text-[11px]">
+      <div className="flex items-center gap-3 px-3 py-1.5 border-t border-border min-h-[34px] text-[11px]">
         {!editable ? (
           single ? (
             <>
               <span className={POINT_EVENT_META[single.eventType].text}>{POINT_EVENT_META[single.eventType].label}</span>
-              {describe(single) && <span className="text-white/70 truncate">{describe(single)}</span>}
-              <span className="font-mono text-white/40">{formatPointTime(offsets.get(single.id) ?? 0, true)}</span>
-              <span className="ml-auto text-white/30"><Kbd>Tab</Kbd> next event</span>
+              {describe(single) && <span className="text-fg-secondary truncate">{describe(single)}</span>}
+              <span className="font-mono text-fg-muted">{formatPointTime(offsets.get(single.id) ?? 0, true)}</span>
+              <span className="ml-auto text-fg-muted"><Kbd>Tab</Kbd> next event</span>
             </>
           ) : (
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-white/30">
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-fg-muted">
               Click an event to jump to it · <Kbd>Tab</Kbd><Kbd>⇧Tab</Kbd> step through events
               {onToggleEdit && <> · <Kbd>E</Kbd> edit</>}
             </span>
@@ -864,39 +864,39 @@ export function PointEventEditor({
             <select
               value={single.eventType}
               onChange={e => changeType(single, e.target.value as PointEventType)}
-              className={`bg-white/5 border border-white/10 rounded-md px-1.5 py-0.5 text-[11px] focus:outline-none focus:border-white/25 ${POINT_EVENT_META[single.eventType].text}`}
+              className={`bg-surface border border-border rounded-md px-1.5 py-0.5 text-[11px] focus:border-border-strong ${POINT_EVENT_META[single.eventType].text}`}
             >
-              {POINT_EVENT_TYPES.map(t => <option key={t} value={t} className="bg-neutral-900 text-white">{POINT_EVENT_META[t].label}</option>)}
+              {POINT_EVENT_TYPES.map(t => <option key={t} value={t} className="bg-card text-foreground">{POINT_EVENT_META[t].label}</option>)}
             </select>
             {pickerStepFor(single.eventType) && (
               <button
                 onClick={() => editPlayers(single)}
-                className={`truncate max-w-[220px] px-2 py-0.5 rounded-md border transition-colors ${isEventComplete(single) ? "border-white/10 text-white/70 hover:border-white/25" : "border-amber-300/50 text-amber-200 hover:border-amber-300"}`}
+                className={`truncate max-w-[220px] px-2 py-0.5 rounded-md border transition-colors ${isEventComplete(single) ? "border-border text-fg-secondary hover:border-border-strong" : "border-warning/50 text-warning hover:border-warning"}`}
                 title="Change (Enter)"
               >
                 {describe(single) || "Set…"}
               </button>
             )}
-            <span className="font-mono text-white/40">{formatPointTime(offsets.get(single.id) ?? 0, true)}</span>
-            <span className="ml-auto flex items-center gap-2 text-white/30">
+            <span className="font-mono text-fg-muted">{formatPointTime(offsets.get(single.id) ?? 0, true)}</span>
+            <span className="ml-auto flex items-center gap-2 text-fg-muted">
               <Kbd>,</Kbd><Kbd>.</Kbd> nudge <Kbd>M</Kbd> to playhead
-              <button onClick={deleteSelected} className="ml-1 text-white/40 hover:text-red-400 transition-colors" aria-label="Delete event">
+              <button onClick={deleteSelected} className="ml-1 text-fg-muted hover:text-destructive transition-colors" aria-label="Delete event">
                 <Trash2 size={13} />
               </button>
             </span>
           </>
         ) : selectedEvents.length > 1 ? (
           <>
-            <span className="text-white/70">{selectedEvents.length} selected</span>
-            <span className="flex items-center gap-2 text-white/30">
+            <span className="text-fg-secondary">{selectedEvents.length} selected</span>
+            <span className="flex items-center gap-2 text-fg-muted">
               drag or <Kbd>,</Kbd><Kbd>.</Kbd> to nudge · <Kbd>M</Kbd> to playhead · <Kbd>⌫</Kbd> delete
             </span>
-            <button onClick={deleteSelected} className="ml-auto text-white/40 hover:text-red-400 transition-colors" aria-label="Delete selected events">
+            <button onClick={deleteSelected} className="ml-auto text-fg-muted hover:text-destructive transition-colors" aria-label="Delete selected events">
               <Trash2 size={13} />
             </button>
           </>
         ) : (
-          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-white/30">
+          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-fg-muted">
             Add at playhead:
             {POINT_EVENT_TYPES.map(t => (
               <span key={t} className="flex items-center gap-1">
@@ -904,7 +904,7 @@ export function PointEventEditor({
                 <span className={POINT_EVENT_META[t].text}>{POINT_EVENT_META[t].short}</span>
               </span>
             ))}
-            <span className="text-white/20">·</span>
+            <span className="text-fg-faint">·</span>
             <Kbd>⇧M</Kbd> sync point to playhead
           </span>
         )}
@@ -913,7 +913,7 @@ export function PointEventEditor({
       {iframeHasFocus && (
         <button
           onClick={reclaimFocus}
-          className="absolute inset-x-0 bottom-0 z-50 py-1.5 rounded-b-xl bg-amber-400/15 border-t border-amber-300/30 text-[11px] text-amber-200 hover:bg-amber-400/25 transition-colors"
+          className="absolute inset-x-0 bottom-0 z-50 py-1.5 rounded-b-xl bg-warning/15 border-t border-warning/30 text-[11px] text-warning hover:bg-warning/25 transition-colors"
         >
           Shortcuts paused while the YouTube player has focus — click here to resume
         </button>
@@ -947,7 +947,7 @@ function IconButton({ label, onClick, disabled, active, children }: {
       aria-label={label}
       onClick={onClick}
       disabled={disabled}
-      className={`p-1 rounded-md transition-colors disabled:opacity-25 disabled:cursor-default ${active ? "text-amber-300 bg-white/10" : "text-white/50 hover:text-white hover:bg-white/10"}`}
+      className={`p-1 rounded-md transition-colors disabled:opacity-25 disabled:cursor-default ${active ? "text-warning bg-surface-2" : "text-fg-muted hover:text-foreground hover:bg-surface-2"}`}
     >
       {children}
     </button>
@@ -956,7 +956,7 @@ function IconButton({ label, onClick, disabled, active, children }: {
 
 function Kbd({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded border border-white/15 bg-white/5 font-mono text-[9px] text-white/60">
+    <kbd className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-md border border-border bg-surface font-mono text-[11px] text-fg-secondary">
       {children}
     </kbd>
   )
@@ -967,14 +967,14 @@ function SaveIndicator({ status, error, incomplete, onRetry }: {
 }) {
   if (status === "error") {
     return (
-      <button onClick={onRetry} title={error ?? undefined} className="flex items-center gap-1 text-red-300 hover:text-red-200 px-1">
+      <button onClick={onRetry} title={error ?? undefined} className="flex items-center gap-1 text-destructive hover:text-destructive px-1">
         <AlertCircle size={13} /> Save failed · Retry
       </button>
     )
   }
   return (
-    <span className="flex items-center gap-1.5 px-1 text-white/40">
-      {incomplete > 0 && <span className="text-amber-300/90">{incomplete} need{incomplete === 1 ? "s" : ""} a player ·</span>}
+    <span className="flex items-center gap-1.5 px-1 text-fg-muted">
+      {incomplete > 0 && <span className="text-warning/90">{incomplete} need{incomplete === 1 ? "s" : ""} a player ·</span>}
       {status === "saving" || status === "pending"
         ? <><Loader2 size={12} className="animate-spin" /> Saving</>
         : <><Check size={12} /> Saved</>}
@@ -1007,16 +1007,16 @@ const SHORTCUTS: [string, string][] = [
 
 function ShortcutHelp({ onClose }: { onClose: () => void }) {
   return (
-    <div className="absolute right-2 top-10 z-50 w-[340px] rounded-xl border border-white/15 bg-neutral-950/95 backdrop-blur-sm shadow-2xl p-3">
+    <div className="absolute right-2 top-10 z-50 w-[340px] rounded-xl border border-border-strong bg-card shadow-2xl p-3">
       <div className="flex items-center mb-2">
-        <span className="text-xs font-semibold text-white/80">Keyboard shortcuts</span>
-        <button onClick={onClose} className="ml-auto text-white/40 hover:text-white text-xs">Esc</button>
+        <span className="text-xs font-semibold text-foreground">Keyboard shortcuts</span>
+        <button onClick={onClose} className="ml-auto text-fg-muted hover:text-foreground text-xs">Esc</button>
       </div>
       <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11px]">
         {SHORTCUTS.map(([k, d]) => (
           <div key={k} className="contents">
-            <span className="font-mono text-white/60 whitespace-nowrap">{k}</span>
-            <span className="text-white/45">{d}</span>
+            <span className="font-mono text-fg-secondary whitespace-nowrap">{k}</span>
+            <span className="text-fg-muted">{d}</span>
           </div>
         ))}
       </div>

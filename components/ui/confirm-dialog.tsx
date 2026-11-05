@@ -9,28 +9,34 @@ type ConfirmDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   title: string
-  description: string
+  description: React.ReactNode
+  /** Names the action, e.g. "Delete track". */
   confirmLabel?: string
+  cancelLabel?: string
+  /** Destructive (default) renders the confirm button in the destructive style. */
+  destructive?: boolean
   isLoading?: boolean
   onConfirm: () => void
 }
 
+/** Replaces window.confirm(). Controlled: keep `open` in state and close it in onConfirm. */
 export function ConfirmDialog({
-  open, onOpenChange, title, description, confirmLabel = "Delete", isLoading, onConfirm,
+  open, onOpenChange, title, description, confirmLabel = "Delete", cancelLabel = "Cancel",
+  destructive = true, isLoading, onConfirm,
 }: ConfirmDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-black border-white/10 text-white max-w-sm">
+      <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription className="text-white/50">{description}</DialogDescription>
+          <DialogDescription className="text-fg-muted">{description}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="ghost" className="text-white/60 hover:text-white" onClick={() => onOpenChange(false)} disabled={isLoading}>
-            Cancel
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isLoading}>
+            {cancelLabel}
           </Button>
-          <Button variant="destructive" onClick={onConfirm} disabled={isLoading}>
-            {isLoading ? "Deleting…" : confirmLabel}
+          <Button variant={destructive ? "destructive" : "default"} onClick={onConfirm} loading={isLoading}>
+            {confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

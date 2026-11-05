@@ -31,7 +31,7 @@ export function scorePlayer(value: string, search: string) {
 }
 
 const itemClass =
-  "flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-white/70 cursor-pointer data-[selected=true]:bg-white/15 data-[selected=true]:text-white"
+  "flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-fg-secondary cursor-pointer data-[selected=true]:bg-surface-2 data-[selected=true]:text-foreground"
 
 /** Keyboard-first picker: type a jersey number or name, Enter to pick, Esc to cancel */
 export function PlayerPicker({ mode, players, onPick, onCancel, className, style }: PlayerPickerProps) {
@@ -64,19 +64,19 @@ export function PlayerPicker({ mode, players, onPick, onCancel, className, style
     }
   }
 
-  const panelClass = `w-64 rounded-xl border border-white/15 bg-neutral-950/95 backdrop-blur-sm shadow-2xl shadow-black/60 overflow-hidden ${className ?? ""}`
+  const panelClass = `w-64 rounded-xl border border-border-strong bg-card shadow-2xl shadow-black/60 overflow-hidden ${className ?? ""}`
 
   if (mode.kind === "team") {
     return (
       <Command ref={rootRef} className={panelClass} style={style} onKeyDown={onKeyDown} shouldFilter={false} loop>
-        <p className="px-3 pt-2.5 pb-1 text-[10px] uppercase tracking-widest text-white/40">{mode.title}</p>
+        <p className="px-3 pt-2.5 pb-1 text-[11px] uppercase tracking-widest text-fg-muted">{mode.title}</p>
         <Command.Input autoFocus className="sr-only" aria-label="Team" />
         <Command.List className="p-1.5">
           <Command.Item value="VOID" onSelect={() => onPick("VOID")} className={itemClass}>
-            <kbd className="font-mono text-[10px] text-white/40 w-4">V</kbd> Void
+            <kbd className="font-mono text-[11px] text-fg-muted w-4">V</kbd> Void
           </Command.Item>
           <Command.Item value="OPP" onSelect={() => onPick("OPP")} className={itemClass}>
-            <kbd className="font-mono text-[10px] text-white/40 w-4">O</kbd> Opponent
+            <kbd className="font-mono text-[11px] text-fg-muted w-4">O</kbd> Opponent
           </Command.Item>
         </Command.List>
       </Command>
@@ -97,28 +97,28 @@ export function PlayerPicker({ mode, players, onPick, onCancel, className, style
       onSelect={() => onPick(p.id)}
       className={itemClass}
     >
-      <span className="font-mono text-white/40 w-6 text-right tabular-nums">{p.number}</span>
+      <span className="font-mono text-fg-muted w-6 text-right tabular-nums">{p.number}</span>
       <span className="truncate">{p.first_name} {p.last_name}</span>
     </Command.Item>
   )
 
   return (
     <Command ref={rootRef} className={panelClass} style={style} onKeyDown={onKeyDown} filter={scorePlayer} loop>
-      <p className="px-3 pt-2.5 pb-1 text-[10px] uppercase tracking-widest text-white/40">{mode.title}</p>
+      <p className="px-3 pt-2.5 pb-1 text-[11px] uppercase tracking-widest text-fg-muted">{mode.title}</p>
       <Command.Input
         autoFocus
         placeholder="Number or name…"
-        className="w-full bg-transparent border-b border-white/10 px-3 py-2 text-sm text-white placeholder:text-white/25 focus:outline-none"
+        className="w-full bg-transparent border-b border-border px-3 py-2 text-sm text-foreground placeholder:text-fg-faint"
       />
       <Command.List className="max-h-56 overflow-y-auto p-1.5">
-        <Command.Empty className="px-2.5 py-2 text-xs text-white/30">No matching players</Command.Empty>
+        <Command.Empty className="px-2.5 py-2 text-xs text-fg-muted">No matching players</Command.Empty>
         {preferred.length > 0 && (
-          <Command.Group heading="On the line" className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:text-white/30">
+          <Command.Group heading="On the line" className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:text-fg-muted">
             {preferred.map(renderItem)}
           </Command.Group>
         )}
         {others.length > 0 && (
-          <Command.Group heading={preferred.length > 0 ? "Others" : "Players"} className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:text-white/30">
+          <Command.Group heading={preferred.length > 0 ? "Others" : "Players"} className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:text-fg-muted">
             {others.map(renderItem)}
           </Command.Group>
         )}

@@ -53,8 +53,8 @@ export function VoidLiveTabs({ onClose }: VoidLiveTabsProps) {
             className={[
               "px-4 py-2 text-sm font-medium rounded-md transition-colors",
               activeTab === tab.id
-                ? "bg-white/15 text-white"
-                : "text-white/40 hover:text-white/70 hover:bg-white/5",
+                ? "bg-surface-2 text-foreground"
+                : "text-fg-muted hover:text-foreground hover:bg-surface-2",
             ].join(" ")}
           >
             {tab.label}
@@ -68,7 +68,7 @@ export function VoidLiveTabs({ onClose }: VoidLiveTabsProps) {
           <Button
             variant="ghost"
             size="xs"
-            className="text-white/40 hover:text-white hover:bg-white/10"
+            className="text-fg-muted hover:text-foreground hover:bg-surface-2"
             onClick={() => { signOut(); onClose() }}
           >
             Sign out
@@ -77,7 +77,7 @@ export function VoidLiveTabs({ onClose }: VoidLiveTabsProps) {
       </div>
 
       {/* Content */}
-      <div className="px-6 py-4 text-white">
+      <div className="px-6 py-4 text-foreground">
         {activeTab === "photos" && <UserPanel />}
         {activeTab === "events" && isCoachOrAdmin && <EventsPanel />}
         {activeTab === "users" && isAdmin && <AdminPanel />}

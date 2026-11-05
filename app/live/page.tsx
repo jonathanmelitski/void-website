@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EventCard } from "@/components/gallery/EventCard"
 import type { GalleryEvent } from "@/models/GalleryModels"
+import { Spinner } from "@/components/ui/spinner"
 
 function getHighestRole(groups: string[]) {
   if (groups.includes("ADMIN")) return "ADMIN"
@@ -65,8 +66,8 @@ export default function LivePage() {
 
   if (isLoading || !user) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+      <div className="flex items-center justify-center min-h-[50dvh]">
+        <Spinner size="md" />
       </div>
     )
   }
@@ -77,15 +78,15 @@ export default function LivePage() {
     <div className="flex flex-col p-8 lg:px-16 gap-8 text-left">
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-4xl font-black">Void Live</h1>
-          <p className="text-white/50 mt-1 text-sm">{user.email}</p>
+          <h1 className="text-4xl font-display leading-none tracking-wide">Void Live</h1>
+          <p className="text-fg-muted mt-1 text-sm">{user.email}</p>
         </div>
         <div className="flex items-center gap-3">
           <Badge variant={ROLE_VARIANT[role] ?? "outline"}>{role}</Badge>
           <Button
             variant="ghost"
             size="sm"
-            className="text-white/40 hover:text-white hover:bg-white/10"
+            className="text-fg-muted hover:text-foreground hover:bg-surface-2"
             onClick={() => router.push("/live/manage")}
             onMouseEnter={managePrefetch.onMouseEnter}
           >
@@ -94,7 +95,7 @@ export default function LivePage() {
           <Button
             variant="ghost"
             size="sm"
-            className="text-white/40 hover:text-white hover:bg-white/10"
+            className="text-fg-muted hover:text-foreground hover:bg-surface-2"
             onClick={() => signOut().then(() => router.push("/live/login"))}
           >
             Sign out
@@ -106,12 +107,12 @@ export default function LivePage() {
         <h2 className="text-xl font-bold mb-4">Events</h2>
         {eventsLoading ? (
           <div className="flex items-center justify-center py-16">
-            <div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+            <Spinner size="md" />
           </div>
         ) : eventsError ? (
-          <p className="text-red-400/70 text-sm py-16 text-center">Failed to load events — {eventsError}</p>
+          <p className="text-destructive/70 text-sm py-16 text-center">Failed to load events — {eventsError}</p>
         ) : events.length === 0 ? (
-          <p className="text-white/40 text-sm py-16 text-center">No events yet.</p>
+          <p className="text-fg-muted text-sm py-16 text-center">No events yet.</p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {events.map(event => (

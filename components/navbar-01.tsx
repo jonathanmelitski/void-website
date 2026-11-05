@@ -159,7 +159,7 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
       <header
         ref={combinedRef}
         className={cn(
-          'sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 md:px-6 [&_*]:no-underline',
+          'sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 md:px-6 [&_*]:no-underline',
           className
         )}
         {...props}
@@ -177,6 +177,7 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
                     size="icon"
                   >
                     <HamburgerIcon />
+                    <span className="sr-only">Menu</span>
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent align="start" className="w-48 p-2">
@@ -215,7 +216,7 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
                       <NavigationMenuItem key={index}>
                         <Link href={link.href}
                           className={cn(
-                            "group inline-flex h-9 w-max items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 cursor-pointer no-underline",
+                            "group inline-flex h-9 w-max items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 cursor-pointer no-underline",
                             link.active
                               ? "bg-accent text-accent-foreground"
                               : "text-foreground/80 hover:text-foreground"
@@ -234,10 +235,10 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
             {/* Live badge — shown when a game is IN_PROGRESS */}
             {liveGame && (
               <Link href={`/live/watch/${liveGame.id}`}>
-                <span className="flex items-center gap-1.5 text-xs font-medium text-red-400 border border-red-400/30 bg-red-400/10 px-2.5 py-1 rounded-full cursor-pointer hover:bg-red-400/20 transition-colors">
+                <span className="flex items-center gap-1.5 text-xs font-medium text-destructive border border-destructive/30 bg-destructive/10 px-2.5 py-1 rounded-full cursor-pointer hover:bg-destructive/20 transition-colors">
                   <span className="relative flex h-1.5 w-1.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-400" />
+                    <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full bg-destructive opacity-75" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-destructive" />
                   </span>
                   Live vs. {liveGame.opponent}
                 </span>
@@ -249,7 +250,7 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
               {liveGame && (
                 <>
                   <div
-                    className="absolute inset-[-2px] rounded-lg z-0 pointer-events-none"
+                    className="absolute inset-[-2px] rounded-xl z-0 pointer-events-none motion-reduce:[animation:none!important]"
                     style={{
                       background: "conic-gradient(from var(--border-angle), #991b1b 0%, #ef4444 20%, #fca5a5 27%, #ef4444 35%, #991b1b 55%, #991b1b 100%)",
                       animation: "border-spotlight 4s linear infinite",
@@ -258,14 +259,13 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
                   <div className="absolute inset-0 rounded-md bg-background z-[1] pointer-events-none" />
                 </>
               )}
-              <Link href="/live" className="relative z-[2]">
-                <Button
-                  size="sm"
-                  className="text-sm font-medium px-4 h-9 rounded-md shadow-sm relative z-[2]"
-                >
-                  {ctaText}
-                </Button>
-              </Link>
+              <Button
+                asChild
+                size="sm"
+                className="text-sm font-medium px-4 h-9 rounded-md shadow-sm relative z-[2]"
+              >
+                <Link href="/live">{ctaText}</Link>
+              </Button>
             </div>
           </div>
         </div>

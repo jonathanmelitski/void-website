@@ -4,6 +4,9 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import type { SendRecord } from "@/lib/aws/sends"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
+import { Spinner } from "@/components/ui/spinner"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { toast } from "@/components/ui/sonner"
 
 type ContactList = { name: string; description?: string }
 type Contact = { email: string; unsubscribed: boolean }
@@ -32,6 +35,8 @@ export function MarketingPanel() {
   const [newListName, setNewListName] = useState("")
   const [newListDesc, setNewListDesc] = useState("")
   const [creatingList, setCreatingList] = useState(false)
+  const [pendingDeleteList, setPendingDeleteList] = useState<string | null>(null)
+  const [deletingList, setDeletingList] = useState(false)
 
   // Contacts modal
   const [contactsModal, setContactsModal] = useState<string | null>(null)
@@ -250,10 +255,25 @@ export function MarketingPanel() {
     }
   }
 
-  async function deleteList(name: string) {
-    if (!confirm(`Delete list "${name}"? This cannot be undone.`)) return
-    await fetch(`/api/marketing/lists/${encodeURIComponent(name)}`, { method: "DELETE" })
-    setLists(prev => prev.filter(l => l.name !== name))
+  function deleteList(name: string) {
+    setPendingDeleteList(name)
+  }
+
+  async function confirmDeleteList() {
+    const name = pendingDeleteList
+    if (!name) return
+    setDeletingList(true)
+    try {
+      const res = await fetch(`/api/marketing/lists/${encodeURIComponent(name)}`, { method: "DELETE" })
+      if (!res.ok) throw new Error()
+      setLists(prev => prev.filter(l => l.name !== name))
+      toast.success(`Deleted "${name}"`)
+      setPendingDeleteList(null)
+    } catch {
+      toast.error(`Couldn't delete "${name}". Try again.`)
+    } finally {
+      setDeletingList(false)
+    }
   }
 
   async function openContacts(listName: string) {
@@ -536,12 +556,12 @@ export function MarketingPanel() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+        <Spinner size="md" />
       </div>
     )
   }
 
-  if (error) return <p className="text-red-400 text-sm">{error}</p>
+  if (error) return <p className="text-destructive text-sm">{error}</p>
 
   return (
     <div className="flex flex-col gap-10">
@@ -553,11 +573,11 @@ export function MarketingPanel() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => router.push("/live/manage/ses-audit")}
-              className="text-xs text-white/30 hover:text-white/70 transition-colors"
+              className="text-xs text-fg-muted hover:text-foreground transition-colors"
             >
               SES Audit →
             </button>
-            <span className="text-white/40 text-xs">{lists.length} list{lists.length !== 1 ? "s" : ""}</span>
+            <span className="text-fg-muted text-xs">{lists.length} list{lists.length !== 1 ? "s" : ""}</span>
           </div>
         </div>
 
@@ -569,61 +589,61 @@ export function MarketingPanel() {
             value={newListName}
             onChange={e => setNewListName(e.target.value)}
             onKeyDown={e => e.key === "Enter" && createList()}
-            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/30"
+            className="flex-1 bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder-white/30 focus:border-border-strong"
           />
           <input
             type="text"
             placeholder="Description (optional)"
             value={newListDesc}
             onChange={e => setNewListDesc(e.target.value)}
-            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/30"
+            className="flex-1 bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder-white/30 focus:border-border-strong"
           />
           <button
             onClick={createList}
             disabled={creatingList || !newListName.trim()}
-            className="px-4 py-2 text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40"
+            className="px-4 py-2 text-sm bg-surface-2 hover:bg-surface-3 text-foreground rounded-xl transition-colors disabled:opacity-40"
           >
             {creatingList ? "Creating…" : "Create"}
           </button>
         </div>
 
         {lists.length === 0 ? (
-          <p className="text-white/40 text-sm">No email lists yet. Create one above.</p>
+          <p className="text-fg-muted text-sm">No email lists yet. Create one above.</p>
         ) : (
           <div className="flex flex-col gap-2">
             {lists.map(list => (
               <div
                 key={list.name}
-                className="flex items-center justify-between bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3"
+                className="flex items-center justify-between bg-surface border border-border rounded-xl px-4 py-3"
               >
                 <div>
                   <p className="font-medium text-sm">{list.name}</p>
                   {list.description && (
-                    <p className="text-white/40 text-xs mt-0.5">{list.description}</p>
+                    <p className="text-fg-muted text-xs mt-0.5">{list.description}</p>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => openContacts(list.name)}
-                    className="px-3 py-1.5 text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+                    className="px-3 py-1.5 text-xs text-fg-secondary hover:text-foreground bg-surface hover:bg-surface-2 rounded-md transition-colors"
                   >
                     Contacts
                   </button>
                   <button
                     onClick={() => openSendDialog(list.name)}
-                    className="px-3 py-1.5 text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+                    className="px-3 py-1.5 text-xs text-fg-secondary hover:text-foreground bg-surface hover:bg-surface-2 rounded-md transition-colors"
                   >
                     Send
                   </button>
                   <button
                     onClick={() => copySubscribeLink(list.name)}
-                    className="px-3 py-1.5 text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+                    className="px-3 py-1.5 text-xs text-fg-secondary hover:text-foreground bg-surface hover:bg-surface-2 rounded-md transition-colors"
                   >
                     {copiedList === list.name ? "Copied!" : "Copy link"}
                   </button>
                   <button
                     onClick={() => deleteList(list.name)}
-                    className="px-3 py-1.5 text-xs text-red-400/60 hover:text-red-400 bg-red-400/5 hover:bg-red-400/10 rounded-lg transition-colors"
+                    className="px-3 py-1.5 text-xs text-destructive/60 hover:text-destructive bg-destructive/5 hover:bg-destructive/10 rounded-md transition-colors"
                   >
                     Delete
                   </button>
@@ -638,16 +658,16 @@ export function MarketingPanel() {
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Send History</h2>
-          <span className="text-white/40 text-xs">{sends.length} send{sends.length !== 1 ? "s" : ""}</span>
+          <span className="text-fg-muted text-xs">{sends.length} send{sends.length !== 1 ? "s" : ""}</span>
         </div>
 
         {sends.length === 0 ? (
-          <p className="text-white/40 text-sm">No sends yet.</p>
+          <p className="text-fg-muted text-sm">No sends yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-white/30 text-xs border-b border-white/10">
+                <tr className="text-fg-muted text-xs border-b border-border">
                   <th className="text-left pb-2 pr-4 font-medium">Newsletter</th>
                   <th className="text-left pb-2 pr-4 font-medium">List</th>
                   <th className="text-left pb-2 pr-4 font-medium">Sent</th>
@@ -658,25 +678,25 @@ export function MarketingPanel() {
               </thead>
               <tbody>
                 {sends.map(s => (
-                  <tr key={s.id} className="border-b border-white/5 hover:bg-white/[0.02]">
-                    <td className="py-2.5 pr-4 text-white/80 max-w-[200px] truncate">{s.newsletterTitle}</td>
-                    <td className="py-2.5 pr-4 text-white/60">
+                  <tr key={s.id} className="border-b border-border hover:bg-surface-2">
+                    <td className="py-2.5 pr-4 text-foreground max-w-[200px] truncate">{s.newsletterTitle}</td>
+                    <td className="py-2.5 pr-4 text-fg-secondary">
                       <span>{s.listName}</span>
                       {s.sendMode === "test" && (
-                        <span className="ml-1.5 text-[10px] bg-yellow-400/10 text-yellow-400 border border-yellow-400/30 px-1.5 py-0.5 rounded-full">test</span>
+                        <span className="ml-1.5 text-[11px] bg-warning/10 text-warning border border-warning/30 px-1.5 py-0.5 rounded-full">test</span>
                       )}
                     </td>
-                    <td className="py-2.5 pr-4 text-white/40 whitespace-nowrap">
+                    <td className="py-2.5 pr-4 text-fg-muted whitespace-nowrap">
                       <span title={s.sentAt}>{timeAgo(s.sentAt)}</span>
                     </td>
-                    <td className="py-2.5 pr-4 text-white/60">{s.sentBy}</td>
-                    <td className="py-2.5 pr-4 text-white/60">{s.recipientCount}</td>
+                    <td className="py-2.5 pr-4 text-fg-secondary">{s.sentBy}</td>
+                    <td className="py-2.5 pr-4 text-fg-secondary">{s.recipientCount}</td>
                     <td className="py-2.5">
                       <div className="flex items-center gap-2">
                         {s.trackingEnabled && (
                           <button
                             onClick={() => router.push(`/live/manage/sends/${s.id}`)}
-                            className="text-xs text-white/50 hover:text-white bg-white/5 hover:bg-white/10 px-2 py-1 rounded transition-colors"
+                            className="text-xs text-fg-muted hover:text-foreground bg-surface hover:bg-surface-2 px-2 py-1 rounded-md transition-colors"
                           >
                             Stats
                           </button>
@@ -684,10 +704,10 @@ export function MarketingPanel() {
                         {s.sendMode !== "test" && (
                           <button
                             onClick={() => openDelivery(s)}
-                            className={`text-xs px-2 py-1 rounded transition-colors ${
+                            className={`text-xs px-2 py-1 rounded-md transition-colors ${
                               (s.failedCount ?? 0) > 0
-                                ? "text-red-400/70 hover:text-red-400 bg-red-400/5 hover:bg-red-400/10"
-                                : "text-white/50 hover:text-white bg-white/5 hover:bg-white/10"
+                                ? "text-destructive/70 hover:text-destructive bg-destructive/5 hover:bg-destructive/10"
+                                : "text-fg-muted hover:text-foreground bg-surface hover:bg-surface-2"
                             }`}
                           >
                             {(s.failedCount ?? 0) > 0 ? `Delivery (${s.failedCount} failed)` : "Delivery"}
@@ -695,7 +715,7 @@ export function MarketingPanel() {
                         )}
                         <button
                           onClick={() => { setDeleteSendTarget(s); setDeleteSendError("") }}
-                          className="text-xs text-red-400/50 hover:text-red-400 bg-red-400/5 hover:bg-red-400/10 px-2 py-1 rounded transition-colors"
+                          className="text-xs text-destructive/50 hover:text-destructive bg-destructive/5 hover:bg-destructive/10 px-2 py-1 rounded-md transition-colors"
                         >
                           Delete
                         </button>
@@ -712,9 +732,9 @@ export function MarketingPanel() {
       {/* Contacts modal */}
       {contactsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-6 max-w-lg w-full mx-4 flex flex-col gap-4 max-h-[80vh]">
+          <div className="bg-card border border-border rounded-xl p-6 max-w-lg w-full mx-4 flex flex-col gap-4 max-h-[80vh]">
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold">Contacts — {contactsModal} <span className="text-white/30 font-normal text-sm">({contacts.length})</span></h3>
+              <h3 className="font-semibold">Contacts — {contactsModal} <span className="text-fg-muted font-normal text-sm">({contacts.length})</span></h3>
               <div className="flex items-center gap-3">
                 {contacts.length > 0 && (
                   <button
@@ -731,14 +751,14 @@ export function MarketingPanel() {
                       a.click()
                       URL.revokeObjectURL(url)
                     }}
-                    className="text-xs text-white/40 hover:text-white/70 transition-colors"
+                    className="text-xs text-fg-muted hover:text-foreground transition-colors"
                   >
                     Download CSV
                   </button>
                 )}
                 <button
                   onClick={() => setContactsModal(null)}
-                  className="text-white/40 hover:text-white text-lg leading-none transition-colors"
+                  className="text-fg-muted hover:text-foreground text-lg leading-none transition-colors"
                 >
                   ×
                 </button>
@@ -748,16 +768,16 @@ export function MarketingPanel() {
             <div className="overflow-y-auto flex-1">
               {contactsLoading ? (
                 <div className="flex items-center justify-center py-8">
-                  <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                  <Spinner size="md" />
                 </div>
               ) : contactsError ? (
-                <p className="text-red-400 text-sm">{contactsError}</p>
+                <p className="text-destructive text-sm">{contactsError}</p>
               ) : contacts.length === 0 ? (
-                <p className="text-white/40 text-sm">No contacts yet.</p>
+                <p className="text-fg-muted text-sm">No contacts yet.</p>
               ) : (
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-white/30 text-xs border-b border-white/10">
+                    <tr className="text-fg-muted text-xs border-b border-border">
                       <th className="text-left pb-2 pr-4 font-medium">Email</th>
                       <th className="text-left pb-2 pr-4 font-medium">Status</th>
                       <th className="text-left pb-2 font-medium"></th>
@@ -765,19 +785,19 @@ export function MarketingPanel() {
                   </thead>
                   <tbody>
                     {[...contacts].sort((a, b) => a.email.localeCompare(b.email)).map(c => (
-                      <tr key={c.email} className="border-b border-white/5">
-                        <td className="py-2.5 pr-4 text-white/80">{c.email}</td>
+                      <tr key={c.email} className="border-b border-border">
+                        <td className="py-2.5 pr-4 text-foreground">{c.email}</td>
                         <td className="py-2.5 pr-4">
                           {c.unsubscribed ? (
-                            <span className="text-xs text-red-400/70 bg-red-400/10 px-2 py-0.5 rounded">Unsubscribed</span>
+                            <span className="text-xs text-destructive/70 bg-destructive/10 px-2 py-0.5 rounded-md">Unsubscribed</span>
                           ) : (
-                            <span className="text-xs text-green-400/70 bg-green-400/10 px-2 py-0.5 rounded">Active</span>
+                            <span className="text-xs text-success/70 bg-success/10 px-2 py-0.5 rounded-md">Active</span>
                           )}
                         </td>
                         <td className="py-2.5">
                           <button
                             onClick={() => removeContact(c.email)}
-                            className="text-xs text-red-400/60 hover:text-red-400 transition-colors"
+                            className="text-xs text-destructive/60 hover:text-destructive transition-colors"
                           >
                             Remove
                           </button>
@@ -789,12 +809,12 @@ export function MarketingPanel() {
               )}
             </div>
 
-            <div className="flex flex-col gap-3 pt-2 border-t border-white/10">
+            <div className="flex flex-col gap-3 pt-2 border-t border-border">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-white/40 font-medium">Add contacts</span>
+                <span className="text-xs text-fg-muted font-medium">Add contacts</span>
                 <button
                   onClick={() => { setBulkMode(m => !m); setBulkText(""); setBulkResult(null) }}
-                  className="text-xs text-white/40 hover:text-white/70 transition-colors"
+                  className="text-xs text-fg-muted hover:text-foreground transition-colors"
                 >
                   {bulkMode ? "Single" : "Bulk add"}
                 </button>
@@ -807,10 +827,10 @@ export function MarketingPanel() {
                     value={bulkText}
                     onChange={e => { setBulkText(e.target.value); setBulkResult(null) }}
                     rows={5}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/30 resize-none font-mono"
+                    className="w-full bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder-white/20 focus:border-border-strong resize-none font-mono"
                   />
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-xs text-white/30">
+                    <span className="text-xs text-fg-muted">
                       {parseBulkEmails(bulkText).length > 0
                         ? `${parseBulkEmails(bulkText).length} email${parseBulkEmails(bulkText).length !== 1 ? "s" : ""} detected`
                         : "Separate by newline or comma"}
@@ -818,37 +838,37 @@ export function MarketingPanel() {
                     <button
                       onClick={bulkAdd}
                       disabled={bulkAdding || parseBulkEmails(bulkText).length === 0}
-                      className="px-4 py-2 text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40 shrink-0"
+                      className="px-4 py-2 text-sm bg-surface-2 hover:bg-surface-3 text-foreground rounded-xl transition-colors disabled:opacity-40 shrink-0"
                     >
                       {bulkAdding ? "Adding…" : `Add ${parseBulkEmails(bulkText).length || ""}`}
                     </button>
                   </div>
                   {bulkResult && (
-                    <div className="text-xs rounded-lg px-3 py-2 bg-white/5 flex flex-col gap-2">
+                    <div className="text-xs rounded-md px-3 py-2 bg-surface flex flex-col gap-2">
                       {bulkResult.added.length > 0 && (
                         <div className="flex flex-col gap-0.5">
-                          <span className="text-green-400/80 font-medium">{bulkResult.added.length} added</span>
-                          <div className="text-green-400/50 font-mono pl-1 flex flex-col gap-0.5">
+                          <span className="text-success/80 font-medium">{bulkResult.added.length} added</span>
+                          <div className="text-success/50 font-mono pl-1 flex flex-col gap-0.5">
                             {bulkResult.added.map(e => <span key={e}>{e}</span>)}
                           </div>
                         </div>
                       )}
                       {bulkResult.skipped.length > 0 && (
                         <div className="flex flex-col gap-0.5">
-                          <span className="text-white/40 font-medium">{bulkResult.skipped.length} already in list</span>
-                          <div className="text-white/25 font-mono pl-1 flex flex-col gap-0.5">
+                          <span className="text-fg-muted font-medium">{bulkResult.skipped.length} already in list</span>
+                          <div className="text-fg-faint font-mono pl-1 flex flex-col gap-0.5">
                             {bulkResult.skipped.map(e => <span key={e}>{e}</span>)}
                           </div>
                         </div>
                       )}
                       {bulkResult.failed.length > 0 && (
                         <div className="flex flex-col gap-0.5">
-                          <span className="text-red-400/80 font-medium">{bulkResult.failed.length} failed</span>
+                          <span className="text-destructive/80 font-medium">{bulkResult.failed.length} failed</span>
                           <div className="pl-1 flex flex-col gap-1">
                             {bulkResult.failed.map(({ email, reason }) => (
                               <div key={email} className="flex flex-col gap-0.5">
-                                <span className="text-red-400/70 font-mono">{email}</span>
-                                <span className="text-red-400/40 pl-2 break-all">{reason}</span>
+                                <span className="text-destructive/70 font-mono">{email}</span>
+                                <span className="text-destructive/40 pl-2 break-all">{reason}</span>
                               </div>
                             ))}
                           </div>
@@ -865,12 +885,12 @@ export function MarketingPanel() {
                     value={newEmail}
                     onChange={e => setNewEmail(e.target.value)}
                     onKeyDown={e => e.key === "Enter" && addContact()}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/30"
+                    className="flex-1 bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder-white/30 focus:border-border-strong"
                   />
                   <button
                     onClick={addContact}
                     disabled={addingContact || !newEmail.trim()}
-                    className="px-4 py-2 text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40"
+                    className="px-4 py-2 text-sm bg-surface-2 hover:bg-surface-3 text-foreground rounded-xl transition-colors disabled:opacity-40"
                   >
                     {addingContact ? "Adding…" : "Add"}
                   </button>
@@ -884,12 +904,12 @@ export function MarketingPanel() {
       {/* Send dialog */}
       {sendDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-6 max-w-md w-full mx-4 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+          <div className="bg-card border border-border rounded-xl p-6 max-w-md w-full mx-4 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="font-semibold">Send to {sendDialog}</h3>
               <button
                 onClick={() => setSendDialog(null)}
-                className="text-white/40 hover:text-white text-lg leading-none transition-colors"
+                className="text-fg-muted hover:text-foreground text-lg leading-none transition-colors"
               >
                 ×
               </button>
@@ -897,14 +917,14 @@ export function MarketingPanel() {
 
             {/* Newsletter picker */}
             <div className="flex flex-col gap-2">
-              <label className="text-xs text-white/40 font-medium">Newsletter</label>
+              <label className="text-xs text-fg-muted font-medium">Newsletter</label>
               <select
                 value={selectedNewsletterId}
                 onChange={e => {
                   setSelectedNewsletterId(e.target.value)
                   setSubject("")
                 }}
-                className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/30"
+                className="bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground focus:border-border-strong"
               >
                 <option value="">Select a newsletter…</option>
                 {newsletters.map(n => (
@@ -914,7 +934,7 @@ export function MarketingPanel() {
                 ))}
               </select>
               {selectedNewsletter && !selectedNewsletter.published && (
-                <p className="text-xs text-yellow-400/70 bg-yellow-400/10 rounded px-2 py-1">
+                <p className="text-xs text-warning/70 bg-warning/10 rounded-md px-2 py-1">
                   This newsletter is unpublished — recipients will still receive it.
                 </p>
               )}
@@ -922,35 +942,35 @@ export function MarketingPanel() {
 
             {/* Subject line */}
             <div className="flex flex-col gap-2">
-              <label className="text-xs text-white/40 font-medium">Subject line</label>
+              <label className="text-xs text-fg-muted font-medium">Subject line</label>
               <input
                 type="text"
                 placeholder={selectedNewsletter?.title ?? "Defaults to newsletter title"}
                 value={subject}
                 onChange={e => setSubject(e.target.value)}
-                className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/30"
+                className="bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder-white/30 focus:border-border-strong"
               />
             </div>
 
             {/* From name + Reply-to row */}
             <div className="flex gap-3">
               <div className="flex flex-col gap-2 flex-1">
-                <label className="text-xs text-white/40 font-medium">From name</label>
+                <label className="text-xs text-fg-muted font-medium">From name</label>
                 <input
                   type="text"
                   value={fromName}
                   onChange={e => setFromName(e.target.value)}
                   placeholder="Void Ultimate"
-                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/30"
+                  className="bg-surface border border-border rounded-md px-3 py-1.5 text-sm text-foreground placeholder-white/30 focus:border-border-strong"
                 />
               </div>
               <div className="flex flex-col gap-2 flex-1">
-                <label className="text-xs text-white/40 font-medium">Reply-to</label>
+                <label className="text-xs text-fg-muted font-medium">Reply-to</label>
                 <input
                   type="email"
                   value={replyTo}
                   onChange={e => setReplyTo(e.target.value)}
-                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/30"
+                  className="bg-surface border border-border rounded-md px-3 py-1.5 text-sm text-foreground placeholder-white/30 focus:border-border-strong"
                 />
               </div>
             </div>
@@ -964,10 +984,10 @@ export function MarketingPanel() {
                   onChange={e => setIncludeWebLink(e.target.checked)}
                   className="accent-white w-3.5 h-3.5"
                 />
-                <span className="text-sm text-white/70">Include "view on web" link</span>
+                <span className="text-sm text-fg-secondary">Include "view on web" link</span>
               </label>
               {includeWebLink && selectedNewsletter && !selectedNewsletter.published && (
-                <p className="text-xs text-yellow-400/70 bg-yellow-400/10 rounded px-2 py-1">
+                <p className="text-xs text-warning/70 bg-warning/10 rounded-md px-2 py-1">
                   Warning: this newsletter is unpublished — the web link will return a 404.
                 </p>
               )}
@@ -978,38 +998,38 @@ export function MarketingPanel() {
                   onChange={e => setTrackingEnabled(e.target.checked)}
                   className="accent-white w-3.5 h-3.5"
                 />
-                <span className="text-sm text-white/70">Enable open &amp; click tracking</span>
+                <span className="text-sm text-fg-secondary">Enable open &amp; click tracking</span>
               </label>
             </div>
 
             {/* Test send */}
-            <div className="flex flex-col gap-2 pt-2 border-t border-white/10">
-              <label className="text-xs text-white/40 font-medium">Test send</label>
+            <div className="flex flex-col gap-2 pt-2 border-t border-border">
+              <label className="text-xs text-fg-muted font-medium">Test send</label>
               <div className="flex gap-2">
                 <input
                   type="email"
                   placeholder="your@email.com"
                   value={testEmail}
                   onChange={e => setTestEmail(e.target.value)}
-                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/30"
+                  className="flex-1 bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder-white/30 focus:border-border-strong"
                 />
                 <button
                   onClick={() => requestTOTP(sendTest)}
                   disabled={sending || !selectedNewsletterId || !testEmail.trim()}
-                  className="px-3 py-2 text-xs bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-40 whitespace-nowrap"
+                  className="px-3 py-2 text-xs bg-surface-2 hover:bg-surface-3 text-foreground rounded-md transition-colors disabled:opacity-40 whitespace-nowrap"
                 >
                   Send test
                 </button>
               </div>
               {testResult && (
                 <div className="flex items-center gap-3">
-                  <p className={`text-xs ${testResult.startsWith("Error") ? "text-red-400" : "text-green-400/80"}`}>
+                  <p className={`text-xs ${testResult.startsWith("Error") ? "text-destructive" : "text-success/80"}`}>
                     {testResult}
                   </p>
                   {testSendId && (
                     <button
                       onClick={() => router.push(`/live/manage/sends/${testSendId}`)}
-                      className="text-xs text-white/40 hover:text-white underline transition-colors"
+                      className="text-xs text-fg-muted hover:text-foreground underline transition-colors"
                     >
                       View stats →
                     </button>
@@ -1023,12 +1043,12 @@ export function MarketingPanel() {
               <button
                 onClick={() => setConfirmSend(true)}
                 disabled={sending || !selectedNewsletterId}
-                className="w-full py-2.5 text-sm bg-white text-black font-medium rounded-lg hover:bg-white/90 transition-colors disabled:opacity-40"
+                className="w-full py-2.5 text-sm bg-foreground text-background font-medium rounded-xl hover:bg-foreground/90 transition-colors disabled:opacity-40"
               >
                 Send to list
               </button>
               {sendResult && (
-                <p className={`text-xs text-center ${sendResult.startsWith("Error") ? "text-red-400" : "text-green-400/80"}`}>
+                <p className={`text-xs text-center ${sendResult.startsWith("Error") ? "text-destructive" : "text-success/80"}`}>
                   {sendResult}
                 </p>
               )}
@@ -1040,14 +1060,14 @@ export function MarketingPanel() {
       {/* Delivery modal */}
       {deliveryModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
-          <div className="bg-[#111] border border-white/10 rounded-xl w-full max-w-lg mx-4 flex flex-col overflow-hidden max-h-[80vh]">
+          <div className="bg-card border border-border rounded-xl w-full max-w-lg mx-4 flex flex-col overflow-hidden max-h-[80vh]">
             {/* Header */}
-            <div className="px-5 py-4 border-b border-white/10 flex items-start justify-between gap-4">
+            <div className="px-5 py-4 border-b border-border flex items-start justify-between gap-4">
               <div>
                 <p className="font-semibold text-sm">{deliveryModal.send.newsletterTitle}</p>
-                <p className="text-white/40 text-xs mt-0.5">{deliveryModal.send.listName} · {deliveryModal.send.recipientCount} sent</p>
+                <p className="text-fg-muted text-xs mt-0.5">{deliveryModal.send.listName} · {deliveryModal.send.recipientCount} sent</p>
               </div>
-              <button onClick={() => setDeliveryModal(null)} className="text-white/40 hover:text-white text-lg leading-none transition-colors shrink-0">×</button>
+              <button onClick={() => setDeliveryModal(null)} className="text-fg-muted hover:text-foreground text-lg leading-none transition-colors shrink-0">×</button>
             </div>
 
             {/* Summary bar */}
@@ -1055,21 +1075,21 @@ export function MarketingPanel() {
               const failed = deliveryModal.recipients.filter(r => r.status === "failed")
               const sent = deliveryModal.recipients.filter(r => r.status === "sent")
               return (
-                <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between gap-4">
+                <div className="px-5 py-3 border-b border-border flex items-center justify-between gap-4">
                   <div className="flex items-center gap-4 text-xs">
-                    <span className="text-green-400/70">{sent.length} delivered</span>
-                    {failed.length > 0 && <span className="text-red-400/70">{failed.length} failed</span>}
+                    <span className="text-success/70">{sent.length} delivered</span>
+                    {failed.length > 0 && <span className="text-destructive/70">{failed.length} failed</span>}
                   </div>
                   {failed.length > 0 && !deliveryModal.resending && !deliveryModal.resendProgress?.done && (
                     <button
                       onClick={() => requestTOTP(resendFailed)}
-                      className="text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-lg transition-colors"
+                      className="text-xs bg-surface-2 hover:bg-surface-3 text-foreground px-3 py-1.5 rounded-md transition-colors"
                     >
                       Resend to {failed.length} failed
                     </button>
                   )}
                   {deliveryModal.resendProgress?.done && (
-                    <span className="text-xs text-green-400/70">Resend complete</span>
+                    <span className="text-xs text-success/70">Resend complete</span>
                   )}
                 </div>
               )
@@ -1077,18 +1097,18 @@ export function MarketingPanel() {
 
             {/* Resend progress bar */}
             {deliveryModal.resendProgress && (
-              <div className="px-5 py-2 border-b border-white/10 flex flex-col gap-1.5">
-                <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+              <div className="px-5 py-2 border-b border-border flex flex-col gap-1.5">
+                <div className="w-full h-1 bg-surface-2 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-white/40 rounded-full transition-all duration-200"
+                    className="h-full bg-foreground/40 rounded-full transition-all duration-200"
                     style={{ width: `${deliveryModal.resendProgress.total > 0 ? ((deliveryModal.resendProgress.sent + deliveryModal.resendProgress.failed) / deliveryModal.resendProgress.total) * 100 : 0}%` }}
                   />
                 </div>
-                <div className="flex justify-between text-[10px] text-white/30">
+                <div className="flex justify-between text-[11px] text-fg-muted">
                   <span>{deliveryModal.resendProgress.done ? "Done" : "Resending…"}</span>
                   <span>
-                    <span className="text-green-400/50">{deliveryModal.resendProgress.sent} sent</span>
-                    {deliveryModal.resendProgress.failed > 0 && <span className="text-red-400/50 ml-2">{deliveryModal.resendProgress.failed} failed</span>}
+                    <span className="text-success/50">{deliveryModal.resendProgress.sent} sent</span>
+                    {deliveryModal.resendProgress.failed > 0 && <span className="text-destructive/50 ml-2">{deliveryModal.resendProgress.failed} failed</span>}
                   </span>
                 </div>
               </div>
@@ -1098,28 +1118,28 @@ export function MarketingPanel() {
             <div className="overflow-y-auto flex-1">
               {deliveryModal.loading ? (
                 <div className="flex items-center justify-center py-10">
-                  <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                  <Spinner size="md" />
                 </div>
               ) : !deliveryModal.recipients ? (
-                <p className="text-white/30 text-sm px-5 py-6">Could not load recipient data.</p>
+                <p className="text-fg-muted text-sm px-5 py-6">Could not load recipient data.</p>
               ) : deliveryModal.recipients.length === 0 ? (
-                <p className="text-white/30 text-sm px-5 py-6">No recipients found.</p>
+                <p className="text-fg-muted text-sm px-5 py-6">No recipients found.</p>
               ) : (
                 deliveryModal.recipients.map(r => {
                   const resendStatus = deliveryModal.resendProgress?.recipients.get(r.email)
                   return (
-                    <div key={r.email} className="flex items-center justify-between px-5 py-2 border-b border-white/5 last:border-0">
-                      <span className="text-xs text-white/60 font-mono">{r.email}</span>
+                    <div key={r.email} className="flex items-center justify-between px-5 py-2 border-b border-border last:border-0">
+                      <span className="text-xs text-fg-secondary font-mono">{r.email}</span>
                       <div className="flex items-center gap-2">
                         {resendStatus && resendStatus !== "pending" && (
-                          <span className={`text-[10px] ${resendStatus === "sent" ? "text-green-400/60" : "text-red-400/60"}`}>
+                          <span className={`text-[11px] ${resendStatus === "sent" ? "text-success/60" : "text-destructive/60"}`}>
                             {resendStatus === "sent" ? "resent ✓" : "resend failed ✗"}
                           </span>
                         )}
                         {resendStatus === "pending" && (
-                          <span className="text-[10px] text-white/20">resending…</span>
+                          <span className="text-[11px] text-fg-faint">resending…</span>
                         )}
-                        <span className={`text-[10px] font-medium ${r.status === "sent" ? "text-green-400/50" : "text-red-400/70"}`}>
+                        <span className={`text-[11px] font-medium ${r.status === "sent" ? "text-success/50" : "text-destructive/70"}`}>
                           {r.status === "sent" ? "✓" : "✗ failed"}
                         </span>
                       </div>
@@ -1135,53 +1155,53 @@ export function MarketingPanel() {
       {/* Send progress modal */}
       {sendProgress && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80">
-          <div className="bg-[#111] border border-white/10 rounded-xl w-full max-w-lg mx-4 flex flex-col overflow-hidden max-h-[80vh]">
+          <div className="bg-card border border-border rounded-xl w-full max-w-lg mx-4 flex flex-col overflow-hidden max-h-[80vh]">
             {/* Header */}
-            <div className="px-5 py-4 border-b border-white/10 flex flex-col gap-2">
+            <div className="px-5 py-4 border-b border-border flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-semibold text-sm">{sendProgress.newsletterTitle}</p>
-                  <p className="text-white/40 text-xs mt-0.5">→ {sendProgress.listName}</p>
+                  <p className="text-fg-muted text-xs mt-0.5">→ {sendProgress.listName}</p>
                 </div>
                 {sendProgress.done ? (
                   <div className="flex items-center gap-2">
                     {sendProgress.sendId && sendProgress.trackingEnabled && (
                       <button
                         onClick={() => { router.push(`/live/manage/sends/${sendProgress.sendId}`); setSendProgress(null) }}
-                        className="text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors"
+                        className="text-xs text-fg-secondary hover:text-foreground bg-surface hover:bg-surface-2 px-3 py-1.5 rounded-md transition-colors"
                       >
                         View stats →
                       </button>
                     )}
                     <button
                       onClick={() => setSendProgress(null)}
-                      className="text-xs text-white/50 hover:text-white transition-colors px-2"
+                      className="text-xs text-fg-muted hover:text-foreground transition-colors px-2"
                     >
                       Close
                     </button>
                   </div>
                 ) : (
-                  <div className="w-4 h-4 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                  <Spinner size="sm" />
                 )}
               </div>
               {sendProgress.error && (
-                <p className="text-red-400 text-xs bg-red-400/10 rounded px-2 py-1">{sendProgress.error}</p>
+                <p className="text-destructive text-xs bg-destructive/10 rounded-md px-2 py-1">{sendProgress.error}</p>
               )}
               {/* Progress bar */}
               <div className="flex flex-col gap-1">
-                <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div className="w-full h-1.5 bg-surface-2 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-white/50 rounded-full transition-all duration-200"
+                    className="h-full bg-foreground/50 rounded-full transition-all duration-200"
                     style={{ width: `${sendProgress.total > 0 ? ((sendProgress.sent + sendProgress.failed) / sendProgress.total) * 100 : 0}%` }}
                   />
                 </div>
-                <div className="flex justify-between text-[10px] text-white/30">
+                <div className="flex justify-between text-[11px] text-fg-muted">
                   <span>
                     {sendProgress.done ? "Done" : sendProgress.total === 0 ? "Preparing…" : "Sending…"} {sendProgress.total > 0 ? `${sendProgress.sent + sendProgress.failed}/${sendProgress.total}` : ""}
                   </span>
                   <span>
-                    {sendProgress.sent > 0 && <span className="text-green-400/60">{sendProgress.sent} sent</span>}
-                    {sendProgress.failed > 0 && <span className="text-red-400/60 ml-2">{sendProgress.failed} failed</span>}
+                    {sendProgress.sent > 0 && <span className="text-success/60">{sendProgress.sent} sent</span>}
+                    {sendProgress.failed > 0 && <span className="text-destructive/60 ml-2">{sendProgress.failed} failed</span>}
                   </span>
                 </div>
               </div>
@@ -1192,13 +1212,13 @@ export function MarketingPanel() {
               {sendProgress.recipients.map(r => (
                 <div
                   key={r.email}
-                  className="flex items-center justify-between px-5 py-2 border-b border-white/5 last:border-0"
+                  className="flex items-center justify-between px-5 py-2 border-b border-border last:border-0"
                 >
-                  <span className="text-xs text-white/60 font-mono">{r.email}</span>
-                  <span className={`text-[10px] font-medium ${
-                    r.status === "sent" ? "text-green-400/70" :
-                    r.status === "failed" ? "text-red-400/70" :
-                    "text-white/20"
+                  <span className="text-xs text-fg-secondary font-mono">{r.email}</span>
+                  <span className={`text-[11px] font-medium ${
+                    r.status === "sent" ? "text-success/70" :
+                    r.status === "failed" ? "text-destructive/70" :
+                    "text-fg-faint"
                   }`}>
                     {r.status === "sent" ? "✓ sent" : r.status === "failed" ? "✗ failed" : "·"}
                   </span>
@@ -1212,29 +1232,29 @@ export function MarketingPanel() {
       {/* Delete send confirmation dialog */}
       {deleteSendTarget && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
-          <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-6 max-w-sm w-full mx-4 flex flex-col gap-4">
-            <h3 className="font-semibold text-red-400">Delete send?</h3>
-            <div className="text-sm text-white/60 flex flex-col gap-1">
-              <p><span className="text-white/30">Newsletter:</span> {deleteSendTarget.newsletterTitle}</p>
-              <p><span className="text-white/30">List:</span> {deleteSendTarget.listName}</p>
-              <p><span className="text-white/30">Recipients:</span> {deleteSendTarget.recipientCount}</p>
+          <div className="bg-card border border-border rounded-xl p-6 max-w-sm w-full mx-4 flex flex-col gap-4">
+            <h3 className="font-semibold text-destructive">Delete send?</h3>
+            <div className="text-sm text-fg-secondary flex flex-col gap-1">
+              <p><span className="text-fg-muted">Newsletter:</span> {deleteSendTarget.newsletterTitle}</p>
+              <p><span className="text-fg-muted">List:</span> {deleteSendTarget.listName}</p>
+              <p><span className="text-fg-muted">Recipients:</span> {deleteSendTarget.recipientCount}</p>
             </div>
-            <p className="text-xs text-red-400/70 bg-red-400/10 rounded-lg px-3 py-2">
+            <p className="text-xs text-destructive/70 bg-destructive/10 rounded-md px-3 py-2">
               This will permanently delete the send record and all associated tracking events. This cannot be undone.
             </p>
-            {deleteSendError && <p className="text-red-400 text-xs">{deleteSendError}</p>}
+            {deleteSendError && <p className="text-destructive text-xs">{deleteSendError}</p>}
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setDeleteSendTarget(null)}
                 disabled={deletingSend}
-                className="px-4 py-2 text-sm text-white/50 hover:text-white transition-colors"
+                className="px-4 py-2 text-sm text-fg-muted hover:text-foreground transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={confirmDeleteSend}
                 disabled={deletingSend}
-                className="px-4 py-2 text-sm bg-red-500/80 hover:bg-red-500 text-white font-medium rounded-lg transition-colors disabled:opacity-50"
+                className="px-4 py-2 text-sm bg-destructive/80 hover:bg-red-500 text-foreground font-medium rounded-xl transition-colors disabled:opacity-50"
               >
                 {deletingSend ? "Deleting…" : "Delete"}
               </button>
@@ -1246,10 +1266,10 @@ export function MarketingPanel() {
       {/* TOTP prompt */}
       {totpPromptCallback && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80">
-          <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-6 max-w-xs w-full mx-4 flex flex-col gap-5">
+          <div className="bg-card border border-border rounded-xl p-6 max-w-xs w-full mx-4 flex flex-col gap-5">
             <div>
               <h3 className="font-semibold">Verify identity</h3>
-              <p className="text-xs text-white/40 mt-1">Enter your 6-digit authenticator code to proceed.</p>
+              <p className="text-xs text-fg-muted mt-1">Enter your 6-digit authenticator code to proceed.</p>
             </div>
             <input
               type="text"
@@ -1261,17 +1281,17 @@ export function MarketingPanel() {
               onChange={e => { setTotpInput(e.target.value.replace(/\D/g, "").slice(0, 6)); setTotpError("") }}
               onKeyDown={e => e.key === "Enter" && totpInput.length === 6 && submitTOTP()}
               placeholder="000000"
-              className="bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-center text-2xl tracking-[0.4em] font-mono text-white placeholder-white/20 focus:outline-none focus:border-white/30 w-full"
+              className="bg-surface border border-border rounded-xl px-4 py-3 text-center text-2xl tracking-[0.4em] font-mono text-foreground placeholder-white/20 focus:border-border-strong w-full"
             />
-            {totpError && <p className="text-red-400 text-xs">{totpError}</p>}
+            {totpError && <p className="text-destructive text-xs">{totpError}</p>}
             <div className="flex gap-2 justify-end">
-              <button onClick={cancelTOTP} className="px-4 py-2 text-sm text-white/50 hover:text-white transition-colors">
+              <button onClick={cancelTOTP} className="px-4 py-2 text-sm text-fg-muted hover:text-foreground transition-colors">
                 Cancel
               </button>
               <button
                 onClick={submitTOTP}
                 disabled={totpInput.length !== 6}
-                className="px-4 py-2 text-sm bg-white text-black font-medium rounded-lg hover:bg-white/90 transition-colors disabled:opacity-50"
+                className="px-4 py-2 text-sm bg-foreground text-background font-medium rounded-xl hover:bg-foreground/90 transition-colors disabled:opacity-50"
               >
                 Confirm
               </button>
@@ -1283,20 +1303,20 @@ export function MarketingPanel() {
       {/* Confirm send dialog */}
       {confirmSend && sendDialog && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
-          <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-6 max-w-sm w-full mx-4 flex flex-col gap-4">
+          <div className="bg-card border border-border rounded-xl p-6 max-w-sm w-full mx-4 flex flex-col gap-4">
             <h3 className="font-semibold">Confirm send</h3>
-            <div className="text-sm text-white/60 flex flex-col gap-1">
-              <p><span className="text-white/30">Newsletter:</span> {selectedNewsletter?.title ?? selectedNewsletterId}{selectedNewsletter && !selectedNewsletter.published ? " (Draft)" : ""}</p>
-              <p><span className="text-white/30">Subject:</span> {effectiveSubject}</p>
-              <p><span className="text-white/30">List:</span> {sendDialog}</p>
-              <p><span className="text-white/30">From:</span> {fromName || "—"}</p>
-              <p><span className="text-white/30">Reply-to:</span> {replyTo || "—"}</p>
+            <div className="text-sm text-fg-secondary flex flex-col gap-1">
+              <p><span className="text-fg-muted">Newsletter:</span> {selectedNewsletter?.title ?? selectedNewsletterId}{selectedNewsletter && !selectedNewsletter.published ? " (Draft)" : ""}</p>
+              <p><span className="text-fg-muted">Subject:</span> {effectiveSubject}</p>
+              <p><span className="text-fg-muted">List:</span> {sendDialog}</p>
+              <p><span className="text-fg-muted">From:</span> {fromName || "—"}</p>
+              <p><span className="text-fg-muted">Reply-to:</span> {replyTo || "—"}</p>
             </div>
-            <p className="text-xs text-white/40">This will send to all active subscribers on the list. This cannot be undone.</p>
+            <p className="text-xs text-fg-muted">This will send to all active subscribers on the list. This cannot be undone.</p>
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setConfirmSend(false)}
-                className="px-4 py-2 text-sm text-white/50 hover:text-white transition-colors"
+                className="px-4 py-2 text-sm text-fg-muted hover:text-foreground transition-colors"
                 disabled={sending}
               >
                 Cancel
@@ -1304,7 +1324,7 @@ export function MarketingPanel() {
               <button
                 onClick={() => requestTOTP(sendToList)}
                 disabled={sending}
-                className="px-4 py-2 text-sm bg-white text-black font-medium rounded-lg hover:bg-white/90 transition-colors disabled:opacity-50"
+                className="px-4 py-2 text-sm bg-foreground text-background font-medium rounded-xl hover:bg-foreground/90 transition-colors disabled:opacity-50"
               >
                 Send
               </button>
@@ -1312,6 +1332,15 @@ export function MarketingPanel() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={pendingDeleteList !== null}
+        onOpenChange={open => { if (!open && !deletingList) setPendingDeleteList(null) }}
+        title="Delete contact list?"
+        description={`"${pendingDeleteList ?? ""}" and its contacts will be deleted. This can't be undone.`}
+        confirmLabel="Delete list"
+        isLoading={deletingList}
+        onConfirm={confirmDeleteList}
+      />
     </div>
   )
 }

@@ -16,6 +16,7 @@ import { PlayersPanel } from "./PlayersPanel"
 import { LiveServerPanel } from "./LiveServerPanel"
 import { FilmPanel } from "./FilmPanel"
 import { PlayerLinksPanel } from "./PlayerLinksPanel"
+import { Spinner } from "@/components/ui/spinner"
 
 type Tab = "photos" | "events" | "games" | "players" | "film" | "player-links" | "users" | "newsletters" | "audit" | "marketing" | "live-server"
 
@@ -54,8 +55,8 @@ function ManagePageInner() {
 
   if (isLoading || !user) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+      <div className="flex items-center justify-center min-h-[50dvh]">
+        <Spinner size="md" />
       </div>
     )
   }
@@ -84,19 +85,19 @@ function ManagePageInner() {
         <div>
           <button
             onClick={() => router.push("/live")}
-            className="text-white/40 hover:text-white/70 text-sm mb-2 flex items-center gap-1 transition-colors"
+            className="text-fg-muted hover:text-foreground text-sm mb-2 flex items-center gap-1 transition-colors"
           >
             ← Back
           </button>
-          <h1 className="text-4xl font-black">Manage</h1>
-          <p className="text-white/50 mt-1 text-sm">{user.email}</p>
+          <h1 className="text-4xl font-display leading-none tracking-wide">Manage</h1>
+          <p className="text-fg-muted mt-1 text-sm">{user.email}</p>
         </div>
         <div className="flex items-center gap-3">
           <Badge variant={ROLE_VARIANT[role] ?? "outline"}>{role}</Badge>
           <Button
             variant="ghost"
             size="sm"
-            className="text-white/40 hover:text-white hover:bg-white/10"
+            className="text-fg-muted hover:text-foreground hover:bg-surface-2"
             onClick={() => signOut().then(() => router.push("/live/login"))}
           >
             Sign out
@@ -104,7 +105,7 @@ function ManagePageInner() {
         </div>
       </div>
 
-      <div className="flex items-center gap-1 border-b border-white/10 -mb-4">
+      <div className="flex items-center gap-1 border-b border-border -mb-4">
         {tabs.map(tab => (
           <button
             key={tab.id}
@@ -115,8 +116,8 @@ function ManagePageInner() {
             className={[
               "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
               activeTab === tab.id
-                ? "border-white text-white"
-                : "border-transparent text-white/40 hover:text-white/70",
+                ? "border-foreground text-foreground"
+                : "border-transparent text-fg-muted hover:text-foreground",
             ].join(" ")}
           >
             {tab.label}

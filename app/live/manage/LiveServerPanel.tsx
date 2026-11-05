@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button"
 import { StepProgress } from "@/components/ui/step-progress"
 import type { StepDef } from "@/lib/step-types"
 import type { LiveServerInfo } from "@/app/api/live-server/route"
+import { Spinner } from "@/components/ui/spinner"
 
 const STATUS_DOT: Record<string, string> = {
-  online:   "bg-green-400",
-  starting: "bg-yellow-400 animate-pulse",
-  stopping: "bg-yellow-400 animate-pulse",
-  unhealthy:"bg-red-400",
-  offline:  "bg-white/20",
+  online:   "bg-success",
+  starting: "bg-warning animate-pulse",
+  stopping: "bg-warning animate-pulse",
+  unhealthy:"bg-destructive",
+  offline:  "bg-surface-3",
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -142,34 +143,34 @@ export function LiveServerPanel() {
       <h2 className="text-lg font-bold">Live Server</h2>
 
       {/* Status card */}
-      <div className="border border-white/10 rounded-lg p-5 flex flex-col gap-4">
+      <div className="border border-border rounded-xl p-5 flex flex-col gap-4">
         {loading ? (
-          <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+          <Spinner size="md" />
         ) : (
           <>
             <div className="flex items-center gap-3">
               <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_DOT[status]}`} />
               <span className="font-medium">{STATUS_LABEL[status] ?? status}</span>
               {info?.publicIp && (
-                <span className="text-white/40 text-sm font-mono ml-auto">{info.publicIp}</span>
+                <span className="text-fg-muted text-sm font-mono ml-auto">{info.publicIp}</span>
               )}
             </div>
 
             {info?.health && (
-              <div className="flex gap-6 text-sm text-white/60">
+              <div className="flex gap-6 text-sm text-fg-secondary">
                 <span>
-                  <span className="text-white font-medium">{info.health.games}</span>{" "}
+                  <span className="text-foreground font-medium">{info.health.games}</span>{" "}
                   active {info.health.games === 1 ? "game" : "games"}
                 </span>
                 <span>
-                  <span className="text-white font-medium">{info.health.subscribers}</span>{" "}
+                  <span className="text-foreground font-medium">{info.health.subscribers}</span>{" "}
                   {info.health.subscribers === 1 ? "subscriber" : "subscribers"}
                 </span>
               </div>
             )}
 
             {info?.instanceId && (
-              <p className="text-xs text-white/30 font-mono">{info.instanceId}</p>
+              <p className="text-xs text-fg-muted font-mono">{info.instanceId}</p>
             )}
           </>
         )}
@@ -190,7 +191,7 @@ export function LiveServerPanel() {
           variant="ghost"
           disabled={!canDestroy}
           onClick={handleDestroyClick}
-          className={confirmingDestroy ? "text-red-400 border border-red-400/40 animate-pulse" : "text-white/40 hover:text-red-400"}
+          className={confirmingDestroy ? "text-destructive border border-destructive/40 animate-pulse" : "text-fg-muted hover:text-destructive"}
         >
           {acting ? "Destroying…" : confirmingDestroy ? "Confirm — click again" : "Destroy All"}
         </Button>
@@ -198,13 +199,13 @@ export function LiveServerPanel() {
 
       {/* Step progress */}
       {steps.length > 0 && (
-        <div className="border border-white/10 rounded-lg p-4">
+        <div className="border border-border rounded-xl p-4">
           <StepProgress steps={steps} />
         </div>
       )}
 
       {/* Error */}
-      {error && <p className="text-red-400 text-sm">{error}</p>}
+      {error && <p className="text-destructive text-sm">{error}</p>}
 
       {/* Logs */}
       {status !== "offline" && (
@@ -214,21 +215,21 @@ export function LiveServerPanel() {
             variant="ghost"
             disabled={fetchingLogs}
             onClick={handleFetchLogs}
-            className="self-start text-white/40 hover:text-white/70"
+            className="self-start text-fg-muted hover:text-foreground"
           >
             {fetchingLogs ? "Fetching logs…" : "Fetch Logs"}
           </Button>
           {logs && (
-            <pre className="text-xs text-white/60 bg-white/5 border border-white/10 rounded-lg p-4 overflow-auto max-h-96 whitespace-pre-wrap break-all">
+            <pre className="text-xs text-fg-secondary bg-surface border border-border rounded-xl p-4 overflow-auto max-h-96 whitespace-pre-wrap break-all">
               {logs}
             </pre>
           )}
         </div>
       )}
 
-      <p className="text-white/30 text-xs">
+      <p className="text-fg-muted text-xs">
         Start before a game goes live, stop when it ends.
-        Use <span className="text-white/50">Destroy All</span> to force-clean any orphaned AWS resources (EIPs, instances, SG, DNS) — even from failed starts.
+        Use <span className="text-fg-muted">Destroy All</span> to force-clean any orphaned AWS resources (EIPs, instances, SG, DNS) — even from failed starts.
       </p>
     </section>
   )

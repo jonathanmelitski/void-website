@@ -33,9 +33,9 @@ const STATUS_VARIANT: Record<GameStatus, "default" | "secondary" | "outline"> = 
 }
 
 const RESULT_COLORS: Record<string, string> = {
-  WIN: "text-green-400",
-  LOSS: "text-red-400",
-  TIE: "text-yellow-400",
+  WIN: "text-success",
+  LOSS: "text-destructive",
+  TIE: "text-warning",
 }
 
 export function GamesPanel() {
@@ -105,7 +105,7 @@ export function GamesPanel() {
       cell: row => (
         <span className="font-medium">
           {row.opponent}
-          {row.round && <span className="text-white/40 font-normal ml-2 text-xs">{row.round}</span>}
+          {row.round && <span className="text-fg-muted font-normal ml-2 text-xs">{row.round}</span>}
         </span>
       ),
     },
@@ -113,13 +113,13 @@ export function GamesPanel() {
       header: "Score",
       cell: row => (
         row.status === "SCHEDULED"
-          ? <span className="text-white/30 text-sm">Not started</span>
+          ? <span className="text-fg-muted text-sm">Not started</span>
           : <span className="font-mono text-sm">
-              <span className={row.result === "WIN" ? "text-green-400" : row.result === "LOSS" ? "text-red-400" : ""}>
+              <span className={row.result === "WIN" ? "text-success" : row.result === "LOSS" ? "text-destructive" : ""}>
                 {row.scoreVoid}
               </span>
               {" – "}
-              <span className={row.result === "LOSS" ? "text-green-400" : row.result === "WIN" ? "text-red-400" : ""}>
+              <span className={row.result === "LOSS" ? "text-success" : row.result === "WIN" ? "text-destructive" : ""}>
                 {row.scoreOpponent}
               </span>
             </span>
@@ -142,13 +142,13 @@ export function GamesPanel() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => router.push(`/live/manage/games/${row.id}`)}
-            className="text-white/50 hover:text-white text-sm underline underline-offset-2"
+            className="text-fg-muted hover:text-foreground text-sm underline underline-offset-2"
           >
             Manage →
           </button>
           <button
             onClick={() => setDeleteTarget([row])}
-            className="text-red-400/60 hover:text-red-400 text-sm transition-colors"
+            className="text-destructive/60 hover:text-destructive text-sm transition-colors"
           >
             Delete
           </button>
@@ -164,17 +164,17 @@ export function GamesPanel() {
       {/* Event selector + create button */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Label className="text-white/50 text-sm shrink-0">Event</Label>
+          <Label className="text-fg-muted text-sm shrink-0">Event</Label>
           {loadingEvents ? (
-            <div className="h-9 w-48 rounded-md bg-white/5 animate-pulse" />
+            <div className="h-9 w-48 rounded-md bg-surface animate-pulse" />
           ) : (
             <select
               value={selectedEventId}
               onChange={e => setSelectedEventId(e.target.value)}
-              className="bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-white/20"
+              className="bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground"
             >
               {events.map(ev => (
-                <option key={ev.id} value={ev.id} className="bg-neutral-900">
+                <option key={ev.id} value={ev.id} className="bg-card">
                   {ev.title} ({new Date(ev.date).getFullYear()})
                 </option>
               ))}
@@ -185,7 +185,7 @@ export function GamesPanel() {
           <DialogTrigger asChild>
             <Button size="sm" disabled={!selectedEventId}>+ New Game</Button>
           </DialogTrigger>
-          <DialogContent className="bg-black border-white/10 text-white max-w-md">
+          <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>New Game</DialogTitle>
             </DialogHeader>
@@ -198,7 +198,7 @@ export function GamesPanel() {
         </Dialog>
       </div>
 
-      {error && <p className="text-red-400 text-sm">{error}</p>}
+      {error && <p className="text-destructive text-sm">{error}</p>}
 
       <DataTable
         columns={columns}
@@ -211,7 +211,7 @@ export function GamesPanel() {
           if (selectedRows.length === 0) return null
           return (
             <div className="flex items-center gap-3">
-              <span className="text-sm text-white/50">{selectedRows.length} selected</span>
+              <span className="text-sm text-fg-muted">{selectedRows.length} selected</span>
               <Button size="sm" variant="destructive" onClick={() => setDeleteTarget(selectedRows)}>
                 Delete
               </Button>
@@ -283,7 +283,7 @@ function CreateGameForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div className="text-sm text-white/40">Event: <span className="text-white/70">{eventName}</span></div>
+      <div className="text-sm text-fg-muted">Event: <span className="text-fg-secondary">{eventName}</span></div>
 
       <div className="flex flex-col gap-1.5">
         <Label>Opponent *</Label>
@@ -306,17 +306,17 @@ function CreateGameForm({
         <Input type="datetime-local" value={scheduledTime} onChange={e => setScheduledTime(e.target.value)} />
       </div>
 
-      <label className="flex items-center gap-2 text-sm text-white/70 cursor-pointer">
+      <label className="flex items-center gap-2 text-sm text-fg-secondary cursor-pointer">
         <input
           type="checkbox"
           checked={voidReceivingFirst}
           onChange={e => setVoidReceivingFirst(e.target.checked)}
-          className="rounded"
+          className="rounded-md"
         />
         VOID receives first pull
       </label>
 
-      {error && <p className="text-red-400 text-sm">{error}</p>}
+      {error && <p className="text-destructive text-sm">{error}</p>}
 
       <Button type="submit" disabled={isSubmitting}>
         {isSubmitting ? "Creating…" : "Create Game"}

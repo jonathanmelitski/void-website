@@ -9,6 +9,9 @@ import type { GameItem } from "@/lib/aws/games"
 import type { FilmClipItem } from "@/lib/aws/film-clips"
 import type { FilmAnnotationItem } from "@/lib/aws/film-annotations"
 import { MAIN_TRACK_ID, sortClips, trackIdOf, type FilmTrack } from "@/lib/film-tracks"
+import { Spinner } from "@/components/ui/spinner"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { toast } from "@/components/ui/sonner"
 
 const FilmViewer = dynamic(
   () => import("@/components/film/FilmViewer").then(m => m.FilmViewer),
@@ -43,6 +46,22 @@ export function FilmPanel() {
   const [selectedTrackId, setSelectedTrackId] = useState<string>(MAIN_TRACK_ID)
   const [trackDraft, setTrackDraft] = useState<{ id: string | null; name: string } | null>(null)
   const [trackError, setTrackError] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<FilmClipItem | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return
+    setDeleting(true)
+    try {
+      await deleteClip(pendingDelete.id)
+      toast.success("Film deleted")
+      setPendingDelete(null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete the film. Try again.")
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const game = games.find(g => g.id === selectedGameId) ?? null
   const angleTracks: FilmTrack[] = game?.filmTracks ?? []
@@ -166,7 +185,7 @@ export function FilmPanel() {
       <div>
         <button
           onClick={() => setViewerData(null)}
-          className="text-white/40 hover:text-white/70 text-sm mb-4 flex items-center gap-1 transition-colors"
+          className="text-fg-muted hover:text-foreground text-sm mb-4 flex items-center gap-1 transition-colors"
         >
           ← Back to clips
         </button>
@@ -188,11 +207,11 @@ export function FilmPanel() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="flex-1">
-          <label className="text-xs text-white/40 uppercase tracking-widest mb-1 block">Event</label>
+          <label className="text-xs text-fg-muted uppercase tracking-widest mb-1 block">Event</label>
           <select
             value={selectedEventId ?? ""}
             onChange={e => setSelectedEventId(e.target.value || null)}
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+            className="w-full bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground focus:border-border-strong"
           >
             <option value="">Select event…</option>
             {events.map(ev => (
@@ -203,11 +222,11 @@ export function FilmPanel() {
 
         {games.length > 0 && (
           <div className="flex-1">
-            <label className="text-xs text-white/40 uppercase tracking-widest mb-1 block">Game</label>
+            <label className="text-xs text-fg-muted uppercase tracking-widest mb-1 block">Game</label>
             <select
               value={selectedGameId ?? ""}
               onChange={e => { setSelectedGameId(e.target.value || null); setSelectedTrackId(MAIN_TRACK_ID) }}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/20"
+              className="w-full bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground focus:border-border-strong"
             >
               <option value="">Select game…</option>
               {games.map(g => (
@@ -221,7 +240,7 @@ export function FilmPanel() {
       {selectedGameId && (
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between gap-4">
-            <h3 className="text-sm font-semibold text-white/70">Film</h3>
+            <h3 className="text-sm font-semibold text-fg-secondary">Film</h3>
             {hasMainFilm && (
               <Button size="sm" variant="ghost" onClick={() => openGameViewer()}>
                 Review Film
@@ -244,26 +263,26 @@ export function FilmPanel() {
                       onChange={e => setTrackDraft({ ...trackDraft, name: e.target.value })}
                       onKeyDown={e => { if (e.key === "Enter") commitTrackDraft(); if (e.key === "Escape") setTrackDraft(null) }}
                       onBlur={commitTrackDraft}
-                      className="w-32 bg-white/5 border border-white/25 rounded-md px-2 py-1 text-xs text-white focus:outline-none"
+                      className="w-32 bg-surface border border-border-strong rounded-md px-2 py-1 text-xs text-foreground"
                     />
                   )
                 }
                 return (
-                  <div key={track.id} className={`group flex items-center rounded-md border text-xs transition-colors ${active ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50 hover:text-white/80"}`}>
+                  <div key={track.id} className={`group flex items-center rounded-md border text-xs transition-colors ${active ? "border-border-strong bg-surface-2 text-foreground" : "border-border text-fg-muted hover:text-foreground"}`}>
                     <button onClick={() => setSelectedTrackId(track.id)} className="px-2.5 py-1">
-                      {track.name} <span className="text-white/30 font-mono">{count}</span>
+                      {track.name} <span className="text-fg-muted font-mono">{count}</span>
                     </button>
                     {track.id !== MAIN_TRACK_ID && active && (
                       <>
                         <button
                           onClick={() => setTrackDraft({ id: track.id, name: track.name })}
-                          className="pr-1 text-white/30 hover:text-white/70"
+                          className="pr-1 text-fg-muted hover:text-foreground"
                           aria-label={`Rename ${track.name}`}
                         >
                           <Pencil size={11} />
                         </button>
                         {count === 0 && (
-                          <button onClick={() => deleteTrack(track)} className="pr-1.5 text-white/30 hover:text-red-400" aria-label={`Delete ${track.name}`}>
+                          <button onClick={() => deleteTrack(track)} className="pr-1.5 text-fg-muted hover:text-destructive" aria-label={`Delete ${track.name}`}>
                             <X size={12} />
                           </button>
                         )}
@@ -280,20 +299,20 @@ export function FilmPanel() {
                   onChange={e => setTrackDraft({ id: null, name: e.target.value })}
                   onKeyDown={e => { if (e.key === "Enter") commitTrackDraft(); if (e.key === "Escape") setTrackDraft(null) }}
                   onBlur={commitTrackDraft}
-                  className="w-32 bg-white/5 border border-white/25 rounded-md px-2 py-1 text-xs text-white placeholder:text-white/25 focus:outline-none"
+                  className="w-32 bg-surface border border-border-strong rounded-md px-2 py-1 text-xs text-foreground placeholder:text-fg-faint"
                 />
               ) : (
                 <button
                   onClick={() => setTrackDraft({ id: null, name: "" })}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md border border-dashed border-white/15 text-xs text-white/40 hover:text-white/70 hover:border-white/30 transition-colors"
+                  className="flex items-center gap-1 px-2 py-1 rounded-md border border-dashed border-border text-xs text-fg-muted hover:text-foreground hover:border-border-strong transition-colors"
                 >
                   <Plus size={12} /> Angle
                 </button>
               )}
             </div>
-            {trackError && <p className="text-xs text-red-400/80">{trackError}</p>}
+            {trackError && <p className="text-xs text-destructive/80">{trackError}</p>}
             {isAngle ? (
-              <div className="flex items-center gap-3 text-[11px] text-white/35">
+              <div className="flex items-center gap-3 text-[11px] text-fg-muted">
                 <span>
                   {trackClips.length === 0
                     ? "Add this angle's footage, then sync it to the main film."
@@ -306,18 +325,18 @@ export function FilmPanel() {
                 )}
               </div>
             ) : (
-              <p className="text-[11px] text-white/30">Main is the reference film — points, notes and events are timed against it.</p>
+              <p className="text-[11px] text-fg-muted">Main is the reference film — points, notes and events are timed against it.</p>
             )}
           </div>
 
           {trackClips.length > 1 && (
-            <p className="text-[10px] text-white/25 -mt-2">Drag to reorder clips — sets playback order in the viewer</p>
+            <p className="text-[11px] text-fg-faint -mt-2">Drag to reorder clips — sets playback order in the viewer</p>
           )}
 
           {loading ? (
-            <div className="w-4 h-4 border border-white/20 border-t-white/60 rounded-full animate-spin" />
+            <Spinner size="sm" />
           ) : trackClips.length === 0 ? (
-            <p className="text-white/30 text-sm">No clips on {selectedTrack.name} yet.</p>
+            <p className="text-fg-muted text-sm">No clips on {selectedTrack.name} yet.</p>
           ) : (
             <div className="flex flex-col gap-2">
               {trackClips.map(clip => {
@@ -333,32 +352,32 @@ export function FilmPanel() {
                     onDragOver={e => { e.preventDefault(); setDropId(clip.id) }}
                     onDrop={() => handleDrop(clip.id)}
                     onDragEnd={() => { setDragId(null); setDropId(null) }}
-                    className={`flex flex-col gap-1.5 px-4 py-3 rounded-lg border transition-colors group cursor-grab active:cursor-grabbing ${
+                    className={`flex flex-col gap-1.5 px-4 py-3 rounded-xl border transition-colors group cursor-grab active:cursor-grabbing ${
                       isDragging
-                        ? "opacity-40 border-white/10"
+                        ? "opacity-40 border-border"
                         : isDropTarget
-                        ? "border-white/30 bg-white/5"
-                        : "border-white/10"
+                        ? "border-border-strong bg-surface"
+                        : "border-border"
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <span className="text-white/20 text-xs select-none shrink-0">⠿</span>
+                      <span className="text-fg-faint text-xs select-none shrink-0">⠿</span>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium">{clip.title ?? "Game Film"}</p>
                         {clip.durationSeconds && (
-                          <p className="text-xs text-white/30 font-mono">
+                          <p className="text-xs text-fg-muted font-mono">
                             {Math.floor(clip.durationSeconds / 60)}:{String(Math.round(clip.durationSeconds % 60)).padStart(2, "0")}
                           </p>
                         )}
                       </div>
                       {isAngle && (
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${synced ? "border-emerald-400/30 text-emerald-300/80" : "border-amber-300/30 text-amber-200/80"}`}>
+                        <span className={`text-[11px] px-1.5 py-0.5 rounded-md border ${synced ? "border-success/30 text-success/80" : "border-warning/30 text-warning/80"}`}>
                           {synced ? "Synced" : "Not synced"}
                         </span>
                       )}
                       <button
-                        onClick={() => { if (confirm(`Delete "${clip.title ?? "Game Film"}"?`)) deleteClip(clip.id) }}
-                        className="text-white/30 hover:text-red-400 transition-all text-xs p-1 opacity-0 group-hover:opacity-100"
+                        onClick={() => setPendingDelete(clip)}
+                        className="text-fg-muted hover:text-destructive transition-all text-xs p-1 opacity-0 group-hover:opacity-100"
                         aria-label="Delete clip"
                       >
                         ✕
@@ -371,8 +390,8 @@ export function FilmPanel() {
           )}
 
           {/* YouTube import */}
-          <div className="flex flex-col gap-2 pt-2 border-t border-white/10">
-            <p className="text-xs text-white/40 uppercase tracking-widest">Import from YouTube to {selectedTrack.name}</p>
+          <div className="flex flex-col gap-2 pt-2 border-t border-border">
+            <p className="text-xs text-fg-muted uppercase tracking-widest">Import from YouTube to {selectedTrack.name}</p>
             <div className="flex gap-2">
               <input
                 type="url"
@@ -380,7 +399,7 @@ export function FilmPanel() {
                 value={importUrl}
                 onChange={e => { setImportUrl(e.target.value); setImportError(null) }}
                 onKeyDown={e => { if (e.key === "Enter") handleImport() }}
-                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/20"
+                className="flex-1 bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-fg-faint focus:border-border-strong"
               />
               <Button
                 size="sm"
@@ -392,11 +411,20 @@ export function FilmPanel() {
               </Button>
             </div>
             {importError && (
-              <p className="text-xs text-red-400/80">{importError}</p>
+              <p className="text-xs text-destructive/80">{importError}</p>
             )}
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={open => { if (!open && !deleting) setPendingDelete(null) }}
+        title="Delete film?"
+        description={`"${pendingDelete?.title ?? "Game Film"}" will be removed from this game. This can't be undone.`}
+        confirmLabel="Delete film"
+        isLoading={deleting}
+        onConfirm={confirmDelete}
+      />
     </div>
   )
 }

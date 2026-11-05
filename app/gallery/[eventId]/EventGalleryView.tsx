@@ -58,7 +58,7 @@ export function EventGalleryView({ event }: EventGalleryViewProps) {
 
       <div className="mb-8 flex items-start justify-between">
         <div>
-          <h1 className="text-4xl font-black">{event.title}</h1>
+          <h1 className="text-4xl font-display leading-none tracking-wide">{event.title}</h1>
           <p className="text-muted-foreground mt-1">
             {dateLabel}{event.location ? ` · ${event.location}` : ""}
           </p>

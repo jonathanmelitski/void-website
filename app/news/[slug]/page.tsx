@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     ? `${process.env.NEXT_PUBLIC_S3_BASE_URL}/${newsletter.coverPhotoKey}`
     : undefined
   return {
-    title: `${newsletter.title} | Void Ultimate`,
+    title: newsletter.title,
     description,
     openGraph: {
       title: newsletter.title,
@@ -52,14 +52,14 @@ export default async function NewsletterDetailPage({ params }: Props) {
             <Image src={coverUrl} alt={newsletter.title} fill className="object-cover object-center" priority />
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
             <div className="absolute bottom-0 inset-x-0 px-8 pb-8">
-              <h1 className="text-4xl sm:text-5xl font-black leading-tight mb-1 drop-shadow-lg">{newsletter.title}</h1>
-              <p className="text-white/60 text-sm">{dateLabel}</p>
+              <h1 className="text-4xl sm:text-5xl font-display tracking-wide leading-none mb-1 drop-shadow-lg">{newsletter.title}</h1>
+              <p className="text-fg-secondary text-sm">{dateLabel}</p>
             </div>
           </div>
         ) : (
           <div className="pt-2">
-            <h1 className="text-4xl sm:text-5xl font-black leading-tight mb-2">{newsletter.title}</h1>
-            <p className="text-white/40 text-sm">{dateLabel}</p>
+            <h1 className="text-4xl sm:text-5xl font-display tracking-wide leading-none mb-2">{newsletter.title}</h1>
+            <p className="text-fg-muted text-sm">{dateLabel}</p>
           </div>
         )}
       </div>
@@ -71,11 +71,11 @@ export default async function NewsletterDetailPage({ params }: Props) {
         )}
 
         {(newsletter.entries ?? []).length > 0 && (
-          <div className="bg-white/[0.06] backdrop-blur-2xl border border-white/10 rounded-2xl divide-y divide-white/[0.18] overflow-hidden">
+          <div className="bg-surface border border-border rounded-xl divide-y divide-border overflow-hidden">
             {newsletter.entries.map(entry => (
               <article key={entry.id} className="px-6 sm:px-10 py-8">
-                <h2 className="text-2xl sm:text-3xl font-black mb-1 tracking-tight">{entry.title}</h2>
-                {entry.date && <p className="text-white/35 text-xs mb-6">{entry.date}</p>}
+                <h2 className="text-2xl sm:text-3xl font-display leading-none tracking-wide mb-1">{entry.title}</h2>
+                {entry.date && <p className="text-fg-muted text-xs mb-6">{entry.date}</p>}
                 <div className="tiptap-prose" dangerouslySetInnerHTML={{ __html: entry.body }} />
               </article>
             ))}
@@ -84,11 +84,11 @@ export default async function NewsletterDetailPage({ params }: Props) {
       </div>
 
       {/* Footer */}
-      <footer className="w-full px-4 sm:px-8 lg:px-16 py-10 mt-6 border-t border-white/[0.06]">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-white/25 text-xs">
-          <span className="font-semibold tracking-widest uppercase text-white/40">Void Ultimate</span>
+      <footer className="w-full px-4 sm:px-8 lg:px-16 py-10 mt-6 border-t border-border">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-fg-faint text-xs">
+          <span className="font-semibold tracking-widest uppercase text-fg-muted">Void Ultimate</span>
           <span>{dateLabel}</span>
-          <a href="/news" className="hover:text-white/50 transition-colors">← All newsletters</a>
+          <a href="/news" className="hover:text-foreground transition-colors">← All newsletters</a>
         </div>
       </footer>
     </>

@@ -5,10 +5,10 @@ import { NewsletterCard } from "@/components/newsletters/NewsletterCard"
 export const dynamic = "force-dynamic"
 
 export const metadata: Metadata = {
-  title: "News | Void Ultimate",
+  title: "News",
   description: "Monthly newsletters from the Void Ultimate team.",
   openGraph: {
-    title: "News | Void Ultimate",
+    title: "News",
     description: "Monthly newsletters from the Void Ultimate team.",
   },
 }
@@ -19,9 +19,9 @@ export default async function NewsPage() {
 
   return (
     <div className="p-8 lg:px-16">
-      <h1 className="text-4xl font-black mb-8">News</h1>
+      <h1 className="text-4xl font-display leading-none tracking-wide mb-8">News</h1>
       {newsletters.length === 0 ? (
-        <p className="text-white/50">No newsletters published yet.</p>
+        <p className="text-fg-muted">No newsletters published yet.</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {newsletters.map(newsletter => (

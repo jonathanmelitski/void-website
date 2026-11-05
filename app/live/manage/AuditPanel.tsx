@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useMemo } from "react"
 import type { AuditLogEntry, AuditAction } from "@/lib/aws/audit"
+import { Spinner } from "@/components/ui/spinner"
 
 function timeAgo(iso: string) {
   const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
@@ -16,20 +17,20 @@ function actionBadgeClass(action: AuditAction): string {
   switch (action) {
     case "CREATE":
     case "PUBLISH":
-      return "text-green-400/80 bg-green-400/10"
+      return "text-success/80 bg-success/10"
     case "UPDATE":
-      return "text-yellow-400/80 bg-yellow-400/10"
+      return "text-warning/80 bg-warning/10"
     case "DELETE":
     case "UNPUBLISH":
-      return "text-red-400/80 bg-red-400/10"
+      return "text-destructive/80 bg-destructive/10"
     case "ENTRY_ADD":
-      return "text-blue-400/80 bg-blue-400/10"
+      return "text-brand-text/80 bg-brand/10"
     case "ENTRY_REMOVE":
-      return "text-orange-400/80 bg-orange-400/10"
+      return "text-warning/80 bg-warning/10"
     case "SEND":
-      return "text-purple-400/80 bg-purple-400/10"
+      return "text-brand-text/80 bg-brand/10"
     default:
-      return "text-white/40 bg-white/10"
+      return "text-fg-muted bg-surface-2"
   }
 }
 
@@ -76,18 +77,18 @@ function DiffField({
     const nextText = renderLong(next)
     return (
       <div className="flex flex-col gap-2">
-        <span className="text-white/50 text-xs font-semibold uppercase tracking-wider">{fieldKey}</span>
+        <span className="text-fg-muted text-xs font-semibold uppercase tracking-wider">{fieldKey}</span>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-red-400/50 text-[10px] uppercase tracking-wider font-medium">Before</span>
-            <div className="bg-red-400/5 border border-red-400/10 rounded-lg p-3 text-xs text-red-300/70 font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto leading-relaxed">
-              {prevText || <span className="text-white/20 italic">empty</span>}
+            <span className="text-destructive/50 text-[11px] uppercase tracking-wider font-medium">Before</span>
+            <div className="bg-destructive/5 border border-destructive/10 rounded-xl p-3 text-xs text-destructive/70 font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto leading-relaxed">
+              {prevText || <span className="text-fg-faint italic">empty</span>}
             </div>
           </div>
           <div className="flex flex-col gap-1">
-            <span className="text-green-400/50 text-[10px] uppercase tracking-wider font-medium">After</span>
-            <div className="bg-green-400/5 border border-green-400/10 rounded-lg p-3 text-xs text-green-300/70 font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto leading-relaxed">
-              {nextText || <span className="text-white/20 italic">empty</span>}
+            <span className="text-success/50 text-[11px] uppercase tracking-wider font-medium">After</span>
+            <div className="bg-success/5 border border-success/10 rounded-xl p-3 text-xs text-success/70 font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto leading-relaxed">
+              {nextText || <span className="text-fg-faint italic">empty</span>}
             </div>
           </div>
         </div>
@@ -97,15 +98,15 @@ function DiffField({
 
   return (
     <div className={`text-xs grid items-start gap-x-3 ${large ? "grid-cols-[120px_1fr]" : "grid-cols-[100px_1fr]"}`}>
-      <span className="text-white/30 font-mono pt-0.5">{fieldKey}</span>
+      <span className="text-fg-muted font-mono pt-0.5">{fieldKey}</span>
       <div className="flex flex-col gap-0.5">
         {prev !== undefined && (
-          <span className="text-red-400/70 bg-red-400/5 rounded px-1.5 py-0.5 font-mono break-all">
+          <span className="text-destructive/70 bg-destructive/5 rounded-md px-1.5 py-0.5 font-mono break-all">
             − {renderShort(prev, large ? 300 : 120)}
           </span>
         )}
         {next !== undefined && (
-          <span className="text-green-400/70 bg-green-400/5 rounded px-1.5 py-0.5 font-mono break-all">
+          <span className="text-success/70 bg-success/5 rounded-md px-1.5 py-0.5 font-mono break-all">
             + {renderShort(next, large ? 300 : 120)}
           </span>
         )}
@@ -132,7 +133,7 @@ function DiffView({
     ...changed.filter(k => LONG_FIELDS.has(k)),
   ]
 
-  if (sorted.length === 0) return <p className="text-white/30 text-xs">No field changes recorded.</p>
+  if (sorted.length === 0) return <p className="text-fg-muted text-xs">No field changes recorded.</p>
 
   return (
     <div className={`flex flex-col ${large ? "gap-5" : "gap-1.5"}`}>
@@ -165,8 +166,8 @@ function SendDetail({ state }: { state: Record<string, unknown> }) {
     <div className="flex flex-col gap-1">
       {fields.map(([label, value]) => (
         <div key={label} className="text-xs grid grid-cols-[80px_1fr] gap-x-3">
-          <span className="text-white/30">{label}</span>
-          <span className="text-white/60 font-mono">{value}</span>
+          <span className="text-fg-muted">{label}</span>
+          <span className="text-fg-secondary font-mono">{value}</span>
         </div>
       ))}
     </div>
@@ -240,40 +241,40 @@ function EntryRow({
   return (
     <React.Fragment key={entry.id}>
       <tr
-        className={`border-b border-white/5 ${hasDetail ? "cursor-pointer" : ""} hover:bg-white/[0.02]`}
+        className={`border-b border-border ${hasDetail ? "cursor-pointer" : ""} hover:bg-surface-2`}
         onClick={hasDetail ? () => setExpandedId(isExpanded ? null : entry.id) : undefined}
       >
-        <td className={`py-2.5 pr-4 text-white/40 whitespace-nowrap ${indent ? "pl-6" : ""}`}>
+        <td className={`py-2.5 pr-4 text-fg-muted whitespace-nowrap ${indent ? "pl-6" : ""}`}>
           <span title={entry.timestamp}>{timeAgo(entry.timestamp)}</span>
         </td>
-        <td className="py-2.5 pr-4 text-white/70 max-w-[120px] truncate">
+        <td className="py-2.5 pr-4 text-fg-secondary max-w-[120px] truncate">
           {entry.actorUsername}
         </td>
         <td className="py-2.5 pr-4">
-          <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${actionBadgeClass(entry.action)}`}>
+          <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium ${actionBadgeClass(entry.action)}`}>
             {entry.action}
           </span>
         </td>
-        <td className="py-2.5 pr-4 text-white/70 max-w-[180px] truncate">
-          <span className="text-white/30 text-xs mr-1">{entry.entityType}</span>
+        <td className="py-2.5 pr-4 text-fg-secondary max-w-[180px] truncate">
+          <span className="text-fg-muted text-xs mr-1">{entry.entityType}</span>
           {entry.entityLabel}
         </td>
         <td className="py-2.5 pr-4">
           {entry.revertedBy ? (
-            <span className="text-white/30 text-xs">Reverted by {entry.revertedBy}</span>
+            <span className="text-fg-muted text-xs">Reverted by {entry.revertedBy}</span>
           ) : (
-            <span className="text-white/20 text-xs">—</span>
+            <span className="text-fg-faint text-xs">—</span>
           )}
         </td>
         <td className="py-2.5">
           <div className="flex items-center gap-3">
             {hasDetail && (
-              <span className="text-xs text-white/30">{isExpanded ? "▲" : "▼"}</span>
+              <span className="text-xs text-fg-muted">{isExpanded ? "▲" : "▼"}</span>
             )}
             {entry.reversible && !entry.revertedBy && (
               <button
                 onClick={ev => { ev.stopPropagation(); openRevert(entry) }}
-                className="text-xs text-white/40 hover:text-white/80 transition-colors"
+                className="text-xs text-fg-muted hover:text-foreground transition-colors"
               >
                 Revert
               </button>
@@ -282,7 +283,7 @@ function EntryRow({
         </td>
       </tr>
       {isExpanded && hasDetail && (
-        <tr className="border-b border-white/5 bg-white/[0.015]">
+        <tr className="border-b border-border bg-surface">
           <td colSpan={6} className={`px-5 py-4 ${indent ? "pl-10" : ""}`}>
             {entry.action === "SEND" && entry.newState ? (
               <SendDetail state={entry.newState} />
@@ -334,15 +335,15 @@ function GroupRow({
   return (
     <React.Fragment key={item.groupId}>
       <tr
-        className="border-b border-white/5 cursor-pointer hover:bg-white/[0.02] bg-white/[0.01]"
+        className="border-b border-border cursor-pointer hover:bg-surface-2 bg-surface"
         onClick={() => setExpandedGroupId(isOpen ? null : item.groupId)}
       >
-        <td className="py-2.5 pr-4 text-white/40 whitespace-nowrap">
+        <td className="py-2.5 pr-4 text-fg-muted whitespace-nowrap">
           <span title={`${oldest.timestamp} → ${newest.timestamp}`}>
             {timeAgo(newest.timestamp)}
           </span>
         </td>
-        <td className="py-2.5 pr-4 text-white/60 max-w-[120px] truncate">
+        <td className="py-2.5 pr-4 text-fg-secondary max-w-[120px] truncate">
           {actors.join(", ")}
         </td>
         <td className="py-2.5 pr-4">
@@ -350,19 +351,19 @@ function GroupRow({
             {actions.map(a => (
               <span
                 key={a}
-                className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${actionBadgeClass(a)}`}
+                className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium ${actionBadgeClass(a)}`}
               >
                 {a}
               </span>
             ))}
           </div>
         </td>
-        <td className="py-2.5 pr-4 text-white/70 max-w-[180px] truncate">
-          <span className="text-white/30 text-xs mr-1">{newest.entityType}</span>
+        <td className="py-2.5 pr-4 text-fg-secondary max-w-[180px] truncate">
+          <span className="text-fg-muted text-xs mr-1">{newest.entityType}</span>
           {newest.entityLabel}
         </td>
         <td className="py-2.5 pr-4">
-          <span className="text-xs text-white/40 bg-white/5 border border-white/10 rounded-full px-2 py-0.5">
+          <span className="text-xs text-fg-muted bg-surface border border-border rounded-full px-2 py-0.5">
             {entries.length} changes
           </span>
         </td>
@@ -371,12 +372,12 @@ function GroupRow({
             {reversibleCount > 0 && (
               <button
                 onClick={ev => { ev.stopPropagation(); openGroupRevert(item) }}
-                className="text-xs text-white/40 hover:text-white/80 transition-colors"
+                className="text-xs text-fg-muted hover:text-foreground transition-colors"
               >
                 Revert all
               </button>
             )}
-            <span className="text-xs text-white/30">{isOpen ? "▲" : "▼"}</span>
+            <span className="text-xs text-fg-muted">{isOpen ? "▲" : "▼"}</span>
           </div>
         </td>
       </tr>
@@ -394,15 +395,15 @@ function GroupRow({
             />
           ))}
           {hasNetDiff && (
-            <tr className="border-b border-white/5">
-              <td colSpan={6} className="px-6 py-5 bg-white/[0.02]">
+            <tr className="border-b border-border">
+              <td colSpan={6} className="px-6 py-5 bg-surface">
                 <div className="flex flex-col gap-4">
                   <div className="flex items-center gap-3">
-                    <span className="text-xs font-semibold text-white/50 uppercase tracking-wider">
+                    <span className="text-xs font-semibold text-fg-muted uppercase tracking-wider">
                       Net changes · {newest.entityLabel}
                     </span>
-                    <div className="flex-1 h-px bg-white/10" />
-                    <span className="text-[10px] text-white/25">
+                    <div className="flex-1 h-px bg-surface-2" />
+                    <span className="text-[11px] text-fg-faint">
                       {timeAgo(oldest.timestamp)} → {timeAgo(newest.timestamp)}
                     </span>
                   </div>
@@ -568,13 +569,13 @@ export function AuditPanel() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+        <Spinner size="md" />
       </div>
     )
   }
 
   if (error) {
-    return <p className="text-red-400 text-sm">{error}</p>
+    return <p className="text-destructive text-sm">{error}</p>
   }
 
   const groupCount = listItems.filter(i => i.kind === "group").length
@@ -586,10 +587,10 @@ export function AuditPanel() {
         <div className="flex items-center gap-4">
           <button
             onClick={() => setGrouped(g => !g)}
-            className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+            className={`text-xs px-3 py-1.5 rounded-md border transition-colors ${
               grouped
-                ? "bg-white/10 border-white/20 text-white/80"
-                : "bg-transparent border-white/10 text-white/40 hover:text-white/60 hover:border-white/20"
+                ? "bg-surface-2 border-border-strong text-foreground"
+                : "bg-transparent border-border text-fg-muted hover:text-foreground hover:border-border-strong"
             }`}
           >
             {grouped
@@ -598,7 +599,7 @@ export function AuditPanel() {
                 : "Grouped"
               : "Group similar"}
           </button>
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-white/40 hover:text-white/60 transition-colors">
+          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-fg-muted hover:text-foreground transition-colors">
             <input
               type="checkbox"
               checked={showReverted}
@@ -607,17 +608,17 @@ export function AuditPanel() {
             />
             Show reverted
           </label>
-          <span className="text-white/40 text-xs">{visibleEntries.length} entries</span>
+          <span className="text-fg-muted text-xs">{visibleEntries.length} entries</span>
         </div>
       </div>
 
       {entries.length === 0 ? (
-        <p className="text-white/40 text-sm">No audit log entries yet.</p>
+        <p className="text-fg-muted text-sm">No audit log entries yet.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-white/30 text-xs border-b border-white/10">
+              <tr className="text-fg-muted text-xs border-b border-border">
                 <th className="text-left pb-2 pr-4 font-medium">When</th>
                 <th className="text-left pb-2 pr-4 font-medium">Who</th>
                 <th className="text-left pb-2 pr-4 font-medium">Action</th>
@@ -658,42 +659,42 @@ export function AuditPanel() {
       {/* Group revert dialog */}
       {groupRevertTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-6 max-w-md w-full mx-4 flex flex-col gap-4">
+          <div className="bg-card border border-border rounded-xl p-6 max-w-md w-full mx-4 flex flex-col gap-4">
             <h3 className="font-semibold">Revert all changes in group?</h3>
-            <div className="text-sm text-white/60 flex flex-col gap-1">
+            <div className="text-sm text-fg-secondary flex flex-col gap-1">
               <p>
-                <span className="text-white/30">Entity:</span>{" "}
+                <span className="text-fg-muted">Entity:</span>{" "}
                 {groupRevertTarget.entries[0].entityLabel}
               </p>
               <p>
-                <span className="text-white/30">Reversible changes:</span>{" "}
+                <span className="text-fg-muted">Reversible changes:</span>{" "}
                 {groupRevertTarget.entries.filter(e => e.reversible && !e.revertedBy).length} of{" "}
                 {groupRevertTarget.entries.length}
               </p>
             </div>
-            <p className="text-xs text-yellow-400/70 bg-yellow-400/10 border border-yellow-400/20 rounded-lg px-3 py-2">
+            <p className="text-xs text-warning/70 bg-warning/10 border border-warning/20 rounded-md px-3 py-2">
               Each change will be reverted newest-first. Conflicts will be skipped with force. This restores the entity to its state before this editing session.
             </p>
             {groupRevertProgress && (
               <div className="flex flex-col gap-1.5">
-                <div className="flex justify-between text-xs text-white/40">
+                <div className="flex justify-between text-xs text-fg-muted">
                   <span>Reverting…</span>
                   <span>{groupRevertProgress.done} / {groupRevertProgress.total}</span>
                 </div>
-                <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div className="w-full h-1.5 bg-surface-2 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-white/40 rounded-full transition-all"
+                    className="h-full bg-foreground/40 rounded-full transition-all"
                     style={{ width: `${(groupRevertProgress.done / groupRevertProgress.total) * 100}%` }}
                   />
                 </div>
               </div>
             )}
-            {groupRevertError && <p className="text-red-400 text-xs">{groupRevertError}</p>}
+            {groupRevertError && <p className="text-destructive text-xs">{groupRevertError}</p>}
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => { setGroupRevertTarget(null); setGroupRevertProgress(null); setGroupRevertError("") }}
                 disabled={isGroupReverting}
-                className="px-4 py-2 text-sm text-white/50 hover:text-white transition-colors"
+                className="px-4 py-2 text-sm text-fg-muted hover:text-foreground transition-colors"
               >
                 {groupRevertError ? "Close" : "Cancel"}
               </button>
@@ -701,7 +702,7 @@ export function AuditPanel() {
                 <button
                   onClick={handleGroupRevert}
                   disabled={isGroupReverting}
-                  className="px-4 py-2 text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50"
+                  className="px-4 py-2 text-sm bg-surface-2 hover:bg-surface-3 text-foreground rounded-xl transition-colors disabled:opacity-50"
                 >
                   {isGroupReverting ? "Reverting…" : "Revert all"}
                 </button>
@@ -714,22 +715,22 @@ export function AuditPanel() {
       {/* Revert confirm dialog */}
       {revertTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-6 max-w-md w-full mx-4 flex flex-col gap-4">
+          <div className="bg-card border border-border rounded-xl p-6 max-w-md w-full mx-4 flex flex-col gap-4">
             <h3 className="font-semibold">Undo {revertTarget.action}?</h3>
-            <p className="text-white/60 text-sm">
-              Revert <span className="font-medium text-white/80">{revertTarget.action}</span> of{" "}
-              <span className="font-medium text-white/80">{revertTarget.entityLabel}</span>?
+            <p className="text-fg-secondary text-sm">
+              Revert <span className="font-medium text-foreground">{revertTarget.action}</span> of{" "}
+              <span className="font-medium text-foreground">{revertTarget.entityLabel}</span>?
             </p>
 
             {revertWarnings.length > 0 && (
-              <div className="bg-yellow-400/10 border border-yellow-400/20 rounded-lg p-3 flex flex-col gap-1">
+              <div className="bg-warning/10 border border-warning/20 rounded-xl p-3 flex flex-col gap-1">
                 {revertWarnings.map((w, i) => (
-                  <p key={i} className="text-yellow-400/80 text-xs">{w}</p>
+                  <p key={i} className="text-warning/80 text-xs">{w}</p>
                 ))}
               </div>
             )}
 
-            {revertError && <p className="text-red-400 text-sm">{revertError}</p>}
+            {revertError && <p className="text-destructive text-sm">{revertError}</p>}
 
             <div className="flex gap-2 justify-end">
               <button
@@ -739,7 +740,7 @@ export function AuditPanel() {
                   setNeedsForce(false)
                   setRevertError("")
                 }}
-                className="px-4 py-2 text-sm text-white/50 hover:text-white transition-colors"
+                className="px-4 py-2 text-sm text-fg-muted hover:text-foreground transition-colors"
                 disabled={isReverting}
               >
                 Cancel
@@ -747,7 +748,7 @@ export function AuditPanel() {
               <button
                 onClick={() => handleRevert(needsForce)}
                 disabled={isReverting}
-                className="px-4 py-2 text-sm bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50"
+                className="px-4 py-2 text-sm bg-surface-2 hover:bg-surface-3 text-foreground rounded-xl transition-colors disabled:opacity-50"
               >
                 {isReverting ? "Reverting…" : needsForce ? "Revert anyway" : "Confirm"}
               </button>

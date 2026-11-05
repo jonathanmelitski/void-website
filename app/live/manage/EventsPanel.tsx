@@ -75,25 +75,25 @@ export function EventsPanel() {
       {
         header: "Visibility",
         cell: row => row.isPrivate
-          ? <Badge variant="outline" className="text-yellow-400 border-yellow-400/40">Private</Badge>
-          : <span className="text-white/30 text-sm">Public</span>,
+          ? <Badge variant="outline" className="text-warning border-warning/40">Private</Badge>
+          : <span className="text-fg-muted text-sm">Public</span>,
       },
       {
         header: "Actions",
         cell: row => (
           <div className="flex items-center gap-3">
-            <Link href={`/gallery/${row.id}`} className="text-white/50 hover:text-white text-sm underline underline-offset-2">
+            <Link href={`/gallery/${row.id}`} className="text-fg-muted hover:text-foreground text-sm underline underline-offset-2">
               View in gallery
             </Link>
             <button
               onClick={() => setEditTarget(row)}
-              className="text-white/50 hover:text-white text-sm transition-colors"
+              className="text-fg-muted hover:text-foreground text-sm transition-colors"
             >
               Privacy
             </button>
             <button
               onClick={() => openConfirm(row)}
-              className="text-red-400/60 hover:text-red-400 text-sm transition-colors"
+              className="text-destructive/60 hover:text-destructive text-sm transition-colors"
             >
               Delete
             </button>
@@ -113,7 +113,7 @@ export function EventsPanel() {
           <DialogTrigger asChild>
             <Button size="sm">New Event</Button>
           </DialogTrigger>
-          <DialogContent className="bg-black border-white/10 text-white max-w-md">
+          <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>Create Event</DialogTitle>
             </DialogHeader>
@@ -122,7 +122,7 @@ export function EventsPanel() {
         </Dialog>
       </div>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
       <DataTable
         columns={buildColumns(row => setDeleteTarget([row]))}
@@ -135,7 +135,7 @@ export function EventsPanel() {
           if (selectedRows.length === 0) return null
           return (
             <div className="flex items-center gap-3">
-              <span className="text-sm text-white/50">{selectedRows.length} selected</span>
+              <span className="text-sm text-fg-muted">{selectedRows.length} selected</span>
               <Button
                 size="sm"
                 variant="destructive"
@@ -158,7 +158,7 @@ export function EventsPanel() {
       />
 
       <Dialog open={editTarget !== null} onOpenChange={open => { if (!open) setEditTarget(null) }}>
-        <DialogContent className="bg-black border-white/10 text-white max-w-md">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Privacy Settings</DialogTitle>
           </DialogHeader>
@@ -223,31 +223,31 @@ function CreateEventForm({ onCreated }: { onCreated: (event: EventRow) => void }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4 pt-2">
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Title</Label>
+        <Label className="text-fg-secondary">Title</Label>
         <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Nationals 2025" required
-          className="bg-white/5 border-white/10 text-white placeholder:text-white/20" />
+          className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Date</Label>
+        <Label className="text-fg-secondary">Date</Label>
         <Input type="date" value={date} onChange={e => setDate(e.target.value)} required
-          className="bg-white/5 border-white/10 text-white" />
+          className="bg-surface border-border text-foreground" />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Location</Label>
+        <Label className="text-fg-secondary">Location</Label>
         <Input value={location} onChange={e => setLocation(e.target.value)} placeholder="Columbus, OH"
-          className="bg-white/5 border-white/10 text-white placeholder:text-white/20" />
+          className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Description</Label>
+        <Label className="text-fg-secondary">Description</Label>
         <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Tournament description…"
-          className="bg-white/5 border-white/10 text-white placeholder:text-white/20" />
+          className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label className="text-white/70">Cover photo</Label>
+        <Label className="text-fg-secondary">Cover photo</Label>
         <input type="file" accept="image/*" onChange={e => setCoverFile(e.target.files?.[0] ?? null)}
-          className="text-sm text-white/60 file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-sm file:text-white hover:file:bg-white/20" />
+          className="text-sm text-fg-secondary file:mr-3 file:rounded-md file:border-0 file:bg-surface-2 file:px-3 file:py-1 file:text-sm file:text-foreground hover:file:bg-surface-3" />
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -257,17 +257,17 @@ function CreateEventForm({ onCreated }: { onCreated: (event: EventRow) => void }
           onChange={e => setIsPrivate(e.target.checked)}
           className="accent-white"
         />
-        <Label htmlFor="isPrivate" className="text-white/70 cursor-pointer">Private event</Label>
+        <Label htmlFor="isPrivate" className="text-fg-secondary cursor-pointer">Private event</Label>
       </div>
       {isPrivate && (
         <div className="flex flex-col gap-1.5">
-          <Label className="text-white/70">Allowed users <span className="text-white/30">(emails, one per line or comma-separated)</span></Label>
+          <Label className="text-fg-secondary">Allowed users <span className="text-fg-muted">(emails, one per line or comma-separated)</span></Label>
           <textarea
             value={allowedUsersText}
             onChange={e => setAllowedUsersText(e.target.value)}
             placeholder="user@example.com"
             rows={3}
-            className="rounded-md bg-white/5 border border-white/10 text-white placeholder:text-white/20 text-sm p-2 resize-none focus:outline-none focus:ring-1 focus:ring-white/20"
+            className="rounded-md bg-surface border border-border text-foreground placeholder:text-fg-faint text-sm p-2 resize-none"
           />
         </div>
       )}
@@ -309,8 +309,8 @@ function EditPrivacyForm({ event, onUpdated }: { event: EventRow; onUpdated: (up
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4 pt-2">
-      <p className="text-sm text-white/50">{event.title}</p>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      <p className="text-sm text-fg-muted">{event.title}</p>
+      {error && <p className="text-sm text-destructive">{error}</p>}
       <div className="flex items-center gap-2">
         <input
           type="checkbox"
@@ -319,17 +319,17 @@ function EditPrivacyForm({ event, onUpdated }: { event: EventRow; onUpdated: (up
           onChange={e => setIsPrivate(e.target.checked)}
           className="accent-white"
         />
-        <Label htmlFor="editIsPrivate" className="text-white/70 cursor-pointer">Private event</Label>
+        <Label htmlFor="editIsPrivate" className="text-fg-secondary cursor-pointer">Private event</Label>
       </div>
       {isPrivate && (
         <div className="flex flex-col gap-1.5">
-          <Label className="text-white/70">Allowed users <span className="text-white/30">(emails, one per line or comma-separated)</span></Label>
+          <Label className="text-fg-secondary">Allowed users <span className="text-fg-muted">(emails, one per line or comma-separated)</span></Label>
           <textarea
             value={allowedUsersText}
             onChange={e => setAllowedUsersText(e.target.value)}
             placeholder="user@example.com"
             rows={4}
-            className="rounded-md bg-white/5 border border-white/10 text-white placeholder:text-white/20 text-sm p-2 resize-none focus:outline-none focus:ring-1 focus:ring-white/20"
+            className="rounded-md bg-surface border border-border text-foreground placeholder:text-fg-faint text-sm p-2 resize-none"
           />
         </div>
       )}

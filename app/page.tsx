@@ -1,4 +1,3 @@
-import Link from "next/link"
 import { EventCard } from "@/components/gallery/EventCard"
 import type { EventItem } from "@/lib/aws/dynamo"
 
@@ -17,26 +16,21 @@ export default async function App() {
   const recentEvents = await getRecentEvents()
 
   return (
-    <div className="flex flex-col items-center align-middle h-full gap-8 pt-8 lg:px-16 not-lg:p-8">
-      <header className="text-6xl font-black p-12">
+    <div className="mx-auto flex w-full max-w-6xl flex-col items-center gap-8 px-4 pb-16 pt-8 sm:px-6 lg:px-8">
+      <h1 className="font-display text-6xl leading-none tracking-wide text-center pt-12 pb-4 md:text-8xl">
         Void Ultimate
-      </header>
-      <b className="text-lg">
+      </h1>
+      <b className="text-lg text-center">
         Men&apos;s Club Ultimate Frisbee (Void) is a student group open to all students at the University of Pennsylvania. Void was founded in 1976 and is the longest continuously-run Ultimate program in Philadelphia. We compete as a D1 Men&apos;s College Ultimate program. Our program has won one national championship (1985) and has alumni playing at the highest levels of club and professionally in the UFA.
       </b>
 
-      <b className="text-lg">
+      <b className="text-lg text-center">
         We offer an A team and a B team, called Null. While Void is competitive in nature, we do not cut from the program. Anyone who wants to play on Null can. Our goals as a club are to introduce the sport and grow love for Ultimate on Null, and to compete at the highest levels on Void.
       </b>
 
       {recentEvents.length > 0 && (
         <section className="w-full mt-4">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-bold">Recent Events</h2>
-            <Link href="/gallery" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-              View all →
-            </Link>
-          </div>
+          <h2 className="mb-4 text-lg font-semibold">Recent events</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {recentEvents.map(event => (
               <EventCard key={event.id} event={{
