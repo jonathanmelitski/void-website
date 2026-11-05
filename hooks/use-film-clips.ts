@@ -25,7 +25,8 @@ export function useFilmClips(gameId: string | null) {
   }, [gameId])
 
   const deleteClip = useCallback(async (clipId: string) => {
-    await fetch(`/api/film/clips/${clipId}`, { method: "DELETE" })
+    const res = await fetch(`/api/film/clips/${clipId}`, { method: "DELETE" })
+    if (!res.ok) throw new Error("Couldn't delete the film. Try again.")
     setClips(prev => prev.filter(c => c.id !== clipId))
   }, [])
 

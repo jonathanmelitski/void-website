@@ -10,6 +10,8 @@ import type { FilmClipItem } from "@/lib/aws/film-clips"
 import type { FilmAnnotationItem } from "@/lib/aws/film-annotations"
 import { MAIN_TRACK_ID, sortClips, trackIdOf, type FilmTrack } from "@/lib/film-tracks"
 import { Spinner } from "@/components/ui/spinner"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { toast } from "@/components/ui/sonner"
 
 const FilmViewer = dynamic(
   () => import("@/components/film/FilmViewer").then(m => m.FilmViewer),
@@ -44,6 +46,22 @@ export function FilmPanel() {
   const [selectedTrackId, setSelectedTrackId] = useState<string>(MAIN_TRACK_ID)
   const [trackDraft, setTrackDraft] = useState<{ id: string | null; name: string } | null>(null)
   const [trackError, setTrackError] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<FilmClipItem | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return
+    setDeleting(true)
+    try {
+      await deleteClip(pendingDelete.id)
+      toast.success("Film deleted")
+      setPendingDelete(null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete the film. Try again.")
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const game = games.find(g => g.id === selectedGameId) ?? null
   const angleTracks: FilmTrack[] = game?.filmTracks ?? []
@@ -358,7 +376,7 @@ export function FilmPanel() {
                         </span>
                       )}
                       <button
-                        onClick={() => { if (confirm(`Delete "${clip.title ?? "Game Film"}"?`)) deleteClip(clip.id) }}
+                        onClick={() => setPendingDelete(clip)}
                         className="text-fg-muted hover:text-destructive transition-all text-xs p-1 opacity-0 group-hover:opacity-100"
                         aria-label="Delete clip"
                       >
@@ -398,6 +416,15 @@ export function FilmPanel() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={open => { if (!open && !deleting) setPendingDelete(null) }}
+        title="Delete film?"
+        description={`"${pendingDelete?.title ?? "Game Film"}" will be removed from this game. This can't be undone.`}
+        confirmLabel="Delete film"
+        isLoading={deleting}
+        onConfirm={confirmDelete}
+      />
     </div>
   )
 }

@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation"
 import type { SendRecord } from "@/lib/aws/sends"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
 import { Spinner } from "@/components/ui/spinner"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { toast } from "@/components/ui/sonner"
 
 type ContactList = { name: string; description?: string }
 type Contact = { email: string; unsubscribed: boolean }
@@ -33,6 +35,8 @@ export function MarketingPanel() {
   const [newListName, setNewListName] = useState("")
   const [newListDesc, setNewListDesc] = useState("")
   const [creatingList, setCreatingList] = useState(false)
+  const [pendingDeleteList, setPendingDeleteList] = useState<string | null>(null)
+  const [deletingList, setDeletingList] = useState(false)
 
   // Contacts modal
   const [contactsModal, setContactsModal] = useState<string | null>(null)
@@ -251,10 +255,25 @@ export function MarketingPanel() {
     }
   }
 
-  async function deleteList(name: string) {
-    if (!confirm(`Delete list "${name}"? This cannot be undone.`)) return
-    await fetch(`/api/marketing/lists/${encodeURIComponent(name)}`, { method: "DELETE" })
-    setLists(prev => prev.filter(l => l.name !== name))
+  function deleteList(name: string) {
+    setPendingDeleteList(name)
+  }
+
+  async function confirmDeleteList() {
+    const name = pendingDeleteList
+    if (!name) return
+    setDeletingList(true)
+    try {
+      const res = await fetch(`/api/marketing/lists/${encodeURIComponent(name)}`, { method: "DELETE" })
+      if (!res.ok) throw new Error()
+      setLists(prev => prev.filter(l => l.name !== name))
+      toast.success(`Deleted "${name}"`)
+      setPendingDeleteList(null)
+    } catch {
+      toast.error(`Couldn't delete "${name}". Try again.`)
+    } finally {
+      setDeletingList(false)
+    }
   }
 
   async function openContacts(listName: string) {
@@ -1313,6 +1332,15 @@ export function MarketingPanel() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={pendingDeleteList !== null}
+        onOpenChange={open => { if (!open && !deletingList) setPendingDeleteList(null) }}
+        title="Delete contact list?"
+        description={`"${pendingDeleteList ?? ""}" and its contacts will be deleted. This can't be undone.`}
+        confirmLabel="Delete list"
+        isLoading={deletingList}
+        onConfirm={confirmDeleteList}
+      />
     </div>
   )
 }
