@@ -7,6 +7,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
+import { scanAll } from "./paginate"
 
 const TABLE = () => process.env.DYNAMO_NEWSLETTERS_TABLE!
 
@@ -37,19 +38,25 @@ export function generateSlug(title: string): string {
 }
 
 export async function listNewsletters(): Promise<NewsletterItem[]> {
-  const result = await dynamo.send(new ScanCommand({ TableName: TABLE() }))
-  const items = (result.Items ?? []) as NewsletterItem[]
+  const items = await scanAll<NewsletterItem>({ TableName: TABLE() })
   return items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 }
 
+// No slug index: the filter is applied per 1 MB page, so the match can be on any page.
 export async function getNewsletterBySlug(slug: string): Promise<NewsletterItem | null> {
-  const result = await dynamo.send(new ScanCommand({
-    TableName: TABLE(),
-    FilterExpression: "#slug = :slug",
-    ExpressionAttributeNames: { "#slug": "slug" },
-    ExpressionAttributeValues: { ":slug": slug },
-  }))
-  return (result.Items?.[0] as NewsletterItem) ?? null
+  let ExclusiveStartKey: Record<string, unknown> | undefined
+  do {
+    const result = await dynamo.send(new ScanCommand({
+      TableName: TABLE(),
+      FilterExpression: "#slug = :slug",
+      ExpressionAttributeNames: { "#slug": "slug" },
+      ExpressionAttributeValues: { ":slug": slug },
+      ExclusiveStartKey,
+    }))
+    if (result.Items?.[0]) return result.Items[0] as NewsletterItem
+    ExclusiveStartKey = result.LastEvaluatedKey
+  } while (ExclusiveStartKey)
+  return null
 }
 
 export async function getNewsletter(id: string): Promise<NewsletterItem | null> {

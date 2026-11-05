@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto"
-import { DeleteCommand, GetCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb"
+import { DeleteCommand, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
+import { scanAll } from "./paginate"
 
 const TABLE = () => process.env.DYNAMO_SENDS_TABLE!
 
@@ -47,8 +48,7 @@ export async function deleteSend(id: string): Promise<void> {
 }
 
 export async function listSends(limit = 100): Promise<SendRecord[]> {
-  const result = await dynamo.send(new ScanCommand({ TableName: TABLE() }))
-  const items = (result.Items ?? []) as SendRecord[]
+  const items = await scanAll<SendRecord>({ TableName: TABLE() })
   return items
     .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime())
     .slice(0, limit)

@@ -3,9 +3,9 @@ import {
   GetCommand,
   DeleteCommand,
   UpdateCommand,
-  QueryCommand,
 } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
+import { queryAll } from "./paginate"
 
 // DynamoDB table: VoidFilmAnnotations
 // GSI: ClipIdIndex — PK: clipId, SK: videoTimestampMs (projects all)
@@ -26,16 +26,13 @@ export type FilmAnnotationItem = {
 }
 
 export async function listAnnotationsByClip(clipId: string): Promise<FilmAnnotationItem[]> {
-  const result = await dynamo.send(
-    new QueryCommand({
-      TableName: TABLE(),
-      IndexName: "ClipIdIndex",
-      KeyConditionExpression: "clipId = :clipId",
-      ExpressionAttributeValues: { ":clipId": clipId },
-      ScanIndexForward: true,
-    })
-  )
-  return (result.Items ?? []) as FilmAnnotationItem[]
+  return queryAll<FilmAnnotationItem>({
+    TableName: TABLE(),
+    IndexName: "ClipIdIndex",
+    KeyConditionExpression: "clipId = :clipId",
+    ExpressionAttributeValues: { ":clipId": clipId },
+    ScanIndexForward: true,
+  })
 }
 
 export async function getAnnotation(id: string): Promise<FilmAnnotationItem | null> {

@@ -4,16 +4,22 @@ import { EventCard } from "@/components/gallery/EventCard"
 import { Button } from "@/components/ui/button"
 import { PageContainer } from "@/components/ui/page"
 import teamPhoto from "@/public/void-team.png"
-import type { EventItem } from "@/lib/aws/dynamo"
+import { listEvents, type EventItem } from "@/lib/aws/dynamo"
+import { canViewEvent } from "@/lib/event-access"
 
+// Public page: regenerated at most once a minute (ISR) instead of a DynamoDB Scan per view.
+// Event create/delete also revalidate "/" on demand.
+export const revalidate = 60
+
+// Reads DynamoDB directly (no HTTP hop through our own /api). Anonymous view: public events only.
 async function getRecentEvents(): Promise<EventItem[]> {
   try {
-    const base = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000"
-    const res = await fetch(`${base}/api/events`, { cache: "no-store" })
-    if (!res.ok) return []
-    return res.json()
-  } catch {
-    return []
+    return (await listEvents()).filter(e => canViewEvent(e, null))
+  } catch (err) {
+    // At build time (no AWS access) render without events; ISR fills them in. At runtime rethrow,
+    // so a failed regeneration keeps serving the last good page instead of caching an empty one.
+    if (process.env.NEXT_PHASE === "phase-production-build") return []
+    throw err
   }
 }
 

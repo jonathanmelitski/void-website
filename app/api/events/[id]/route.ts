@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { revalidatePath } from "next/cache"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { getEvent, deleteEvent, updateEvent } from "@/lib/aws/dynamo"
 import { logAudit } from "@/lib/aws/audit"
@@ -51,6 +52,7 @@ export async function PATCH(request: NextRequest, { params }: Props) {
       newState: { ...existing, ...patch } as Record<string, unknown>,
       reversible: true,
     })
+    revalidatePath("/") // privacy changes affect the ISR home page
     return NextResponse.json({ ...existing, ...patch })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to update event"
@@ -76,6 +78,7 @@ export async function DELETE(request: NextRequest, { params }: Props) {
       previousState: existing as Record<string, unknown> ?? undefined,
       reversible: !!existing,
     })
+    revalidatePath("/")
     return new NextResponse(null, { status: 204 })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to delete event"

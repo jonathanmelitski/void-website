@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { revalidatePath } from "next/cache"
 import { getOptionalUser, requireUser, ADMIN_ONLY, COACH_OR_ADMIN } from "@/lib/auth/server"
 import {
   getNewsletter,
@@ -58,6 +59,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     previousState: { published: newsletter.published },
     reversible: true,
   })
+  revalidatePath("/news") // ISR list page
   return NextResponse.json({ ...newsletter, published: newPublished })
 }
 
@@ -104,6 +106,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     reversible: !!newsletter,
   })
 
+  revalidatePath("/news")
   return NextResponse.json({ success: true })
 }
 
@@ -123,5 +126,6 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     previousState: newsletter as Record<string, unknown> ?? undefined,
     reversible: !!newsletter,
   })
+  revalidatePath("/news")
   return NextResponse.json({ success: true })
 }

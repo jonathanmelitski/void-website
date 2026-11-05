@@ -2,10 +2,10 @@ import {
   PutCommand,
   GetCommand,
   DeleteCommand,
-  ScanCommand,
   QueryCommand,
 } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
+import { scanAll } from "./paginate"
 
 // DynamoDB table: VoidPlayerLinks
 // PK: cognitoSub
@@ -48,6 +48,5 @@ export async function deletePlayerLink(cognitoSub: string): Promise<void> {
 }
 
 export async function listPlayerLinks(): Promise<VoidPlayerLinkItem[]> {
-  const result = await dynamo.send(new ScanCommand({ TableName: TABLE() }))
-  return (result.Items ?? []) as VoidPlayerLinkItem[]
+  return scanAll<VoidPlayerLinkItem>({ TableName: TABLE() })
 }

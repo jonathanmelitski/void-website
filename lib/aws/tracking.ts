@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto"
-import { DeleteCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb"
+import { DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
+import { scanAll } from "./paginate"
 
 const TABLE = () => process.env.DYNAMO_TRACKING_TABLE!
 
@@ -28,12 +29,10 @@ export async function deleteEventsForSend(sendId: string): Promise<void> {
 }
 
 export async function getEventsForSend(sendId: string): Promise<TrackingEvent[]> {
-  const result = await dynamo.send(
-    new ScanCommand({
-      TableName: TABLE(),
-      FilterExpression: "sendId = :s",
-      ExpressionAttributeValues: { ":s": sendId },
-    })
-  )
-  return (result.Items ?? []) as TrackingEvent[]
+  // No sendId index: full-table Scan, paged (the filter applies per 1 MB page)
+  return scanAll<TrackingEvent>({
+    TableName: TABLE(),
+    FilterExpression: "sendId = :s",
+    ExpressionAttributeValues: { ":s": sendId },
+  })
 }

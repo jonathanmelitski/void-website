@@ -8,6 +8,8 @@ import { getPlayer } from "@/lib/aws/players"
 import { listAnnotationsByClip, createAnnotation } from "@/lib/aws/film-annotations"
 import { getClip } from "@/lib/aws/film-clips"
 import { pushFilmUpdate } from "@/lib/ws-push"
+import { denyIfGameHidden } from "@/lib/event-access"
+import { NO_STORE_HEADERS } from "@/lib/http-cache"
 
 export async function GET(request: NextRequest) {
   const clipId = request.nextUrl.searchParams.get("clipId")
@@ -17,8 +19,15 @@ export async function GET(request: NextRequest) {
   if (!auth.ok) return auth.response
 
   try {
-    const annotations = await listAnnotationsByClip(clipId)
-    return NextResponse.json(annotations)
+    // Annotations inherit their clip's game/event visibility (private events 404)
+    const [clip, annotations] = await Promise.all([getClip(clipId), listAnnotationsByClip(clipId)])
+    // (annotations also carry gameId, which covers leftovers of a deleted clip)
+    const gameId = clip?.gameId ?? annotations[0]?.gameId
+    if (gameId) {
+      const denied = await denyIfGameHidden(request, gameId)
+      if (denied) return denied
+    }
+    return NextResponse.json(annotations, { headers: NO_STORE_HEADERS })
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to fetch annotations"
     return NextResponse.json({ error: message }, { status: 500 })

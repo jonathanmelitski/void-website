@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
+import { revalidatePath } from "next/cache"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { listEvents, createEvent } from "@/lib/aws/dynamo"
 import { logAudit } from "@/lib/aws/audit"
 import { canViewEvent, getCaller } from "@/lib/event-access"
+import { publicReadHeaders } from "@/lib/http-cache"
 import { randomUUID } from "crypto"
 
 export async function GET(request: NextRequest) {
   try {
     const [events, caller] = await Promise.all([listEvents(), getCaller(request)])
-    return NextResponse.json(events.filter((e) => canViewEvent(e, caller)))
+    // The list depends on who asks (private events): anonymous only gets a short browser cache
+    return NextResponse.json(events.filter((e) => canViewEvent(e, caller)), {
+      headers: publicReadHeaders(request, { maxAge: 30, swr: 300, isPrivateData: !!caller }),
+    })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to fetch events"
     return NextResponse.json({ error: message }, { status: 500 })
@@ -48,6 +53,7 @@ export async function POST(request: NextRequest) {
       newState: item as Record<string, unknown>,
       reversible: true,
     })
+    revalidatePath("/") // ISR home page lists events
     return NextResponse.json(item, { status: 201 })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to create event"

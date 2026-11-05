@@ -26,8 +26,14 @@ export type EventItem = {
 }
 
 export async function listEvents(): Promise<EventItem[]> {
-  const result = await dynamo.send(new ScanCommand({ TableName: TABLE() }))
-  const items = (result.Items ?? []) as EventItem[]
+  // Follow LastEvaluatedKey: a Scan returns at most 1 MB per call
+  const items: EventItem[] = []
+  let ExclusiveStartKey: Record<string, unknown> | undefined
+  do {
+    const result = await dynamo.send(new ScanCommand({ TableName: TABLE(), ExclusiveStartKey }))
+    items.push(...((result.Items ?? []) as EventItem[]))
+    ExclusiveStartKey = result.LastEvaluatedKey
+  } while (ExclusiveStartKey)
   return items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 }
 

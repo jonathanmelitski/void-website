@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { listPointsByGame, listPointsByPlayer, createPoint } from "@/lib/aws/points"
-import { denyIfGameHidden } from "@/lib/event-access"
+import { canViewEvent, denyIfGameHidden, getCaller } from "@/lib/event-access"
+import { getGames } from "@/lib/aws/games"
+import { getEvent } from "@/lib/aws/dynamo"
+import { NO_STORE_HEADERS } from "@/lib/http-cache"
 import { randomUUID } from "crypto"
 
 export async function GET(request: NextRequest) {
@@ -17,8 +20,15 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.response
 
     try {
-      const points = await listPointsByPlayer(playerId)
-      return NextResponse.json(points)
+      const [points, caller] = await Promise.all([listPointsByPlayer(playerId), getCaller(request)])
+      // Drop points from private events the caller can't see (same rule as canViewGame: a deleted
+      // game or event has no privacy flag). One BatchGet for the games, one GetItem per event.
+      const games = await getGames([...new Set(points.map(p => p.gameId))])
+      const eventIds = [...new Set(games.map(g => g.eventId))]
+      const events = await Promise.all(eventIds.map(id => getEvent(id)))
+      const hiddenEvents = new Set(events.filter(e => e && !canViewEvent(e, caller)).map(e => e!.id))
+      const hiddenGames = new Set(games.filter(g => hiddenEvents.has(g.eventId)).map(g => g.id))
+      return NextResponse.json(points.filter(p => !hiddenGames.has(p.gameId)), { headers: NO_STORE_HEADERS })
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to fetch points"
       return NextResponse.json({ error: message }, { status: 500 })

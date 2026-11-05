@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto"
-import { GetCommand, PutCommand, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb"
+import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
+import { scanAll } from "./paginate"
 import { getEvent, deleteEvent } from "./dynamo"
 import {
   getNewsletter,
@@ -50,8 +51,9 @@ export async function logAudit(params: Omit<AuditLogEntry, "id" | "timestamp">):
 }
 
 export async function listAuditLogs(limit = 100): Promise<AuditLogEntry[]> {
-  const result = await dynamo.send(new ScanCommand({ TableName: AUDIT_TABLE() }))
-  const items = (result.Items ?? []) as AuditLogEntry[]
+  // The audit table is several MB: a single Scan page held only ~1/4 of it, so recent entries could
+  // be missing. Page through all of it (a time-ordered GSI would make this a cheap Query).
+  const items = await scanAll<AuditLogEntry>({ TableName: AUDIT_TABLE() })
   return items
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, limit)
@@ -115,8 +117,12 @@ export async function checkRevertConflicts(
   }
 
   // Non-blocking: warn if there are newer unreverted changes to the same entity
-  const allLogs = await dynamo.send(new ScanCommand({ TableName: AUDIT_TABLE() }))
-  const newerChanges = ((allLogs.Items ?? []) as AuditLogEntry[]).filter(
+  const sameEntity = await scanAll<AuditLogEntry>({
+    TableName: AUDIT_TABLE(),
+    FilterExpression: "entityId = :e",
+    ExpressionAttributeValues: { ":e": entry.entityId },
+  })
+  const newerChanges = sameEntity.filter(
     l =>
       l.entityId === entry.entityId &&
       l.id !== entry.id &&

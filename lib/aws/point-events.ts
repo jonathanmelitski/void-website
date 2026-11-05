@@ -1,10 +1,10 @@
 import {
   PutCommand,
   DeleteCommand,
-  QueryCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
+import { queryAll } from "./paginate"
 import type { PointEventType } from "../point-event-meta"
 export type { PointEventType } from "../point-event-meta"
 export { POINT_EVENT_TYPES, PLAYERLESS_EVENT_TYPES } from "../point-event-meta"
@@ -31,29 +31,23 @@ export type PointEventItem = {
 }
 
 export async function listEventsByPoint(pointId: string): Promise<PointEventItem[]> {
-  const result = await dynamo.send(
-    new QueryCommand({
-      TableName: TABLE(),
-      IndexName: "PointIdIndex",
-      KeyConditionExpression: "pointId = :pointId",
-      ExpressionAttributeValues: { ":pointId": pointId },
-      ScanIndexForward: true, // ascending by sortOrder
-    })
-  )
-  return (result.Items ?? []) as PointEventItem[]
+  return queryAll<PointEventItem>({
+    TableName: TABLE(),
+    IndexName: "PointIdIndex",
+    KeyConditionExpression: "pointId = :pointId",
+    ExpressionAttributeValues: { ":pointId": pointId },
+    ScanIndexForward: true, // ascending by sortOrder
+  })
 }
 
 export async function listEventsByGame(gameId: string): Promise<PointEventItem[]> {
-  const result = await dynamo.send(
-    new QueryCommand({
-      TableName: TABLE(),
-      IndexName: "GameIdIndex",
-      KeyConditionExpression: "gameId = :gameId",
-      ExpressionAttributeValues: { ":gameId": gameId },
-      ScanIndexForward: true,
-    })
-  )
-  return (result.Items ?? []) as PointEventItem[]
+  return queryAll<PointEventItem>({
+    TableName: TABLE(),
+    IndexName: "GameIdIndex",
+    KeyConditionExpression: "gameId = :gameId",
+    ExpressionAttributeValues: { ":gameId": gameId },
+    ScanIndexForward: true,
+  })
 }
 
 export async function createPointEvent(item: PointEventItem): Promise<void> {

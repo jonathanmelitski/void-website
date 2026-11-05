@@ -3,9 +3,9 @@ import {
   GetCommand,
   DeleteCommand,
   UpdateCommand,
-  QueryCommand,
 } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
+import { queryAll } from "./paginate"
 import type { FilmSyncPoint } from "../film-tracks"
 
 // DynamoDB table: VoidFilmClips
@@ -34,15 +34,12 @@ export type FilmClipItem = {
 }
 
 export async function listClipsByGame(gameId: string): Promise<FilmClipItem[]> {
-  const result = await dynamo.send(
-    new QueryCommand({
-      TableName: TABLE(),
-      IndexName: "GameIdIndex",
-      KeyConditionExpression: "gameId = :gameId",
-      ExpressionAttributeValues: { ":gameId": gameId },
-    })
-  )
-  return (result.Items ?? []) as FilmClipItem[]
+  return queryAll<FilmClipItem>({
+    TableName: TABLE(),
+    IndexName: "GameIdIndex",
+    KeyConditionExpression: "gameId = :gameId",
+    ExpressionAttributeValues: { ":gameId": gameId },
+  })
 }
 
 export async function getClip(id: string): Promise<FilmClipItem | null> {

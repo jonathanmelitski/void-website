@@ -7,7 +7,9 @@ import { PageContainer, PageHeader } from "@/components/ui/page"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Button } from "@/components/ui/button"
 
-export const dynamic = "force-dynamic"
+// ISR: the newsletters Scan (~0.5 s) runs at most once a minute, not on every view.
+// Publish/unpublish/delete also revalidate "/news" on demand.
+export const revalidate = 60
 
 export const metadata: Metadata = {
   title: "News",
@@ -20,7 +22,13 @@ export const metadata: Metadata = {
 
 export default async function NewsPage() {
   let newsletters: Awaited<ReturnType<typeof listNewsletters>> = []
-  try { newsletters = (await listNewsletters()).filter(n => n.published) } catch { /* build-time */ }
+  try {
+    newsletters = (await listNewsletters()).filter(n => n.published)
+  } catch (err) {
+    // Build time (no AWS access): render empty, ISR fills it in. At runtime rethrow so a failed
+    // regeneration keeps the last good page instead of caching "No newsletters" for a minute.
+    if (process.env.NEXT_PHASE !== "phase-production-build") throw err
+  }
 
   return (
     <PageContainer>
