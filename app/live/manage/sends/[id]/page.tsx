@@ -1,9 +1,15 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useParams, useRouter } from "next/navigation"
+import Link from "next/link"
+import { useParams } from "next/navigation"
+import { ChevronLeft } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { useRequireAuth } from "@/hooks/use-require-auth"
+import { apiFetch } from "@/lib/api-fetch"
+import { useUserEmails } from "../../use-user-emails"
+import { PersonName } from "../../person-name"
 
 type StatsResponse = {
   sendId: string
@@ -31,10 +37,31 @@ function pct(n: number, total: number) {
   return `${Math.round((n / total) * 100)}%`
 }
 
+/** host + path, without protocol or query noise */
+function shortUrl(url: string) {
+  try {
+    const u = new URL(url)
+    return `${u.host}${u.pathname === "/" ? "" : u.pathname}`
+  } catch {
+    return url
+  }
+}
+
+function BackLink() {
+  return (
+    <Button asChild variant="quiet" size="sm" className="mb-3 self-start">
+      <Link href="/live/manage?tab=marketing">
+        <ChevronLeft aria-hidden />
+        Marketing
+      </Link>
+    </Button>
+  )
+}
+
 export default function SendStatsPage() {
   const { id } = useParams<{ id: string }>()
-  const router = useRouter()
-  const { user, isLoading: authLoading } = useRequireAuth({ roles: ["ADMIN"], forbiddenHref: "/live/manage" })
+  const { isLoading: authLoading } = useRequireAuth({ roles: ["ADMIN"], forbiddenHref: "/live/manage" })
+  const userEmails = useUserEmails()
 
   const [send, setSend] = useState<SendRecord | null>(null)
   const [stats, setStats] = useState<StatsResponse | null>(null)
@@ -42,22 +69,21 @@ export default function SendStatsPage() {
   const [error, setError] = useState("")
   const [statsError, setStatsError] = useState("")
 
-  const isAdmin = user?.groups.includes("ADMIN") ?? false
-
   useEffect(() => {
     if (!id) return
     Promise.all([
-      fetch(`/api/marketing/sends/${id}`).then(r => r.ok ? r.json() : null),
-      fetch(`/api/marketing/sends/${id}/stats`).then(r => r.json().then(d => ({ ok: r.ok, status: r.status, data: d }))),
+      apiFetch(`/api/marketing/sends/${id}`).then(r => r.ok ? r.json() : null),
+      apiFetch(`/api/marketing/sends/${id}/stats`).then(async r => ({ ok: r.ok, data: r.ok ? await r.json() : null })),
     ]).then(([sendData, statsResult]) => {
-      if (!sendData) { setError("Send not found"); return }
+      if (!sendData) { setError("This send couldn't be found. It may have been deleted."); return }
       setSend(sendData)
       if (statsResult.ok) {
         setStats(statsResult.data)
       } else {
-        setStatsError(`Stats error ${statsResult.status}: ${statsResult.data?.error ?? "unknown"}`)
+        setStatsError("Couldn't load open and click stats. Reload to try again.")
       }
-    }).catch(e => setError(`Failed to load: ${e?.message ?? e}`)).finally(() => setLoading(false))
+    }).catch(() => setError("Couldn't load this send. Check your connection and try again."))
+      .finally(() => setLoading(false))
   }, [id])
 
   if (authLoading || loading) {
@@ -70,8 +96,9 @@ export default function SendStatsPage() {
 
   if (error || !send) {
     return (
-      <div className="p-8 lg:px-16">
-        <p className="text-destructive">{error || "Send not found"}</p>
+      <div className="flex flex-col px-4 py-6 text-left sm:p-8 lg:px-16">
+        <BackLink />
+        <p className="text-destructive">{error || "This send couldn't be found."}</p>
       </div>
     )
   }
@@ -95,97 +122,85 @@ export default function SendStatsPage() {
 
   const maxTotalClicks = allLinks.reduce((m, l) => Math.max(m, l.totalClicks), 0)
 
+  const cards = stats ? [
+    { value: String(stats.recipientCount), label: "Sent" },
+    { value: String(stats.uniqueOpens), label: `Opened · ${pct(stats.uniqueOpens, stats.recipientCount)}` },
+    { value: String(stats.uniqueClicks), label: `Clicked · ${pct(stats.uniqueClicks, stats.recipientCount)}` },
+    { value: pct(stats.uniqueClicks, stats.uniqueOpens), label: "Click-to-open" },
+    { value: String(stats.totalClickEvents), label: "Total clicks" },
+  ] : []
+
   return (
-    <div className="flex flex-col p-8 lg:px-16 gap-8">
+    <div className="flex flex-col gap-8 px-4 py-6 text-left sm:p-8 lg:px-16">
       {/* Header */}
-      <div>
-        <button
-          onClick={() => router.push("/live/manage?tab=marketing")}
-          className="text-fg-muted hover:text-foreground text-sm mb-4 flex items-center gap-1 transition-colors"
-        >
-          ← Marketing
-        </button>
-        <div className="flex flex-col items-center gap-2 text-center">
-          <h1 className="text-3xl font-display leading-none tracking-wide">
-            {send.newsletterTitle}
-            {send.sendMode === "test" && (
-              <span className="ml-2 text-xs bg-warning/10 text-warning border border-warning/30 px-2 py-1 rounded-full align-middle">Test</span>
-            )}
-          </h1>
-          <p className="text-fg-muted text-sm">
-            {send.sendMode === "test" ? "Test send" : send.listName} &bull; {sentDate} &bull; by {send.sentBy}
-          </p>
-        </div>
+      <div className="flex flex-col">
+        <BackLink />
+        <h1 className="text-3xl font-display leading-none tracking-wide">
+          {send.newsletterTitle}
+          {send.sendMode === "test" && (
+            <span className="ml-2 font-sans text-xs bg-warning/10 text-warning border border-warning/30 px-2 py-1 rounded-full align-middle tracking-normal">Test</span>
+          )}
+        </h1>
+        <p className="text-fg-muted text-sm mt-2">
+          {send.sendMode === "test" ? "Test send" : send.listName} · {sentDate} · by <PersonName id={send.sentBy} lookup={userEmails} />
+        </p>
       </div>
 
       {!send.trackingEnabled ? (
-        <p className="text-fg-muted text-sm">Tracking was not enabled for this send.</p>
+        <p className="text-fg-muted text-sm">Tracking was off for this send, so there are no open or click stats.</p>
       ) : statsError ? (
-        <p className="text-destructive text-sm font-mono">{statsError}</p>
+        <p className="text-destructive text-sm">{statsError}</p>
       ) : !stats ? (
-        <p className="text-fg-muted text-sm">Stats unavailable.</p>
+        <p className="text-fg-muted text-sm">Stats aren&apos;t available for this send.</p>
       ) : (
         <>
           {/* Stat cards */}
-          <div className="grid grid-cols-5 gap-4">
-            <div className="bg-surface border border-border rounded-xl px-5 py-4 text-center">
-              <p className="text-3xl font-bold">{stats.recipientCount}</p>
-              <p className="text-xs text-fg-muted mt-1">Sent</p>
-            </div>
-            <div className="bg-surface border border-border rounded-xl px-5 py-4 text-center">
-              <p className="text-3xl font-bold">{stats.uniqueOpens}</p>
-              <p className="text-xs text-fg-muted mt-1">
-                Opened &bull; {pct(stats.uniqueOpens, stats.recipientCount)}
-              </p>
-            </div>
-            <div className="bg-surface border border-border rounded-xl px-5 py-4 text-center">
-              <p className="text-3xl font-bold">{stats.uniqueClicks}</p>
-              <p className="text-xs text-fg-muted mt-1">
-                Clicked &bull; {pct(stats.uniqueClicks, stats.recipientCount)}
-              </p>
-            </div>
-            <div className="bg-surface border border-border rounded-xl px-5 py-4 text-center">
-              <p className="text-3xl font-bold">{pct(stats.uniqueClicks, stats.uniqueOpens)}</p>
-              <p className="text-xs text-fg-muted mt-1">Click-to-open</p>
-            </div>
-            <div className="bg-surface border border-border rounded-xl px-5 py-4 text-center">
-              <p className="text-3xl font-bold">{stats.totalClickEvents}</p>
-              <p className="text-xs text-fg-muted mt-1">Total clicks</p>
-            </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-5">
+            {cards.map(c => (
+              <div key={c.label} className="bg-surface border border-border rounded-xl px-4 py-4 sm:px-5">
+                <p className="text-3xl font-bold tabular-nums">{c.value}</p>
+                <p className="text-xs text-fg-muted mt-1">{c.label}</p>
+              </div>
+            ))}
           </div>
 
           {/* Per-link bar chart */}
           {allLinks.length > 0 && (
             <div className="flex flex-col gap-3">
-              <h2 className="text-sm font-semibold text-fg-secondary uppercase tracking-wider">Link clicks</h2>
-              <div className="flex flex-col gap-2">
-                {allLinks.map(link => {
-                  const barPct = maxTotalClicks > 0 ? (link.totalClicks / maxTotalClicks) * 100 : 0
-                  return (
-                    <div key={link.url} className="flex flex-col gap-1.5">
-                      <div className="flex items-center justify-between gap-4">
-                        <a
-                          href={link.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-fg-muted hover:text-foreground font-mono truncate transition-colors min-w-0"
-                        >
-                          {link.url}
-                        </a>
-                        <span className="text-xs text-fg-muted shrink-0">
-                          {link.uniqueClicks} unique &middot; {link.totalClicks} total
-                        </span>
+              <h2 className="text-lg font-bold">Link clicks</h2>
+              {maxTotalClicks === 0 ? (
+                <p className="text-sm text-fg-muted">No clicks yet.</p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {allLinks.map(link => {
+                    const barPct = (link.totalClicks / maxTotalClicks) * 100
+                    return (
+                      <div key={link.url} className="flex flex-col gap-1.5">
+                        <div className="flex items-center justify-between gap-4">
+                          <a
+                            href={link.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={link.url}
+                            className="text-sm text-fg-secondary hover:text-foreground truncate transition-colors min-w-0"
+                          >
+                            {shortUrl(link.url)}
+                          </a>
+                          <span className="text-xs text-fg-muted shrink-0 tabular-nums">
+                            {link.uniqueClicks} unique · {link.totalClicks} total
+                          </span>
+                        </div>
+                        <div className="w-full h-2 bg-surface rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-brand/60 rounded-full transition-all duration-300"
+                            style={{ width: `${barPct}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="w-full h-2 bg-surface rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-surface-3 rounded-full transition-all duration-300"
-                          style={{ width: `${barPct}%` }}
-                        />
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )}
         </>

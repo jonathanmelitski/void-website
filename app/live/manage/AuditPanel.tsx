@@ -3,6 +3,15 @@
 import React, { useEffect, useState, useMemo } from "react"
 import type { AuditLogEntry, AuditAction } from "@/lib/aws/audit"
 import { Spinner } from "@/components/ui/spinner"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog"
+import { apiFetch } from "@/lib/api-fetch"
+import { toast } from "@/components/ui/sonner"
+import { useUserEmails } from "./use-user-emails"
+import { PersonName, UserEmailsContext } from "./person-name"
+import { CONNECTION_HINT, friendlyError } from "./api-helpers"
 
 function timeAgo(iso: string) {
   const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
@@ -247,8 +256,8 @@ function EntryRow({
         <td className={`py-2.5 pr-4 text-fg-muted whitespace-nowrap ${indent ? "pl-6" : ""}`}>
           <span title={entry.timestamp}>{timeAgo(entry.timestamp)}</span>
         </td>
-        <td className="py-2.5 pr-4 text-fg-secondary max-w-[120px] truncate">
-          {entry.actorUsername}
+        <td className="py-2.5 pr-4 text-fg-secondary max-w-[200px] truncate">
+          <PersonName id={entry.actorUsername} />
         </td>
         <td className="py-2.5 pr-4">
           <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium ${actionBadgeClass(entry.action)}`}>
@@ -261,7 +270,7 @@ function EntryRow({
         </td>
         <td className="py-2.5 pr-4">
           {entry.revertedBy ? (
-            <span className="text-fg-muted text-xs">Reverted by {entry.revertedBy}</span>
+            <span className="text-fg-muted text-xs">Reverted by <PersonName id={entry.revertedBy} /></span>
           ) : (
             <span className="text-fg-faint text-xs">—</span>
           )}
@@ -343,8 +352,10 @@ function GroupRow({
             {timeAgo(newest.timestamp)}
           </span>
         </td>
-        <td className="py-2.5 pr-4 text-fg-secondary max-w-[120px] truncate">
-          {actors.join(", ")}
+        <td className="py-2.5 pr-4 text-fg-secondary max-w-[200px] truncate">
+          {actors.map((a, i) => (
+            <React.Fragment key={a}>{i > 0 && ", "}<PersonName id={a} /></React.Fragment>
+          ))}
         </td>
         <td className="py-2.5 pr-4">
           <div className="flex items-center gap-1 flex-wrap">
@@ -440,14 +451,16 @@ export function AuditPanel() {
   const [groupRevertError, setGroupRevertError] = useState("")
   const [groupRevertProgress, setGroupRevertProgress] = useState<{ done: number; total: number } | null>(null)
 
+  const userEmails = useUserEmails()
+
   useEffect(() => {
-    fetch("/api/audit")
+    apiFetch("/api/audit")
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) setEntries(data)
-        else setError(data.error ?? "Failed to load audit logs")
+        else setError("Couldn't load the audit log. Reload to try again.")
       })
-      .catch(() => setError("Failed to load audit logs"))
+      .catch(() => setError(`Couldn't load the audit log. ${CONNECTION_HINT}`))
       .finally(() => setLoading(false))
   }, [])
 
@@ -467,12 +480,13 @@ export function AuditPanel() {
     setRevertError("")
 
     try {
-      const res = await fetch("/api/audit/revert", {
+      const res = await apiFetch("/api/audit/revert", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: revertTarget.id, force }),
+        waitForSession: true,
       })
-      const data = await res.json()
+      const data = await res.clone().json().catch(() => ({}))
 
       if (!res.ok) {
         if (res.status === 409 && data.blocking === true) {
@@ -487,7 +501,7 @@ export function AuditPanel() {
           setIsReverting(false)
           return
         }
-        setRevertError(data.error ?? "Revert failed")
+        setRevertError(await friendlyError(res, "Couldn't revert this change. Try again."))
         setIsReverting(false)
         return
       }
@@ -502,8 +516,9 @@ export function AuditPanel() {
       setRevertTarget(null)
       setRevertWarnings([])
       setNeedsForce(false)
+      toast.success("Change reverted")
     } catch {
-      setRevertError("Network error")
+      setRevertError(`Couldn't revert this change. ${CONNECTION_HINT}`)
     } finally {
       setIsReverting(false)
     }
@@ -535,10 +550,11 @@ export function AuditPanel() {
     for (let i = 0; i < toRevert.length; i++) {
       const entry = toRevert[i]
       try {
-        const res = await fetch("/api/audit/revert", {
+        const res = await apiFetch("/api/audit/revert", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: entry.id, force: true }),
+          waitForSession: true,
         })
         if (res.ok) {
           setEntries(prev =>
@@ -559,10 +575,11 @@ export function AuditPanel() {
 
     setIsGroupReverting(false)
     if (failed > 0) {
-      setGroupRevertError(`${failed} of ${toRevert.length} reverts failed.`)
+      setGroupRevertError(`${failed} of ${toRevert.length} changes couldn't be reverted. Try again, or revert them one at a time.`)
     } else {
       setGroupRevertTarget(null)
       setGroupRevertProgress(null)
+      toast.success(`Reverted ${toRevert.length} change${toRevert.length !== 1 ? "s" : ""}`)
     }
   }
 
@@ -581,42 +598,43 @@ export function AuditPanel() {
   const groupCount = listItems.filter(i => i.kind === "group").length
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Audit Log</h2>
-        <div className="flex items-center gap-4">
-          <button
+    <UserEmailsContext.Provider value={userEmails}>
+    <div className="flex flex-col gap-4 text-left">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">Audit log</h2>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <Button
+            variant={grouped ? "secondary" : "outline"}
+            size="sm"
+            className="h-10 sm:h-8"
+            aria-pressed={grouped}
             onClick={() => setGrouped(g => !g)}
-            className={`text-xs px-3 py-1.5 rounded-md border transition-colors ${
-              grouped
-                ? "bg-surface-2 border-border-strong text-foreground"
-                : "bg-transparent border-border text-fg-muted hover:text-foreground hover:border-border-strong"
-            }`}
           >
             {grouped
               ? groupCount > 0
                 ? `Grouped · ${groupCount} group${groupCount !== 1 ? "s" : ""}`
                 : "Grouped"
               : "Group similar"}
-          </button>
-          <label className="flex items-center gap-1.5 cursor-pointer text-xs text-fg-muted hover:text-foreground transition-colors">
+          </Button>
+          <label className="flex min-h-10 items-center gap-2 cursor-pointer text-sm text-fg-muted hover:text-foreground transition-colors">
             <input
               type="checkbox"
               checked={showReverted}
               onChange={e => setShowReverted(e.target.checked)}
-              className="accent-white w-3 h-3"
+              className="size-4 accent-foreground"
             />
             Show reverted
           </label>
-          <span className="text-fg-muted text-xs">{visibleEntries.length} entries</span>
+          <span className="text-fg-muted text-sm">{visibleEntries.length} entries</span>
         </div>
       </div>
 
       {entries.length === 0 ? (
-        <p className="text-fg-muted text-sm">No audit log entries yet.</p>
+        <p className="text-fg-muted text-sm">No audit log entries yet. Changes to events, games and newsletters show up here.</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        // Wide on purpose: on phones this scrolls sideways inside its own box, not the page
+        <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="text-fg-muted text-xs border-b border-border">
                 <th className="text-left pb-2 pr-4 font-medium">When</th>
@@ -657,105 +675,112 @@ export function AuditPanel() {
       )}
 
       {/* Group revert dialog */}
-      {groupRevertTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-card border border-border rounded-xl p-6 max-w-md w-full mx-4 flex flex-col gap-4">
-            <h3 className="font-semibold">Revert all changes in group?</h3>
+      <Dialog
+        open={groupRevertTarget !== null}
+        onOpenChange={open => {
+          if (!open && !isGroupReverting) { setGroupRevertTarget(null); setGroupRevertProgress(null); setGroupRevertError("") }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Revert all changes in this group?</DialogTitle>
+            <DialogDescription className="text-fg-muted">
+              Changes are reverted newest first, skipping conflicts. This puts the item back the way it was before this editing session.
+            </DialogDescription>
+          </DialogHeader>
+          {groupRevertTarget && (
             <div className="text-sm text-fg-secondary flex flex-col gap-1">
               <p>
-                <span className="text-fg-muted">Entity:</span>{" "}
+                <span className="text-fg-muted">Item:</span>{" "}
                 {groupRevertTarget.entries[0].entityLabel}
               </p>
               <p>
-                <span className="text-fg-muted">Reversible changes:</span>{" "}
+                <span className="text-fg-muted">Changes that can be reverted:</span>{" "}
                 {groupRevertTarget.entries.filter(e => e.reversible && !e.revertedBy).length} of{" "}
                 {groupRevertTarget.entries.length}
               </p>
             </div>
-            <p className="text-xs text-warning/70 bg-warning/10 border border-warning/20 rounded-md px-3 py-2">
-              Each change will be reverted newest-first. Conflicts will be skipped with force. This restores the entity to its state before this editing session.
-            </p>
-            {groupRevertProgress && (
-              <div className="flex flex-col gap-1.5">
-                <div className="flex justify-between text-xs text-fg-muted">
-                  <span>Reverting…</span>
-                  <span>{groupRevertProgress.done} / {groupRevertProgress.total}</span>
-                </div>
-                <div className="w-full h-1.5 bg-surface-2 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-foreground/40 rounded-full transition-all"
-                    style={{ width: `${(groupRevertProgress.done / groupRevertProgress.total) * 100}%` }}
-                  />
-                </div>
+          )}
+          {groupRevertProgress && (
+            <div className="flex flex-col gap-1.5" role="status">
+              <div className="flex justify-between text-xs text-fg-muted">
+                <span>Reverting…</span>
+                <span>{groupRevertProgress.done} / {groupRevertProgress.total}</span>
               </div>
-            )}
-            {groupRevertError && <p className="text-destructive text-xs">{groupRevertError}</p>}
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => { setGroupRevertTarget(null); setGroupRevertProgress(null); setGroupRevertError("") }}
-                disabled={isGroupReverting}
-                className="px-4 py-2 text-sm text-fg-muted hover:text-foreground transition-colors"
-              >
-                {groupRevertError ? "Close" : "Cancel"}
-              </button>
-              {!groupRevertError && (
-                <button
-                  onClick={handleGroupRevert}
-                  disabled={isGroupReverting}
-                  className="px-4 py-2 text-sm bg-surface-2 hover:bg-surface-3 text-foreground rounded-xl transition-colors disabled:opacity-50"
-                >
-                  {isGroupReverting ? "Reverting…" : "Revert all"}
-                </button>
-              )}
+              <div className="w-full h-1.5 bg-surface-2 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-foreground/40 rounded-full transition-all"
+                  style={{ width: `${(groupRevertProgress.done / groupRevertProgress.total) * 100}%` }}
+                />
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
+          {groupRevertError && <p role="alert" className="text-destructive text-sm">{groupRevertError}</p>}
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => { setGroupRevertTarget(null); setGroupRevertProgress(null); setGroupRevertError("") }}
+              disabled={isGroupReverting}
+            >
+              {groupRevertError ? "Close" : "Cancel"}
+            </Button>
+            {!groupRevertError && (
+              <Button onClick={handleGroupRevert} loading={isGroupReverting}>
+                Revert all
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Revert confirm dialog */}
-      {revertTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-card border border-border rounded-xl p-6 max-w-md w-full mx-4 flex flex-col gap-4">
-            <h3 className="font-semibold">Undo {revertTarget.action}?</h3>
-            <p className="text-fg-secondary text-sm">
-              Revert <span className="font-medium text-foreground">{revertTarget.action}</span> of{" "}
-              <span className="font-medium text-foreground">{revertTarget.entityLabel}</span>?
-            </p>
-
-            {revertWarnings.length > 0 && (
-              <div className="bg-warning/10 border border-warning/20 rounded-xl p-3 flex flex-col gap-1">
-                {revertWarnings.map((w, i) => (
-                  <p key={i} className="text-warning/80 text-xs">{w}</p>
-                ))}
-              </div>
+      <Dialog
+        open={revertTarget !== null}
+        onOpenChange={open => {
+          if (!open && !isReverting) { setRevertTarget(null); setRevertWarnings([]); setNeedsForce(false); setRevertError("") }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Revert this change?</DialogTitle>
+            {revertTarget && (
+              <DialogDescription className="text-fg-muted">
+                Undo the <span className="font-medium text-foreground">{revertTarget.action.toLowerCase().replace("_", " ")}</span> of{" "}
+                <span className="font-medium text-foreground">{revertTarget.entityLabel}</span>.
+              </DialogDescription>
             )}
+          </DialogHeader>
 
-            {revertError && <p className="text-destructive text-sm">{revertError}</p>}
-
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => {
-                  setRevertTarget(null)
-                  setRevertWarnings([])
-                  setNeedsForce(false)
-                  setRevertError("")
-                }}
-                className="px-4 py-2 text-sm text-fg-muted hover:text-foreground transition-colors"
-                disabled={isReverting}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleRevert(needsForce)}
-                disabled={isReverting}
-                className="px-4 py-2 text-sm bg-surface-2 hover:bg-surface-3 text-foreground rounded-xl transition-colors disabled:opacity-50"
-              >
-                {isReverting ? "Reverting…" : needsForce ? "Revert anyway" : "Confirm"}
-              </button>
+          {revertWarnings.length > 0 && (
+            <div className="bg-warning/10 border border-warning/20 rounded-xl p-3 flex flex-col gap-1">
+              {revertWarnings.map((w, i) => (
+                <p key={i} className="text-warning text-xs">{w}</p>
+              ))}
             </div>
-          </div>
-        </div>
-      )}
+          )}
+
+          {revertError && <p role="alert" className="text-destructive text-sm">{revertError}</p>}
+
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setRevertTarget(null)
+                setRevertWarnings([])
+                setNeedsForce(false)
+                setRevertError("")
+              }}
+              disabled={isReverting}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => handleRevert(needsForce)} loading={isReverting}>
+              {needsForce ? "Revert anyway" : "Revert change"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
+    </UserEmailsContext.Provider>
   )
 }
