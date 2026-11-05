@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { getClip, updateClip, deleteClip, listClipsByGame } from "@/lib/aws/film-clips"
 import type { FilmSyncPoint } from "@/lib/film-tracks"
+import { denyIfGameHidden } from "@/lib/event-access"
+import { NO_STORE_HEADERS } from "@/lib/http-cache"
 
 const MAX_SYNC_POINTS = 500
 
@@ -45,7 +47,10 @@ export async function GET(
   try {
     const clip = await getClip(id)
     if (!clip) return NextResponse.json({ error: "Not found" }, { status: 404 })
-    return NextResponse.json(clip)
+    // Film of a private event: same 404 as GET /api/film/clips?gameId= for callers who can't see it
+    const denied = await denyIfGameHidden(request, clip.gameId)
+    if (denied) return denied
+    return NextResponse.json(clip, { headers: NO_STORE_HEADERS })
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to fetch clip"
     return NextResponse.json({ error: message }, { status: 500 })
