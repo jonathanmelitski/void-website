@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 import type { EventItem } from "@/lib/aws/dynamo"
 import { EventGalleryView } from "./EventGalleryView"
@@ -16,6 +17,12 @@ async function getEvent(id: string): Promise<EventItem | null> {
   } catch {
     return null
   }
+}
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { eventId } = await params
+  const event = await getEvent(eventId)
+  return { title: event?.title ?? "Event" }
 }
 
 export default async function EventPage({ params }: Props) {

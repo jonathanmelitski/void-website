@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation"
 import NavigationBar from "@/components/NavBar"
 import { Vortex } from "@/components/vortex"
 import { Toaster } from "@/components/ui/sonner"
+import { SiteFooter } from "@/components/site-footer"
 
 /**
  * App chrome: skip link, sticky navbar, <main> landmark, background, toasts.
@@ -37,6 +38,7 @@ export function RootShell({ children }: { children: React.ReactNode }) {
       <main id="main" className="min-h-[calc(100dvh-4rem)] w-full">
         {children}
       </main>
+      <SiteFooter />
       <Toaster />
     </>
   )

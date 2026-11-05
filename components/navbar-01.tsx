@@ -1,26 +1,17 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { Film } from 'lucide-react';
 import { Button } from './ui/button';
-import Link from "next/link"
-import { useEffect, useState, useRef } from 'react';
-import {
-  NavigationMenu,
-  NavigationMenuItem,
-  NavigationMenuLink,
-  NavigationMenuList,
-} from './ui/navigation-menu';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from './ui/popover';
+import { useAuth } from '@/lib/use-auth';
 import { cn } from '../lib/utils';
 
-// Simple logo component for the navbar
+// Void glyph
 const Logo = (props: React.SVGAttributes<SVGElement>) => {
   return (
-    <svg width='1em' height='1em' viewBox='0 0 324 323' fill='currentColor' xmlns='http://www.w3.org/2000/svg' {...props}>
+    <svg width='1em' height='1em' viewBox='0 0 324 323' fill='currentColor' xmlns='http://www.w3.org/2000/svg' aria-hidden='true' {...props}>
       <rect
         x='88.1023'
         y='144.792'
@@ -43,12 +34,12 @@ const Logo = (props: React.SVGAttributes<SVGElement>) => {
   );
 };
 
-// Hamburger icon component
+// Hamburger icon; morphs into an X when its button has aria-expanded="true".
 const HamburgerIcon = ({ className, ...props }: React.SVGAttributes<SVGElement>) => (
   <svg
     className={cn('pointer-events-none', className)}
-    width={16}
-    height={16}
+    width={20}
+    height={20}
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
@@ -56,19 +47,20 @@ const HamburgerIcon = ({ className, ...props }: React.SVGAttributes<SVGElement>)
     strokeLinecap="round"
     strokeLinejoin="round"
     xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
     {...props}
   >
     <path
       d="M4 12L20 12"
-      className="origin-center -translate-y-[7px] transition-all duration-300 ease-[cubic-bezier(.5,.85,.25,1.1)] group-aria-expanded:translate-x-0 group-aria-expanded:translate-y-0 group-aria-expanded:rotate-[315deg]"
+      className="origin-center -translate-y-[7px] transition-all duration-300 ease-[cubic-bezier(.5,.85,.25,1.1)] motion-reduce:transition-none group-aria-expanded:translate-x-0 group-aria-expanded:translate-y-0 group-aria-expanded:rotate-[315deg]"
     />
     <path
       d="M4 12H20"
-      className="origin-center transition-all duration-300 ease-[cubic-bezier(.5,.85,.25,1.8)] group-aria-expanded:rotate-45"
+      className="origin-center transition-all duration-300 ease-[cubic-bezier(.5,.85,.25,1.8)] motion-reduce:transition-none group-aria-expanded:rotate-45"
     />
     <path
       d="M4 12H20"
-      className="origin-center translate-y-[7px] transition-all duration-300 ease-[cubic-bezier(.5,.85,.25,1.1)] group-aria-expanded:translate-y-0 group-aria-expanded:rotate-[135deg]"
+      className="origin-center translate-y-[7px] transition-all duration-300 ease-[cubic-bezier(.5,.85,.25,1.1)] motion-reduce:transition-none group-aria-expanded:translate-y-0 group-aria-expanded:rotate-[135deg]"
     />
   </svg>
 );
@@ -77,6 +69,7 @@ const HamburgerIcon = ({ className, ...props }: React.SVGAttributes<SVGElement>)
 export interface Navbar01NavLink {
   href: string;
   label: string;
+  /** Forces the current-page state; otherwise derived from the pathname. */
   active?: boolean;
 }
 
@@ -84,25 +77,35 @@ export interface Navbar01Props extends React.HTMLAttributes<HTMLElement> {
   logo?: React.ReactNode;
   logoHref?: string;
   navigationLinks?: Navbar01NavLink[];
-  signInText?: string;
-  signInHref?: string;
   ctaText?: string;
   ctaHref?: string;
-  onSignInClick?: () => void;
-  onCtaClick?: () => void;
   liveGame?: { id: string; opponent: string } | null;
 }
 
-// Default navigation links
+// Default navigation links. The gallery index is intentionally disabled; don't link to it.
 const defaultNavigationLinks: Navbar01NavLink[] = [
-  //{ href: '/about', label: 'About' },
   { href: '/roster', label: 'Roster' },
   { href: '/news', label: 'News' },
   { href: '/donate', label: 'Donate' },
   { href: 'https://sites.google.com/view/venus-penn-ultimate/', label: 'Venus' },
-  //{ href: '/schedule', label: 'Schedule' },
-  //{ href: '/gallery', label: 'Gallery' },
 ];
+
+const MY_FILM_HREF = '/live/me';
+
+function isExternal(href: string) {
+  return /^https?:\/\//.test(href);
+}
+
+function isCurrent(pathname: string, href: string) {
+  if (isExternal(href)) return false;
+  if (href === '/') return pathname === '/';
+  return pathname === href || pathname.startsWith(href + '/');
+}
+
+function initialOf(email?: string, username?: string) {
+  const s = (email || username || '').trim();
+  return s ? s[0]!.toUpperCase() : '';
+}
 
 export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
   (
@@ -111,164 +114,277 @@ export const Navbar = React.forwardRef<HTMLElement, Navbar01Props>(
       logo = <Logo />,
       logoHref = '/',
       navigationLinks = defaultNavigationLinks,
-      signInText = 'Sign In',
-      signInHref = '/signin',
-      ctaText = 'Void Online',
-      ctaHref = '/online',
-      onSignInClick,
-      onCtaClick,
+      ctaText = 'Void Live',
+      ctaHref = '/live',
       liveGame,
       ...props
     },
     ref
   ) => {
-    const [isMobile, setIsMobile] = useState(false);
-    const containerRef = useRef<HTMLElement | null>(null);
+    const pathname = usePathname() ?? '/';
+    const { user, status } = useAuth();
+    const signedIn = !!user && (status === 'authenticated' || status === 'expired' || status === 'offline');
 
-    useEffect(() => {
-      const checkWidth = () => {
-        if (containerRef.current) {
-          const width = containerRef.current.offsetWidth;
-          setIsMobile(width < 768); // 768px is md breakpoint
-        }
-      };
+    const [menuOpen, setMenuOpen] = React.useState(false);
+    const headerRef = React.useRef<HTMLElement | null>(null);
+    const triggerRef = React.useRef<HTMLButtonElement | null>(null);
+    const menuRef = React.useRef<HTMLDivElement | null>(null);
+    const menuId = React.useId();
 
-      checkWidth();
+    const setRefs = React.useCallback(
+      (node: HTMLElement | null) => {
+        headerRef.current = node;
+        if (typeof ref === 'function') ref(node);
+        else if (ref) ref.current = node;
+      },
+      [ref]
+    );
 
-      const resizeObserver = new ResizeObserver(checkWidth);
-      if (containerRef.current) {
-        resizeObserver.observe(containerRef.current);
-      }
-
-      return () => {
-        resizeObserver.disconnect();
-      };
+    const closeMenu = React.useCallback((returnFocus: boolean) => {
+      setMenuOpen(false);
+      if (returnFocus) triggerRef.current?.focus();
     }, []);
 
-    // Combine refs
-    const combinedRef = React.useCallback((node: HTMLElement | null) => {
-      containerRef.current = node;
-      if (typeof ref === 'function') {
-        ref(node);
-      } else if (ref) {
-        ref.current = node;
-      }
-    }, [ref]);
+    // Close on navigation (covers links, back/forward).
+    const [lastPath, setLastPath] = React.useState(pathname);
+    if (lastPath !== pathname) {
+      setLastPath(pathname);
+      if (menuOpen) setMenuOpen(false);
+    }
+
+    // While open: focus the first item, close on Esc / outside click / focus leaving the header.
+    React.useEffect(() => {
+      if (!menuOpen) return;
+      menuRef.current?.querySelector<HTMLElement>('a,button')?.focus();
+
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeMenu(true);
+        }
+      };
+      const onPointer = (e: PointerEvent) => {
+        if (headerRef.current && !headerRef.current.contains(e.target as Node)) closeMenu(false);
+      };
+      const onFocusIn = (e: FocusEvent) => {
+        if (headerRef.current && !headerRef.current.contains(e.target as Node)) closeMenu(false);
+      };
+      // Leaving the phone layout (rotate/resize) closes the menu so it never lingers on desktop.
+      const mq = window.matchMedia('(min-width: 768px)');
+      const onMq = () => mq.matches && closeMenu(false);
+
+      document.addEventListener('keydown', onKey);
+      document.addEventListener('pointerdown', onPointer);
+      document.addEventListener('focusin', onFocusIn);
+      mq.addEventListener('change', onMq);
+      return () => {
+        document.removeEventListener('keydown', onKey);
+        document.removeEventListener('pointerdown', onPointer);
+        document.removeEventListener('focusin', onFocusIn);
+        mq.removeEventListener('change', onMq);
+      };
+    }, [menuOpen, closeMenu]);
+
+    const linkProps = (link: Navbar01NavLink) => {
+      const external = isExternal(link.href);
+      const current = link.active ?? isCurrent(pathname, link.href);
+      return {
+        current,
+        props: {
+          href: link.href,
+          'aria-current': current ? ('page' as const) : undefined,
+          ...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {}),
+        },
+      };
+    };
+
+    const myFilmCurrent = isCurrent(pathname, MY_FILM_HREF);
+    const liveCurrent = pathname === ctaHref;
+    const initial = initialOf(user?.email, user?.username);
 
     return (
       <header
-        ref={combinedRef}
+        ref={setRefs}
         className={cn(
-          'sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 md:px-6 [&_*]:no-underline',
+          'sticky top-0 z-40 w-full border-b border-border bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/70',
           className
         )}
         {...props}
       >
-        <div className="mx-auto flex h-16 w-full items-center justify-between gap-4">
-          {/* Left side */}
-          <div className="flex items-center gap-2">
-            {/* Mobile menu trigger */}
-            {isMobile && (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    className="group h-9 w-9 hover:bg-accent hover:text-accent-foreground"
-                    variant="ghost"
-                    size="icon"
-                  >
-                    <HamburgerIcon />
-                    <span className="sr-only">Menu</span>
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-48 p-2">
-                  <NavigationMenu className="max-w-none">
-                    <NavigationMenuList className="flex-col items-start gap-1">
-                      {navigationLinks.map((link, index) => (
-                        <NavigationMenuItem key={index} className="w-full">
-                          <Link href={link.href} className={cn(
-                            "flex w-full items-center rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground cursor-pointer no-underline",
-                            link.active
-                              ? "bg-accent text-accent-foreground"
-                              : "text-foreground/80"
-                          )}>
-                            {link.label}
-                          </Link>
-                        </NavigationMenuItem>
-                      ))}
-                    </NavigationMenuList>
-                  </NavigationMenu>
-                </PopoverContent>
-              </Popover>
-            )}
-            {/* Main nav */}
-            <div className="flex items-center gap-6">
-              <Link href="/" className="flex items-center space-x-2 text-primary hover:text-primary/90 transition-colors cursor-pointer">
-                <div className="text-2xl">
-                  {logo}
-                </div>
-                <span className="hidden font-bold text-xl sm:inline-block">Void Ultimate</span>
-              </Link>
-              {/* Navigation menu */}
-              {!isMobile && (
-                <NavigationMenu className="flex">
-                  <NavigationMenuList className="gap-1">
-                    {navigationLinks.map((link, index) => (
-                      <NavigationMenuItem key={index}>
-                        <Link href={link.href}
-                          className={cn(
-                            "group inline-flex h-9 w-max items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 cursor-pointer no-underline",
-                            link.active
-                              ? "bg-accent text-accent-foreground"
-                              : "text-foreground/80 hover:text-foreground"
-                          )}>
-                          {link.label}
-                        </Link>
-                      </NavigationMenuItem>
-                    ))}
-                  </NavigationMenuList>
-                </NavigationMenu>
-              )}
-            </div>
+        <div className="mx-auto flex h-16 w-full items-center justify-between gap-3 px-2 sm:px-4 md:px-6">
+          {/* Left: menu trigger (phones), wordmark, links (md+) */}
+          <div className="flex min-w-0 items-center gap-1 md:gap-6">
+            <Button
+              ref={triggerRef}
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="group size-11 text-foreground md:hidden"
+              aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+              aria-expanded={menuOpen}
+              aria-controls={menuId}
+              onClick={() => setMenuOpen(o => !o)}
+            >
+              <HamburgerIcon />
+            </Button>
+
+            <Link
+              href={logoHref}
+              aria-current={pathname === logoHref ? 'page' : undefined}
+              className="flex h-11 items-center gap-2 rounded-md px-1 text-foreground"
+            >
+              <span className="text-2xl">{logo}</span>
+              <span className="font-display text-2xl leading-none tracking-wide pt-0.5">
+                Void<span className="hidden sm:inline"> Ultimate</span>
+              </span>
+            </Link>
+
+            <nav aria-label="Main" className="hidden md:block">
+              <ul className="flex items-center gap-1">
+                {navigationLinks.map(link => {
+                  const { current, props: lp } = linkProps(link);
+                  return (
+                    <li key={link.href}>
+                      <Link
+                        {...lp}
+                        className={cn(
+                          'inline-flex h-9 items-center rounded-md px-3 text-sm font-medium transition-colors',
+                          current
+                            ? 'bg-surface-2 text-foreground'
+                            : 'text-fg-secondary hover:bg-surface-2 hover:text-foreground'
+                        )}
+                      >
+                        {link.label}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </nav>
           </div>
-          {/* Right side */}
-          <div className="flex items-center gap-3">
-            {/* Live badge — shown when a game is IN_PROGRESS */}
+
+          {/* Right: live badge, My film (signed in), Void Live CTA */}
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             {liveGame && (
-              <Link href={`/live/watch/${liveGame.id}`}>
-                <span className="flex items-center gap-1.5 text-xs font-medium text-destructive border border-destructive/30 bg-destructive/10 px-2.5 py-1 rounded-full cursor-pointer hover:bg-destructive/20 transition-colors">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full bg-destructive opacity-75" />
-                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-destructive" />
-                  </span>
-                  Live vs. {liveGame.opponent}
+              <Link
+                href={`/live/watch/${liveGame.id}`}
+                className="flex h-8 items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/10 px-2.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
+              >
+                <span className="relative flex size-1.5" aria-hidden="true">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-destructive opacity-75 motion-reduce:animate-none" />
+                  <span className="relative inline-flex size-1.5 rounded-full bg-destructive" />
+                </span>
+                <span>
+                  Live<span className="hidden sm:inline"> vs. {liveGame.opponent}</span>
+                  <span className="sr-only sm:hidden"> vs. {liveGame.opponent}</span>
                 </span>
               </Link>
             )}
 
-            {/* CTA button — wrapped in red border ring when live */}
+            {signedIn && (
+              <Link
+                href={MY_FILM_HREF}
+                aria-current={myFilmCurrent ? 'page' : undefined}
+                className={cn(
+                  'hidden h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors md:inline-flex',
+                  myFilmCurrent
+                    ? 'bg-surface-2 text-foreground'
+                    : 'text-fg-secondary hover:bg-surface-2 hover:text-foreground'
+                )}
+              >
+                <Film aria-hidden="true" className="size-4" />
+                My film
+              </Link>
+            )}
+
             <div className="relative">
               {liveGame && (
                 <>
                   <div
-                    className="absolute inset-[-2px] rounded-xl z-0 pointer-events-none motion-reduce:[animation:none!important]"
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-[-2px] z-0 rounded-md motion-reduce:[animation:none!important]"
                     style={{
-                      background: "conic-gradient(from var(--border-angle), #991b1b 0%, #ef4444 20%, #fca5a5 27%, #ef4444 35%, #991b1b 55%, #991b1b 100%)",
-                      animation: "border-spotlight 4s linear infinite",
+                      background:
+                        'conic-gradient(from var(--border-angle), color-mix(in oklch, var(--destructive) 45%, black) 0%, var(--destructive) 20%, color-mix(in oklch, var(--destructive) 50%, white) 27%, var(--destructive) 35%, color-mix(in oklch, var(--destructive) 45%, black) 55%, color-mix(in oklch, var(--destructive) 45%, black) 100%)',
+                      animation: 'border-spotlight 4s linear infinite',
                     }}
                   />
-                  <div className="absolute inset-0 rounded-md bg-background z-[1] pointer-events-none" />
+                  <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-[1] rounded-md bg-background" />
                 </>
               )}
-              <Button
-                asChild
-                size="sm"
-                className="text-sm font-medium px-4 h-9 rounded-md shadow-sm relative z-[2]"
-              >
-                <Link href="/live">{ctaText}</Link>
+              <Button asChild variant="brand" size="sm" className="relative z-[2] h-9 px-4">
+                <Link href={ctaHref} aria-current={liveCurrent ? 'page' : undefined}>
+                  {signedIn && initial && (
+                    <span
+                      aria-hidden="true"
+                      className="-ml-1.5 flex size-5 items-center justify-center rounded-full bg-brand-foreground text-[11px] font-semibold text-brand"
+                    >
+                      {initial}
+                    </span>
+                  )}
+                  {ctaText}
+                  {signedIn && <span className="sr-only"> (signed in)</span>}
+                </Link>
               </Button>
             </div>
           </div>
         </div>
+
+        {/* Phone menu: rendered only when open, so phones never flash it and desktop never shows it. */}
+        {menuOpen && (
+          <div
+            id={menuId}
+            ref={menuRef}
+            className="absolute inset-x-0 top-full border-b border-border bg-card shadow-lg md:hidden"
+          >
+            <nav aria-label="Main" className="mx-auto px-2 py-2">
+              <ul className="flex flex-col">
+                {navigationLinks.map(link => {
+                  const { current, props: lp } = linkProps(link);
+                  return (
+                    <li key={link.href}>
+                      <Link
+                        {...lp}
+                        onClick={() => closeMenu(false)}
+                        className={cn(
+                          'flex h-12 items-center rounded-md px-3 text-base font-medium transition-colors',
+                          current
+                            ? 'bg-surface-2 text-foreground'
+                            : 'text-fg-secondary hover:bg-surface-2 hover:text-foreground'
+                        )}
+                      >
+                        {link.label}
+                        {current && <span className="ml-auto size-1.5 rounded-full bg-brand" aria-hidden="true" />}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="mt-2 border-t border-border pt-2">
+                {signedIn ? (
+                  <Link
+                    href={MY_FILM_HREF}
+                    aria-current={myFilmCurrent ? 'page' : undefined}
+                    onClick={() => closeMenu(false)}
+                    className={cn(
+                      'flex h-12 items-center gap-2 rounded-md px-3 text-base font-medium transition-colors',
+                      myFilmCurrent
+                        ? 'bg-surface-2 text-foreground'
+                        : 'text-fg-secondary hover:bg-surface-2 hover:text-foreground'
+                    )}
+                  >
+                    <Film aria-hidden="true" className="size-4" />
+                    My film
+                  </Link>
+                ) : (
+                  <p className="px-3 py-2 text-sm text-fg-muted">
+                    Players and coaches: sign in to Void Live for scores and game film.
+                  </p>
+                )}
+              </div>
+            </nav>
+          </div>
+        )}
       </header>
     );
   }
