@@ -8,6 +8,7 @@ import type { GameItem, GameStatus } from "@/lib/aws/games"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
+import { deriveGameStats, type GameStats } from "@/lib/stats/derive"
 
 const STATUS_VARIANT: Record<GameStatus, "default" | "secondary" | "outline"> = {
   SCHEDULED: "outline",
@@ -46,23 +47,15 @@ type PlayerStat = {
   pulls: number
 }
 
-function computePlayerStats(players: PlayerItem[], events: PointEventItem[]): PlayerStat[] {
-  const map = new Map<string, PlayerStat>()
-  for (const player of players) {
-    map.set(player.id, { player, goals: 0, assists: 0, turnovers: 0, blocks: 0, pulls: 0 })
-  }
-  for (const ev of events) {
-    const stat = map.get(ev.playerId)
-    if (!stat) continue
-    if (ev.eventType === "GOAL") stat.goals++
-    else if (ev.eventType === "ASSIST") stat.assists++
-    else if (ev.eventType === "TURNOVER") stat.turnovers++
-    else if (ev.eventType === "BLOCK") stat.blocks++
-    else if (ev.eventType === "PULL") stat.pulls++
-  }
-  return Array.from(map.values())
+// Roster players with at least one counted event, from the derived stats
+function toPlayerStats(stats: GameStats, players: PlayerItem[]): PlayerStat[] {
+  const byId = new Map(players.map(p => [p.id, p]))
+  return stats.players
+    .flatMap(s => {
+      const player = byId.get(s.playerId)
+      return player ? [{ player, goals: s.goals, assists: s.assists, turnovers: s.turnovers, blocks: s.blocks, pulls: s.pulls }] : []
+    })
     .filter(s => s.goals + s.assists + s.turnovers + s.blocks + s.pulls > 0)
-    .sort((a, b) => (b.goals + b.assists) - (a.goals + a.assists))
 }
 
 export default function GameDetailPage() {
@@ -123,19 +116,16 @@ export default function GameDetailPage() {
     return p ? `${p.first_name} ${p.last_name}` : "Unknown"
   }
 
-  const completedPoints = points.filter(p => p.status === "COMPLETE")
-  const holds = completedPoints.filter(p => p.outcome === "HOLD").length
-  const breaks = completedPoints.filter(p => p.outcome === "BREAK").length
-  const oPoints = completedPoints.filter(p => p.lineType === "O")
-  const dPoints = completedPoints.filter(p => p.lineType === "D")
-  const oEfficiency = oPoints.length > 0
-    ? Math.round((oPoints.filter(p => p.outcome === "HOLD").length / oPoints.length) * 100)
-    : null
-  const dConversion = dPoints.length > 0
-    ? Math.round((dPoints.filter(p => p.outcome === "BREAK").length / dPoints.length) * 100)
-    : null
+  // Score, outcomes and stats derived from the point record (film point-events win over stored outcomes)
+  const stats = deriveGameStats(game, points, pointEvents, players)
+  const pointsById = new Map(points.map(p => [p.id, p]))
+  const scoredPoints = stats.points.filter(p => p.scorer)
+  const { holds, breaks } = stats.team.us
+  const { oEfficiency, dConversion } = stats
+  const result = stats.result
+  const isCoachOrAdmin = !!(user.groups?.includes("COACH") || user.groups?.includes("ADMIN"))
 
-  const playerStats = computePlayerStats(players, pointEvents)
+  const playerStats = toPlayerStats(stats, players)
 
   return (
     <div className="flex flex-col p-8 lg:px-16 gap-8 text-left max-w-4xl">
@@ -150,18 +140,23 @@ export default function GameDetailPage() {
         <div className="flex items-start gap-3 flex-wrap">
           <h1 className="text-3xl font-black">vs {game.opponent}</h1>
           <Badge variant={STATUS_VARIANT[game.status]} className="mt-1">{game.status}</Badge>
-          {game.result && (
-            <span className={`text-sm font-bold mt-1 ${game.result === "WIN" ? "text-green-400" : game.result === "LOSS" ? "text-red-400" : "text-yellow-400"}`}>
-              {game.result}
+          {result && (
+            <span className={`text-sm font-bold mt-1 ${result === "WIN" ? "text-green-400" : result === "LOSS" ? "text-red-400" : "text-yellow-400"}`}>
+              {result}
             </span>
           )}
         </div>
         {game.round && <p className="text-white/40 text-sm mt-1">{game.round}</p>}
-        <p className="text-white/70 font-mono text-3xl mt-2">{game.scoreVoid} – {game.scoreOpponent}</p>
+        <p className="text-white/70 font-mono text-3xl mt-2">{stats.score.us} – {stats.score.them}</p>
+        {isCoachOrAdmin && stats.warnings.length > 0 && (
+          <ul className="text-white/40 text-xs mt-2 flex flex-col gap-0.5" aria-label="Data warnings">
+            {stats.warnings.map((w, i) => <li key={i}>{w.message}</li>)}
+          </ul>
+        )}
       </div>
 
       {/* Quick stats */}
-      {completedPoints.length > 0 && (
+      {scoredPoints.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCard label="Holds" value={holds} />
           <StatCard label="Breaks" value={breaks} />
@@ -208,15 +203,16 @@ export default function GameDetailPage() {
       )}
 
       {/* Point log */}
-      {completedPoints.length > 0 && (
+      {stats.points.length > 0 && (
         <section>
           <h2 className="text-lg font-bold mb-3">Point Log</h2>
           <div className="flex flex-col gap-2">
-            {completedPoints.map(point => {
+            {stats.points.map(point => {
+              const stored = pointsById.get(point.id)
               const events = pointEvents
                 .filter(e => e.pointId === point.id)
                 .sort((a, b) => a.sortOrder - b.sortOrder)
-              const lineNames = point.playerIds
+              const lineNames = (stored?.playerIds ?? [])
                 .map(id => players.find(p => p.id === id))
                 .filter(Boolean)
                 .map(p => p!.first_name)
@@ -227,9 +223,9 @@ export default function GameDetailPage() {
                   <summary className="flex items-center gap-4 px-4 py-3 cursor-pointer list-none hover:bg-white/3 transition-colors">
                     <span className="text-white/30 font-mono text-xs w-6 text-right">P{point.pointNumber}</span>
                     <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                      point.outcome === "HOLD" ? "bg-green-400/15 text-green-400" : "bg-red-400/15 text-red-400"
+                      point.outcome === "HOLD" ? "bg-green-400/15 text-green-400" : point.outcome === "BREAK" ? "bg-red-400/15 text-red-400" : "bg-white/10 text-white/40"
                     }`}>
-                      {point.outcome}
+                      {point.outcome ?? "No result"}
                     </span>
                     <span className={`text-xs px-1.5 py-0.5 rounded border ${
                       point.lineType === "O" ? "border-blue-400/30 text-blue-400/70" : "border-orange-400/30 text-orange-400/70"
@@ -238,7 +234,7 @@ export default function GameDetailPage() {
                     </span>
                     <span className="text-white/30 text-xs truncate flex-1">{lineNames || "—"}</span>
                     <span className="text-white/30 font-mono text-xs shrink-0">
-                      {point.voidScoreBefore} – {point.opponentScoreBefore}
+                      {point.scoreBefore.us} – {point.scoreBefore.them}
                     </span>
                   </summary>
                   {events.length > 0 && (
