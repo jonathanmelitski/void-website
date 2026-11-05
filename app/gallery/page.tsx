@@ -4,7 +4,7 @@ import type { EventItem } from "@/lib/aws/dynamo"
 import { GalleryView } from "./GalleryView"
 
 export const metadata: Metadata = {
-  title: "Gallery | Void Ultimate",
+  title: "Gallery",
 }
 
 async function getEvents(): Promise<EventItem[]> {

@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     ? `${process.env.NEXT_PUBLIC_S3_BASE_URL}/${newsletter.coverPhotoKey}`
     : undefined
   return {
-    title: `${newsletter.title} | Void Ultimate`,
+    title: newsletter.title,
     description,
     openGraph: {
       title: newsletter.title,

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Void Ultimate",
+  title: "Donate",
   description: "The Men's Ultimate Frisbee team at the University of Pennsylvania",
   openGraph: {
     title: "Donate to Void Ultimate",

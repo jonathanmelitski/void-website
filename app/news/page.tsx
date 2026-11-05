@@ -5,10 +5,10 @@ import { NewsletterCard } from "@/components/newsletters/NewsletterCard"
 export const dynamic = "force-dynamic"
 
 export const metadata: Metadata = {
-  title: "News | Void Ultimate",
+  title: "News",
   description: "Monthly newsletters from the Void Ultimate team.",
   openGraph: {
-    title: "News | Void Ultimate",
+    title: "News",
     description: "Monthly newsletters from the Void Ultimate team.",
   },
 }
