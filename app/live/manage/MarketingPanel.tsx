@@ -11,6 +11,7 @@ import { apiFetch, errorMessage, NetworkError } from "@/lib/api-fetch"
 import { canResume, isActiveState, sendCounts, sendState, type DeliveryStatus, type SendLike } from "@/lib/bulk-send"
 import type { SendSummary } from "@/lib/aws/sends"
 import { SendMonitor, type LiveState } from "./SendMonitor"
+import { Button } from "@/components/ui/button"
 
 type ContactList = { name: string; description?: string }
 type Contact = { email: string; unsubscribed: boolean }
@@ -25,6 +26,33 @@ function timeAgo(iso: string) {
   const hrs = Math.floor(mins / 60)
   if (hrs < 24) return `${hrs}h ago`
   return `${Math.floor(hrs / 24)}d ago`
+}
+
+/** Recipient count plus the send's real state (in progress / stopped partway / cancelled…). */
+function SendStatusCell({ s, onOpen }: { s: SendRecord; onOpen: () => void }) {
+  const state = sendState(s as SendLike)
+  const { sent, total } = sendCounts(s as SendLike)
+  if (s.sendMode === "test" || state === "legacy") return <span className="font-mono tabular-nums">{s.recipientCount}</span>
+  const label =
+    state === "queued" ? "Queued"
+    : state === "sending" ? `Sending · ${sent}/${total || "…"}`
+    : state === "stopped" ? `Stopped · ${sent}/${total}`
+    : state === "failed" ? `Failed · ${sent}/${total}`
+    : state === "cancelled" ? `Cancelled · ${sent}/${total}`
+    : s.sendMode === "dryrun" ? `Dry run · ${sent}`
+    : null
+  if (!label) return <span className="font-mono tabular-nums">{sent}</span>
+  const tone = isActiveState(state) ? "text-fg-secondary border-border" : state === "failed" ? "text-destructive border-destructive/30" : "text-warning border-warning/30"
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`text-[11px] border rounded-full px-2 py-0.5 font-mono tabular-nums hover:bg-surface-2 transition-colors ${tone}`}
+      title={canResume(s as SendLike) ? "Open to resume" : "Open progress"}
+    >
+      {label}
+    </button>
+  )
 }
 
 export function MarketingPanel() {
@@ -448,7 +476,7 @@ export function MarketingPanel() {
   }
 
 
-  function buildSendPayload(mode: "list" | "test", extra: Record<string, string>) {
+  function buildSendPayload(mode: "list" | "test" | "dryrun", extra: Record<string, string>) {
     return {
       mode,
       newsletterId: selectedNewsletterId,
@@ -461,93 +489,110 @@ export function MarketingPanel() {
     }
   }
 
-  async function sendToList(totpCode: string) {
+  // Starts a send (list, dry run or resume) and attaches the monitor. The inline engine streams SSE until
+  // it pauses or finishes; the worker answers 202 with the job id at once. Progress always comes from the
+  // stored record (SendMonitor polls it), so a dropped connection or a reload never loses the send.
+  async function startSend(payload: Record<string, unknown>, meta: { title: string; listName: string; sendId?: string }) {
+    setMonitor({ sendId: meta.sendId ?? null, title: meta.title, listName: meta.listName, live: { phase: "starting" } })
+    const setLive = (live: LiveState, sendId?: string) =>
+      setMonitor(prev => prev ? { ...prev, live, sendId: sendId ?? prev.sendId } : prev)
+
+    let response: Response
+    try {
+      response = await apiFetch("/api/marketing/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        waitForSession: true,
+      })
+    } catch (err) {
+      const message = err instanceof NetworkError
+        ? "Can't reach the server, so the send may not have started. Check Send history before trying again."
+        : "The send didn't start."
+      toast.error(message)
+      setLive({ phase: meta.sendId ? "interrupted" : "error", error: message })
+      return
+    }
+
+    if (!response.ok || !response.body) {
+      const message = response.status === 504
+        ? "The server took too long to answer. Check Send history before trying again."
+        : await errorMessage(response, "The send didn't start.")
+      toast.error(message)
+      setLive({ phase: meta.sendId ? "ended" : "error", error: message })
+      return
+    }
+
+    if (!(response.headers.get("content-type") ?? "").includes("text/event-stream")) {
+      const data = await response.json().catch(() => ({})) as { sendId?: string }
+      setLive({ phase: "ended" }, data.sendId)
+      return
+    }
+
+    setLive({ phase: "streaming" })
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let finished = false
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue
+          let event: { type: string; sendId?: string; message?: string }
+          try { event = JSON.parse(line.slice(6)) } catch { continue }
+          if (event.type === "sendId" && event.sendId) {
+            setLive({ phase: "streaming" }, event.sendId)
+          } else if (event.type === "error") {
+            finished = true
+            setLive({ phase: "ended", error: event.message ?? "The send stopped because of a server error." })
+          } else if (event.type === "done" || event.type === "paused" || event.type === "cancelled") {
+            finished = true
+            setLive({ phase: "ended" })
+          }
+        }
+      }
+    } catch {
+      // Connection dropped (network, or the platform cut the request off)
+    }
+    if (!finished) setLive({ phase: "interrupted" })
+  }
+
+  async function sendToList(totpCode: string, dryRun = false) {
     if (!sendDialog || !selectedNewsletterId) return
     const listName = sendDialog
     const nl = newsletters.find(n => n.id === selectedNewsletterId)
     setConfirmSend(false)
     setSendDialog(null)
+    await startSend(
+      { ...buildSendPayload(dryRun ? "dryrun" : "list", { listName }), totpCode },
+      { title: nl?.title ?? selectedNewsletterId, listName },
+    )
+  }
 
-    // Show a preparing state immediately — before contacts are fetched
-    setSendProgress({
-      listName,
-      newsletterTitle: nl?.title ?? selectedNewsletterId,
-      recipients: [],
-      sent: 0,
-      failed: 0,
-      total: 0,
-      done: false,
-      sendId: null,
-      trackingEnabled,
+  function resumeSend(s: SendSummary | SendRecord) {
+    requestTOTP(code => {
+      void startSend(
+        { mode: "resume", sendId: s.id, newsletterId: s.newsletterId, totpCode: code },
+        { title: s.newsletterTitle, listName: s.listName, sendId: s.id },
+      )
     })
+  }
 
-    const response = await fetch("/api/marketing/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...buildSendPayload("list", { listName }), totpCode }),
-    })
-
-    if (!response.ok || !response.body) {
-      const data = await response.json().catch(() => ({}))
-      const errorMsg = data.error ?? `Send failed (${response.status})`
-      setSendProgress(prev => prev ? { ...prev, done: true, error: errorMsg } : null)
-      return
-    }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ""
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split("\n")
-      buffer = lines.pop() ?? ""
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue
-        try {
-          const event = JSON.parse(line.slice(6))
-
-          if (event.type === "sendId") {
-            // Record exists in DB now — add a placeholder to send history immediately
-            setSendProgress(prev => prev ? { ...prev, sendId: event.sendId } : null)
-            setSends(prev => [{
-              id: event.sendId,
-              newsletterId: selectedNewsletterId,
-              newsletterTitle: nl?.title ?? selectedNewsletterId,
-              listName,
-              sendMode: "list",
-              sentAt: new Date().toISOString(),
-              sentBy: "you",
-              recipientCount: 0,
-              trackingEnabled,
-            }, ...prev])
-          } else if (event.type === "start") {
-            setSendProgress(prev => prev ? { ...prev, total: event.total } : null)
-          } else if (event.type === "result") {
-            setSendProgress(prev => {
-              if (!prev) return null
-              return {
-                ...prev,
-                recipients: [...prev.recipients, { email: event.email, status: event.status as RecipientStatus }],
-                sent: event.status === "sent" ? prev.sent + 1 : prev.sent,
-                failed: event.status === "failed" ? prev.failed + 1 : prev.failed,
-              }
-            })
-          } else if (event.type === "error") {
-            setSendProgress(prev => prev ? { ...prev, done: true, error: event.message ?? "An error occurred" } : null)
-          } else if (event.type === "done") {
-            setSendProgress(prev => prev ? { ...prev, done: true, sendId: event.sendId } : null)
-            // Update the placeholder in send history with final counts
-            setSends(prev => prev.map(s => s.id === event.sendId
-              ? { ...s, recipientCount: event.sent, failedCount: event.failed }
-              : s
-            ))
-          }
-        } catch {}
+  async function cancelSend(s: SendSummary | SendRecord) {
+    try {
+      const res = await apiFetch(`/api/marketing/sends/${encodeURIComponent(s.id)}/cancel`, { method: "POST", waitForSession: true })
+      if (!res.ok) {
+        toast.error(await errorMessage(res, "Couldn't cancel the send."))
+        return
       }
+      toast.success("Cancelling — the send stops before its next batch.")
+    } catch (err) {
+      toast.error(err instanceof NetworkError ? err.message : "Couldn't cancel the send.")
     }
   }
 
@@ -734,7 +779,9 @@ export function MarketingPanel() {
                       <span title={s.sentAt}>{timeAgo(s.sentAt)}</span>
                     </td>
                     <td className="py-2.5 pr-4 text-fg-secondary">{s.sentBy}</td>
-                    <td className="py-2.5 pr-4 text-fg-secondary">{s.recipientCount}</td>
+                    <td className="py-2.5 pr-4 text-fg-secondary whitespace-nowrap">
+                      <SendStatusCell s={s} onOpen={() => setMonitor({ sendId: s.id, title: s.newsletterTitle, listName: s.listName, live: { phase: "ended" } })} />
+                    </td>
                     <td className="py-2.5">
                       <div className="flex items-center gap-2">
                         {s.trackingEnabled && (
@@ -1109,22 +1156,56 @@ export function MarketingPanel() {
             <div className="px-5 py-4 border-b border-border flex items-start justify-between gap-4">
               <div>
                 <p className="font-semibold text-sm">{deliveryModal.send.newsletterTitle}</p>
-                <p className="text-fg-muted text-xs mt-0.5">{deliveryModal.send.listName} · {deliveryModal.send.recipientCount} sent</p>
+                <p className="text-fg-muted text-xs mt-0.5">
+                  {(() => {
+                    const c = sendCounts(deliveryModal.send as SendLike)
+                    return c.total > c.sent ? `${deliveryModal.send.listName} · ${c.sent} of ${c.total} sent` : `${deliveryModal.send.listName} · ${c.sent} sent`
+                  })()}
+                </p>
               </div>
-              <button onClick={() => setDeliveryModal(null)} className="text-fg-muted hover:text-foreground text-lg leading-none transition-colors shrink-0">×</button>
+              <button onClick={() => setDeliveryModal(null)} aria-label="Close" className="text-fg-muted hover:text-foreground text-lg leading-none transition-colors shrink-0">×</button>
             </div>
+
+            {/* What this send recorded (old sends stored only failures) */}
+            {(deliveryModal.source === "none" || canResume(deliveryModal.send as SendLike) || deliveryModal.error) && (
+              <div className="px-5 py-3 border-b border-border flex flex-col gap-2 text-xs">
+                {deliveryModal.error && <p className="text-destructive">{deliveryModal.error}</p>}
+                {deliveryModal.source === "none" && (
+                  <p className="text-fg-muted">
+                    This send is from before per-recipient tracking, so only failures were recorded. It reported{" "}
+                    {deliveryModal.send.recipientCount} sent; who exactly received it is unknown.
+                  </p>
+                )}
+                {canResume(deliveryModal.send as SendLike) && (
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-warning">
+                      Stopped partway — {sendCounts(deliveryModal.send as SendLike).notSent} not sent yet.
+                    </p>
+                    <Button size="xs" onClick={() => { const s = deliveryModal.send; setDeliveryModal(null); resumeSend(s) }}>
+                      Resume
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Summary bar */}
             {deliveryModal.recipients && (() => {
               const failed = deliveryModal.recipients.filter(r => r.status === "failed")
-              const sent = deliveryModal.recipients.filter(r => r.status === "sent")
+              const sent = deliveryModal.recipients.filter(r => r.status === "sent" || r.status === "dryrun")
+              const unknown = deliveryModal.recipients.filter(r => r.status === "unknown")
+              // Resend-failed reads the record's failure list; worker sends keep failures per recipient instead.
+              const canResendFailed = deliveryModal.send.engine !== "worker"
               return (
                 <div className="px-5 py-3 border-b border-border flex items-center justify-between gap-4">
                   <div className="flex items-center gap-4 text-xs">
-                    <span className="text-success/70">{sent.length} delivered</span>
-                    {failed.length > 0 && <span className="text-destructive/70">{failed.length} failed</span>}
+                    {deliveryModal.source !== "none" && (
+                      <span className="text-success">{sent.length} {deliveryModal.send.sendMode === "dryrun" ? "would be sent" : "sent"}</span>
+                    )}
+                    {failed.length > 0 && <span className="text-destructive">{failed.length} failed</span>}
+                    {unknown.length > 0 && <span className="text-warning">{unknown.length} unconfirmed</span>}
                   </div>
-                  {failed.length > 0 && !deliveryModal.resending && !deliveryModal.resendProgress?.done && (
+                  {canResendFailed && failed.length > 0 && !deliveryModal.resending && !deliveryModal.resendProgress?.done && (
                     <button
                       onClick={() => requestTOTP(resendFailed)}
                       className="text-xs bg-surface-2 hover:bg-surface-3 text-foreground px-3 py-1.5 rounded-md transition-colors"
@@ -1165,9 +1246,11 @@ export function MarketingPanel() {
                   <Spinner size="md" />
                 </div>
               ) : !deliveryModal.recipients ? (
-                <p className="text-fg-muted text-sm px-5 py-6">Could not load recipient data.</p>
+                <p className="text-fg-muted text-sm px-5 py-6">Delivery details aren&apos;t available.</p>
               ) : deliveryModal.recipients.length === 0 ? (
-                <p className="text-fg-muted text-sm px-5 py-6">No recipients found.</p>
+                <p className="text-fg-muted text-sm px-5 py-6">
+                  {deliveryModal.source === "none" ? "No failures were recorded." : "No recipients were recorded for this send."}
+                </p>
               ) : (
                 deliveryModal.recipients.map(r => {
                   const resendStatus = deliveryModal.resendProgress?.recipients.get(r.email)
@@ -1183,8 +1266,13 @@ export function MarketingPanel() {
                         {resendStatus === "pending" && (
                           <span className="text-[11px] text-fg-faint">resending…</span>
                         )}
-                        <span className={`text-[11px] font-medium ${r.status === "sent" ? "text-success/50" : "text-destructive/70"}`}>
-                          {r.status === "sent" ? "✓" : "✗ failed"}
+                        <span className={`text-[11px] font-medium ${
+                          r.status === "sent" || r.status === "dryrun" ? "text-success"
+                          : r.status === "failed" ? "text-destructive"
+                          : r.status === "unknown" ? "text-warning"
+                          : "text-fg-muted"
+                        }`}>
+                          {{ sent: "Sent", failed: "Failed", unknown: "Unconfirmed", pending: "Not sent yet", dryrun: "Would send" }[r.status]}
                         </span>
                       </div>
                     </div>
@@ -1196,81 +1284,19 @@ export function MarketingPanel() {
         </div>
       )}
 
-      {/* Send progress modal */}
-      {sendProgress && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80">
-          <div className="bg-card border border-border rounded-xl w-full max-w-lg mx-4 flex flex-col overflow-hidden max-h-[80vh]">
-            {/* Header */}
-            <div className="px-5 py-4 border-b border-border flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-sm">{sendProgress.newsletterTitle}</p>
-                  <p className="text-fg-muted text-xs mt-0.5">→ {sendProgress.listName}</p>
-                </div>
-                {sendProgress.done ? (
-                  <div className="flex items-center gap-2">
-                    {sendProgress.sendId && sendProgress.trackingEnabled && (
-                      <button
-                        onClick={() => { router.push(`/live/manage/sends/${sendProgress.sendId}`); setSendProgress(null) }}
-                        className="text-xs text-fg-secondary hover:text-foreground bg-surface hover:bg-surface-2 px-3 py-1.5 rounded-md transition-colors"
-                      >
-                        View stats →
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setSendProgress(null)}
-                      className="text-xs text-fg-muted hover:text-foreground transition-colors px-2"
-                    >
-                      Close
-                    </button>
-                  </div>
-                ) : (
-                  <Spinner size="sm" />
-                )}
-              </div>
-              {sendProgress.error && (
-                <p className="text-destructive text-xs bg-destructive/10 rounded-md px-2 py-1">{sendProgress.error}</p>
-              )}
-              {/* Progress bar */}
-              <div className="flex flex-col gap-1">
-                <div className="w-full h-1.5 bg-surface-2 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-foreground/50 rounded-full transition-all duration-200"
-                    style={{ width: `${sendProgress.total > 0 ? ((sendProgress.sent + sendProgress.failed) / sendProgress.total) * 100 : 0}%` }}
-                  />
-                </div>
-                <div className="flex justify-between text-[11px] text-fg-muted">
-                  <span>
-                    {sendProgress.done ? "Done" : sendProgress.total === 0 ? "Preparing…" : "Sending…"} {sendProgress.total > 0 ? `${sendProgress.sent + sendProgress.failed}/${sendProgress.total}` : ""}
-                  </span>
-                  <span>
-                    {sendProgress.sent > 0 && <span className="text-success/60">{sendProgress.sent} sent</span>}
-                    {sendProgress.failed > 0 && <span className="text-destructive/60 ml-2">{sendProgress.failed} failed</span>}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Recipient list */}
-            <div className="overflow-y-auto flex-1">
-              {sendProgress.recipients.map(r => (
-                <div
-                  key={r.email}
-                  className="flex items-center justify-between px-5 py-2 border-b border-border last:border-0"
-                >
-                  <span className="text-xs text-fg-secondary font-mono">{r.email}</span>
-                  <span className={`text-[11px] font-medium ${
-                    r.status === "sent" ? "text-success/70" :
-                    r.status === "failed" ? "text-destructive/70" :
-                    "text-fg-faint"
-                  }`}>
-                    {r.status === "sent" ? "✓ sent" : r.status === "failed" ? "✗ failed" : "·"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+      {/* Send progress monitor */}
+      {monitor && (
+        <SendMonitor
+          sendId={monitor.sendId}
+          title={monitor.title}
+          listName={monitor.listName}
+          live={monitor.live}
+          onClose={() => setMonitor(null)}
+          onResume={resumeSend}
+          onCancel={cancelSend}
+          onRecord={updateSendInHistory}
+          onViewStats={id => { setMonitor(null); router.push(`/live/manage/sends/${id}`) }}
+        />
       )}
 
       {/* Delete send confirmation dialog */}
@@ -1357,7 +1383,10 @@ export function MarketingPanel() {
               <p><span className="text-fg-muted">Reply-to:</span> {replyTo || "—"}</p>
             </div>
             <p className="text-xs text-fg-muted">This will send to all active subscribers on the list. This cannot be undone.</p>
-            <div className="flex gap-2 justify-end">
+            {workerEnabled && (
+              <p className="text-xs text-fg-muted">A dry run walks the list and shows who would get it, without sending any email.</p>
+            )}
+            <div className="flex flex-wrap gap-2 justify-end">
               <button
                 onClick={() => setConfirmSend(false)}
                 className="px-4 py-2 text-sm text-fg-muted hover:text-foreground transition-colors"
@@ -1365,8 +1394,13 @@ export function MarketingPanel() {
               >
                 Cancel
               </button>
+              {workerEnabled && (
+                <Button variant="outline" onClick={() => requestTOTP(code => void sendToList(code, true))} disabled={sending}>
+                  Dry run
+                </Button>
+              )}
               <button
-                onClick={() => requestTOTP(sendToList)}
+                onClick={() => requestTOTP(code => void sendToList(code))}
                 disabled={sending}
                 className="px-4 py-2 text-sm bg-foreground text-background font-medium rounded-xl hover:bg-foreground/90 transition-colors disabled:opacity-50"
               >
