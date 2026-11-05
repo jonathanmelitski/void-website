@@ -6,12 +6,13 @@ import {
 import { cognitoClient, cognitoUsernameFromAccessToken } from "@/lib/aws/cognito"
 import { setSessionCookies } from "@/lib/auth/cookies"
 import { secretHash } from "@/lib/aws/cognito-secret"
+import { authError } from "@/lib/auth-errors"
 
 export async function POST(request: NextRequest) {
   const { email, session, newPassword } = await request.json()
 
   if (!email || !session || !newPassword) {
-    return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+    return NextResponse.json({ error: "Enter a new password." }, { status: 400 })
   }
 
   try {
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest) {
 
     const tokens = result.AuthenticationResult
     if (!tokens?.AccessToken || !tokens?.RefreshToken) {
-      return NextResponse.json({ error: "Failed to set password" }, { status: 401 })
+      return NextResponse.json({ error: "Couldn't set your password. Sign in again." }, { status: 401 })
     }
 
     const response = NextResponse.json({ ok: true })
@@ -45,7 +46,6 @@ export async function POST(request: NextRequest) {
 
     return response
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Failed to set password"
-    return NextResponse.json({ error: message }, { status: 401 })
+    return NextResponse.json(authError(err, "challenge"), { status: 401 })
   }
 }

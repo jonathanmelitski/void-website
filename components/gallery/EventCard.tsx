@@ -1,23 +1,26 @@
 'use client'
 
 import Image from "next/image"
+import { Lock } from "lucide-react"
 import { PrefetchLink } from "@/components/prefetch-link"
 import type { GalleryEvent } from "@/models/GalleryModels"
 import { Logo } from "@/components/navbar-01"
-import { formatDate } from "@/lib/format-date"
+import { formatEventDate } from "@/lib/format-date"
 
 interface EventCardProps {
   event: GalleryEvent
   href?: string
+  /** Shows a "Private" pill (Void Live event list). */
+  isPrivate?: boolean
 }
 
-export function EventCard({ event, href }: EventCardProps) {
+export function EventCard({ event, href, isPrivate }: EventCardProps) {
   const cover = event.photos.find(p => p.id === event.coverPhotoId) ?? event.photos[0]
   const coverUrl = cover?.url ?? (event.coverPhotoKey
     ? `${process.env.NEXT_PUBLIC_S3_BASE_URL}/${event.coverPhotoKey}`
     : null)
 
-  const dateLabel = formatDate(event.date)
+  const dateLabel = formatEventDate(event.date)
 
   if (!coverUrl) {
     // No cover yet: a designed tile (brand wash + Void glyph) instead of an empty grey box.
@@ -32,6 +35,12 @@ export function EventCard({ event, href }: EventCardProps) {
             aria-hidden="true"
             className="absolute -right-6 -top-4 size-44 text-brand-text opacity-15 transition-transform duration-500 group-hover:-rotate-6 motion-reduce:transition-none"
           />
+          {isPrivate && (
+            <span className="absolute top-3 right-3 inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-1 text-xs font-medium text-fg-secondary">
+              <Lock className="size-3" aria-hidden />
+              Private
+            </span>
+          )}
           <div className="absolute inset-x-0 bottom-0 p-4 text-foreground">
             <h3 className="text-lg font-semibold leading-tight">{event.title}</h3>
             {dateLabel && <p className="mt-0.5 text-sm text-fg-secondary">{dateLabel}</p>}
@@ -55,10 +64,20 @@ export function EventCard({ event, href }: EventCardProps) {
           />
           {/* Gradient overlay */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
-          {/* Photo count badge (only when we actually know the count) */}
-          {event.photos.length > 0 && (
-            <div className="absolute top-3 right-3 bg-white/20 backdrop-blur-sm rounded-full px-2 py-1 text-white text-xs font-medium">
-              {event.photos.length} {event.photos.length === 1 ? "photo" : "photos"}
+          {/* Private / photo count pills */}
+          {(isPrivate || event.photos.length > 0) && (
+            <div className="absolute top-3 right-3 flex gap-1.5">
+              {isPrivate && (
+                <span className="inline-flex items-center gap-1 bg-white/20 backdrop-blur-sm rounded-full px-2 py-1 text-white text-xs font-medium">
+                  <Lock className="size-3" aria-hidden />
+                  Private
+                </span>
+              )}
+              {event.photos.length > 0 && (
+                <span className="bg-white/20 backdrop-blur-sm rounded-full px-2 py-1 text-white text-xs font-medium">
+                  {event.photos.length} {event.photos.length === 1 ? "photo" : "photos"}
+                </span>
+              )}
             </div>
           )}
           {/* Title / date / location */}

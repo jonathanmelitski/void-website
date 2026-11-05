@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server"
 import { ConfirmForgotPasswordCommand } from "@aws-sdk/client-cognito-identity-provider"
 import { cognitoClient } from "@/lib/aws/cognito"
 import { secretHash } from "@/lib/aws/cognito-secret"
+import { authError } from "@/lib/auth-errors"
 
 export async function POST(request: NextRequest) {
   const { email, code, password } = await request.json()
 
   if (!email || !code || !password) {
-    return NextResponse.json({ error: "Email, code, and password are required" }, { status: 400 })
+    return NextResponse.json({ error: "Enter the code and a new password." }, { status: 400 })
   }
 
   try {
@@ -22,7 +23,6 @@ export async function POST(request: NextRequest) {
     )
     return NextResponse.json({ ok: true })
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Password reset failed"
-    return NextResponse.json({ error: message }, { status: 400 })
+    return NextResponse.json(authError(err, "confirm-reset"), { status: 400 })
   }
 }

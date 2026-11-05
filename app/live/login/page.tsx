@@ -1,30 +1,41 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { Suspense, useEffect, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { useAuth } from "@/lib/use-auth"
 import { safeNextPath } from "@/hooks/use-require-auth"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { Field } from "@/components/ui/field"
+import { PageContainer } from "@/components/ui/page"
+import { FormMessage, PasswordInput, postAuth } from "@/components/auth/auth-form"
+import { PASSWORD_RULES } from "@/lib/auth-errors"
 
 // After sign-in go to ?next= (same-origin paths only), else /live.
-// Read from window.location so this page doesn't need a Suspense boundary.
+// Read from window.location so it's current at the moment of redirect.
 function nextPath() {
   return safeNextPath(new URLSearchParams(window.location.search).get("next"))
 }
 
-export default function LoginPage() {
-  const [email, setEmail] = useState("")
+const NOTICES: Record<string, string> = {
+  confirmed: "Account confirmed. Sign in to continue.",
+  reset: "Password updated. Sign in with your new password.",
+}
+
+function LoginForm() {
+  const searchParams = useSearchParams()
+  const [email, setEmail] = useState(searchParams.get("email") ?? "")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
+  const [notice] = useState(NOTICES[searchParams.get("notice") ?? ""] ?? "")
   const [isLoading, setIsLoading] = useState(false)
 
   // NEW_PASSWORD_REQUIRED challenge state
   const [challenge, setChallenge] = useState<{ session: string; email: string } | null>(null)
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [mismatch, setMismatch] = useState(false)
 
   const { reportSignedIn, status } = useAuth()
   const router = useRouter()
@@ -39,23 +50,29 @@ export default function LoginPage() {
     setError("")
     setIsLoading(true)
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error ?? "Login failed"); return }
+      const res = await postAuth("/api/auth/login", { email, password })
+      if (!res.ok) {
+        if (res.code === "UNCONFIRMED") {
+          // Send a fresh code (the one from sign-up may have expired), then finish on the confirm screen
+          await postAuth("/api/auth/confirm", { email, resend: true })
+          router.push(`/live/confirm?email=${encodeURIComponent(email)}&sent=1`)
+          return
+        }
+        if (res.code === "RESET_REQUIRED") {
+          router.push(`/live/reset-password?email=${encodeURIComponent(email)}`)
+          return
+        }
+        setError(res.error)
+        return
+      }
 
-      if (data.challenge === "NEW_PASSWORD_REQUIRED") {
-        setChallenge({ session: data.session, email: data.email })
+      if (res.data.challenge === "NEW_PASSWORD_REQUIRED") {
+        setChallenge({ session: String(res.data.session), email: String(res.data.email ?? email) })
         return
       }
 
       await reportSignedIn()
       router.replace(nextPath())
-    } catch {
-      setError("An unexpected error occurred")
     } finally {
       setIsLoading(false)
     }
@@ -65,22 +82,23 @@ export default function LoginPage() {
     e.preventDefault()
     setError("")
     if (newPassword !== confirmPassword) {
-      setError("Passwords do not match")
+      setMismatch(true)
       return
     }
     setIsLoading(true)
     try {
-      const res = await fetch("/api/auth/challenge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: challenge!.email, session: challenge!.session, newPassword }),
-      })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error ?? "Failed to set password"); return }
+      const res = await postAuth("/api/auth/challenge", { email: challenge!.email, session: challenge!.session, newPassword })
+      if (!res.ok) {
+        if (res.code === "SESSION_EXPIRED") {
+          // The challenge session lasts a few minutes; start over from the sign-in form
+          setChallenge(null)
+          setPassword("")
+        }
+        setError(res.error)
+        return
+      }
       await reportSignedIn()
       router.replace(nextPath())
-    } catch {
-      setError("An unexpected error occurred")
     } finally {
       setIsLoading(false)
     }
@@ -88,71 +106,78 @@ export default function LoginPage() {
 
   if (challenge) {
     return (
-      <div className="flex flex-col items-center pt-24 px-4 text-left">
-        <div className="w-full max-w-sm flex flex-col gap-6">
-          <div>
-            <h1 className="text-4xl font-display leading-none tracking-wide">Set your password</h1>
-            <p className="text-fg-muted mt-1 text-sm">Choose a permanent password to continue.</p>
-          </div>
-
-          {error && <p className="text-sm text-destructive">{error}</p>}
-
-          <form onSubmit={handleSetPassword} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="new-password" className="text-fg-secondary">New password</Label>
-              <Input id="new-password" type="password" value={newPassword}
-                onChange={e => setNewPassword(e.target.value)}
-                placeholder="••••••••" required autoComplete="new-password"
-                className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="confirm-password" className="text-fg-secondary">Confirm password</Label>
-              <Input id="confirm-password" type="password" value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)}
-                placeholder="••••••••" required autoComplete="new-password"
-                className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
-            </div>
-            <Button type="submit" disabled={isLoading} className="mt-1">
-              {isLoading ? "Saving…" : "Set password & sign in"}
-            </Button>
-          </form>
+      <PageContainer width="form" className="flex flex-col gap-6 text-left">
+        <div>
+          <h1 className="text-4xl font-display leading-none tracking-wide">Set your password</h1>
+          <p className="text-fg-muted mt-2 text-sm">Choose a permanent password for {challenge.email}.</p>
         </div>
-      </div>
+
+        <form onSubmit={handleSetPassword} className="flex flex-col gap-4">
+          <Field label="New password" hint={PASSWORD_RULES}>
+            <PasswordInput id="new-password" value={newPassword}
+              onChange={e => { setNewPassword(e.target.value); setMismatch(false) }}
+              required autoComplete="new-password" />
+          </Field>
+          <Field label="Confirm password" error={mismatch ? "Passwords don't match." : undefined}>
+            <PasswordInput id="confirm-password" value={confirmPassword}
+              onChange={e => { setConfirmPassword(e.target.value); setMismatch(false) }}
+              required autoComplete="new-password" />
+          </Field>
+          <FormMessage error={error} />
+          <Button type="submit" size="lg" loading={isLoading}>
+            {isLoading ? "Saving…" : "Set password and sign in"}
+          </Button>
+        </form>
+
+        <Button
+          type="button"
+          variant="quiet"
+          className="w-fit"
+          onClick={() => { setChallenge(null); setError(""); setPassword(""); setNewPassword(""); setConfirmPassword("") }}
+        >
+          Use a different account
+        </Button>
+      </PageContainer>
     )
   }
 
   return (
-    <div className="flex flex-col items-center pt-24 px-4 text-left">
-      <div className="w-full max-w-sm flex flex-col gap-6">
-        <div>
-          <h1 className="text-4xl font-display leading-none tracking-wide">Void Live</h1>
-          <p className="text-fg-muted mt-1 text-sm">Sign in to manage events and photos.</p>
-        </div>
+    <PageContainer width="form" className="flex flex-col gap-6 text-left">
+      <div>
+        <h1 className="text-4xl font-display leading-none tracking-wide">Sign in</h1>
+        <p className="text-fg-muted mt-2 text-sm">Void Live: live scoring, film and your game footage.</p>
+      </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+      <form onSubmit={handleSignIn} className="flex flex-col gap-4">
+        <Field label="Email">
+          <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)}
+            placeholder="you@upenn.edu" required autoComplete="email" className="h-10" />
+        </Field>
+        <Field label="Password">
+          <PasswordInput id="password" value={password} onChange={e => setPassword(e.target.value)}
+            required autoComplete="current-password" autoFocus={!!notice} />
+        </Field>
+        <FormMessage error={error} notice={notice} />
+        <Button type="submit" size="lg" loading={isLoading}>
+          {isLoading ? "Signing in…" : "Sign in"}
+        </Button>
+      </form>
 
-        <form onSubmit={handleSignIn} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="email" className="text-fg-secondary">Email</Label>
-            <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)}
-              placeholder="you@upenn.edu" required autoComplete="email"
-              className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password" className="text-fg-secondary">Password</Label>
-            <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)}
-              placeholder="••••••••" required autoComplete="current-password"
-              className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
-          </div>
-          <Button type="submit" disabled={isLoading} className="mt-1">
-            {isLoading ? "Signing in…" : "Sign in"}
-          </Button>
-        </form>
-
-        <Link href="/live/reset-password" className="text-sm text-fg-muted hover:text-foreground transition-colors w-fit">
+      <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
+        <Link
+          href={email ? `/live/reset-password?email=${encodeURIComponent(email)}` : "/live/reset-password"}
+          className="text-fg-muted hover:text-foreground transition-colors"
+        >
           Forgot password?
         </Link>
+        <Link href="/live/register" className="text-fg-muted hover:text-foreground transition-colors">
+          Create account
+        </Link>
       </div>
-    </div>
+    </PageContainer>
   )
+}
+
+export default function LoginPage() {
+  return <Suspense><LoginForm /></Suspense>
 }
