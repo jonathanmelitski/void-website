@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useRequireAuth } from "@/hooks/use-require-auth"
+import { apiFetch } from "@/lib/api-fetch"
 import { SimpleEditor } from "@/components/tiptap-templates/simple/simple-editor"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -167,11 +168,14 @@ export default function ManageNewsletterPage() {
   function saveBody(html: string): Promise<void> {
     bodyPendingHtml.current = null
     setBodySaveStatus("saving")
-    const p: Promise<void> = fetch(`/api/newsletters/${id}`, {
+    const p: Promise<void> = apiFetch(`/api/newsletters/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ body: html }),
-    }).then(() => {
+      // Wait for an in-place sign-in if the session ended, then save.
+      waitForSession: true,
+    }).then((res) => {
+      if (!res.ok) throw new Error(`Save failed (${res.status})`)
       setBodySaveStatus("saved")
       setTimeout(() => setBodySaveStatus(prev => prev === "saved" ? "idle" : prev), 2000)
     }).catch(() => {
@@ -193,11 +197,14 @@ export default function ManageNewsletterPage() {
   function saveEmailBody(html: string | null): Promise<void> {
     emailBodyPendingHtml.current = null
     setEmailBodySaveStatus("saving")
-    const p: Promise<void> = fetch(`/api/newsletters/${id}`, {
+    const p: Promise<void> = apiFetch(`/api/newsletters/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ emailBody: html ?? "" }),
-    }).then(() => {
+      // Wait for an in-place sign-in if the session ended, then save.
+      waitForSession: true,
+    }).then((res) => {
+      if (!res.ok) throw new Error(`Save failed (${res.status})`)
       setNewsletter(prev => prev ? { ...prev, emailBody: html ?? undefined } : prev)
       setEmailBodySaveStatus("saved")
       setTimeout(() => setEmailBodySaveStatus(prev => prev === "saved" ? "idle" : prev), 2000)
@@ -223,11 +230,14 @@ export default function ManageNewsletterPage() {
     const updated = current.entries.map(e => e.id === entryId ? { ...e, ...fields } : e)
     setNewsletter(prev => prev ? { ...prev, entries: updated } : prev)
     setEntrySaveStatus(prev => ({ ...prev, [entryId]: "saving" }))
-    const p: Promise<void> = fetch(`/api/newsletters/${id}/entries`, {
+    const p: Promise<void> = apiFetch(`/api/newsletters/${id}/entries`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ entries: updated }),
-    }).then(() => {
+      // Wait for an in-place sign-in if the session ended, then save.
+      waitForSession: true,
+    }).then((res) => {
+      if (!res.ok) throw new Error(`Save failed (${res.status})`)
       setEntrySaveStatus(prev => ({ ...prev, [entryId]: "saved" }))
       setTimeout(() => setEntrySaveStatus(prev =>
         prev[entryId] === "saved" ? { ...prev, [entryId]: "idle" } : prev
@@ -357,11 +367,14 @@ export default function ManageNewsletterPage() {
 
   function saveMeta(fields: { title?: string; slug?: string; date?: string; coverPhotoKey?: string }): Promise<void> {
     setMetaSaveStatus("saving")
-    const p: Promise<void> = fetch(`/api/newsletters/${id}`, {
+    const p: Promise<void> = apiFetch(`/api/newsletters/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),
-    }).then(() => {
+      // Wait for an in-place sign-in if the session ended, then save.
+      waitForSession: true,
+    }).then((res) => {
+      if (!res.ok) throw new Error(`Save failed (${res.status})`)
       setNewsletter(prev => prev ? { ...prev, ...fields } : prev)
       setMetaSaveStatus("saved")
       setTimeout(() => setMetaSaveStatus(prev => prev === "saved" ? "idle" : prev), 2000)
