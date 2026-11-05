@@ -19,10 +19,16 @@ type DataTableProps<T> = {
   emptyMessage?: string
   getRowKey?: (row: T) => string
   toolbar?: (selectedRows: T[], clearSelection: () => void) => React.ReactNode
+  /**
+   * Optional phone layout. When set, rows render as stacked cards below `sm` and the table
+   * shows from `sm` up. Return the card body (main field, status, the row's actions).
+   * Selection (when `getRowKey` is set) is drawn here with a 40px checkbox target.
+   */
+  mobileCard?: (row: T) => React.ReactNode
 }
 
 export function DataTable<T>({
-  columns, data, isLoading, emptyMessage = "No data.", getRowKey, toolbar,
+  columns, data, isLoading, emptyMessage = "No data.", getRowKey, toolbar, mobileCard,
 }: DataTableProps<T>) {
   const [selected, setSelected] = React.useState<Set<string>>(new Set())
 
@@ -60,6 +66,38 @@ export function DataTable<T>({
           {toolbar(selectedRows, clearSelection)}
         </div>
       )}
+      {mobileCard && (
+        <ul data-slot="data-table-cards" className="flex flex-col gap-2 sm:hidden">
+          {isLoading ? (
+            [0, 1, 2].map(i => (
+              <li key={i} aria-hidden className="h-20 animate-pulse rounded-xl bg-surface-2 motion-reduce:animate-none" />
+            ))
+          ) : data.length === 0 ? (
+            <li className="rounded-xl border border-border px-4 py-6 text-sm text-fg-muted">{emptyMessage}</li>
+          ) : (
+            data.map((row, rowIdx) => {
+              const key = selectable ? getRowKey!(row) : String(rowIdx)
+              return (
+                <li key={key} className="flex items-start gap-1 rounded-xl border border-border bg-card p-3">
+                  {selectable && (
+                    <label className="-my-1.5 -ml-1.5 flex size-10 shrink-0 cursor-pointer items-center justify-center">
+                      <input
+                        type="checkbox"
+                        aria-label="Select"
+                        className="h-4 w-4 rounded-md border-border-strong bg-surface accent-foreground cursor-pointer"
+                        checked={selected.has(key)}
+                        onChange={() => toggleRow(key)}
+                      />
+                    </label>
+                  )}
+                  <div className="min-w-0 flex-1">{mobileCard(row)}</div>
+                </li>
+              )
+            })
+          )}
+        </ul>
+      )}
+      <div className={mobileCard ? "hidden sm:block" : undefined}>
       <Table>
         <TableHeader>
           <TableRow className="border-border hover:bg-transparent">
@@ -121,6 +159,7 @@ export function DataTable<T>({
           )}
         </TableBody>
       </Table>
+      </div>
     </div>
   )
 }
