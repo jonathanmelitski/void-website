@@ -1,8 +1,13 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import Link from "next/link"
+import { ChevronLeft } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
+import { useRequireAuth } from "@/hooks/use-require-auth"
+import { apiFetch } from "@/lib/api-fetch"
 
 type DailyMetrics = {
   date: string
@@ -32,8 +37,20 @@ type AuditData = {
   suppressed: SuppressedEmail[]
 }
 
+const REASON_LABEL: Record<SuppressedEmail["reason"], string> = { BOUNCE: "Bounce", COMPLAINT: "Complaint" }
+
+function ReasonBadge({ reason }: { reason: SuppressedEmail["reason"] }) {
+  return (
+    <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
+      reason === "COMPLAINT" ? "bg-destructive/10 text-destructive" : "bg-warning/10 text-warning"
+    }`}>
+      {REASON_LABEL[reason] ?? reason}
+    </span>
+  )
+}
+
 export default function SesAuditPage() {
-  const router = useRouter()
+  const { isLoading: authLoading } = useRequireAuth({ roles: ["ADMIN"], forbiddenHref: "/live/manage" })
   const [data, setData] = useState<AuditData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -41,10 +58,10 @@ export default function SesAuditPage() {
   const [reasonFilter, setReasonFilter] = useState<"ALL" | "BOUNCE" | "COMPLAINT">("ALL")
 
   useEffect(() => {
-    fetch("/api/marketing/ses-audit")
+    apiFetch("/api/marketing/ses-audit")
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(setData)
-      .catch(err => setError(`Failed to load audit data (${err})`))
+      .catch(() => setError("Couldn't load SES data. Reload to try again."))
       .finally(() => setLoading(false))
   }, [])
 
@@ -59,45 +76,49 @@ export default function SesAuditPage() {
     return true
   })
 
-  if (loading) {
+  if (loading || authLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-[50dvh] flex items-center justify-center">
         <Spinner size="md" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-8 flex flex-col gap-8 max-w-5xl mx-auto">
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 py-6 text-left text-foreground sm:p-8">
 
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <button
-          onClick={() => router.push("/live/manage")}
-          className="text-fg-muted hover:text-foreground transition-colors text-sm"
-        >
-          ← Back
-        </button>
-        <div>
-          <h1 className="text-xl font-bold">SES Audit</h1>
-          <p className="text-fg-muted text-xs mt-0.5">Live data from AWS — not our database</p>
-        </div>
+      <div className="flex flex-col">
+        <Button asChild variant="quiet" size="sm" className="mb-3 self-start">
+          <Link href="/live/manage?tab=marketing">
+            <ChevronLeft aria-hidden />
+            Marketing
+          </Link>
+        </Button>
+        <h1 className="text-3xl font-display leading-none tracking-wide">SES audit</h1>
+        <p className="text-fg-muted text-sm mt-1">Live data from Amazon SES, not from our database</p>
       </div>
 
       {error && (
-        <div className="bg-destructive/10 border border-destructive/20 rounded-xl px-4 py-3 text-destructive text-sm">
+        <div role="alert" className="bg-destructive/10 border border-destructive/20 rounded-xl px-4 py-3 text-destructive text-sm">
           {error}
         </div>
       )}
 
       {/* Account status */}
       {data?.account && (
-        <div className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold text-fg-muted uppercase tracking-wider">Account</h2>
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-bold">Account</h2>
           {'error' in data.account && data.account.error ? (
-            <p className="text-destructive/70 text-sm">{data.account.error}</p>
+            <div className="flex flex-col gap-1 text-sm">
+              <p className="text-destructive">Couldn&apos;t read the SES account status.</p>
+              <details className="text-fg-muted">
+                <summary className="cursor-pointer">Technical details</summary>
+                <p className="mt-1 font-mono text-xs break-all">{data.account.error}</p>
+              </details>
+            </div>
           ) : (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {[
                 { label: "Sending", value: data.account.sendingEnabled ? "Enabled" : "Disabled", ok: data.account.sendingEnabled },
                 { label: "Production access", value: data.account.productionAccess ? "Yes" : "Sandbox", ok: data.account.productionAccess },
@@ -110,40 +131,40 @@ export default function SesAuditPage() {
               ))}
             </div>
           )}
-        </div>
+        </section>
       )}
 
       {/* 30-day summary stats */}
       {data && (
-        <div className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold text-fg-muted uppercase tracking-wider">Last 30 days — CloudWatch</h2>
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-bold">Last 30 days</h2>
           <div className="grid grid-cols-3 gap-3">
             {[
               { label: "Sent", value: totalSent.toLocaleString(), color: "text-foreground" },
               { label: "Bounced", value: totalBounced.toLocaleString(), pct: totalSent > 0 ? ((totalBounced / totalSent) * 100).toFixed(1) + "%" : null, color: totalBounced > 0 ? "text-warning" : "text-foreground" },
               { label: "Complained", value: totalComplained.toLocaleString(), pct: totalSent > 0 ? ((totalComplained / totalSent) * 100).toFixed(2) + "%" : null, color: totalComplained > 0 ? "text-destructive" : "text-foreground" },
             ].map(({ label, value, pct, color }) => (
-              <div key={label} className="bg-surface border border-border rounded-xl px-4 py-3">
+              <div key={label} className="bg-surface border border-border rounded-xl px-3 py-3 sm:px-4">
                 <p className="text-fg-muted text-xs mb-1">{label}</p>
-                <p className={`text-lg font-bold ${color}`}>{value}</p>
+                <p className={`text-lg font-bold tabular-nums ${color}`}>{value}</p>
                 {pct && <p className="text-fg-muted text-xs">{pct} rate</p>}
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       {/* Daily bar chart */}
       {data && data.metrics.length > 0 && (
-        <div className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold text-fg-muted uppercase tracking-wider">Daily sends — CloudWatch</h2>
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-bold">Daily sends</h2>
           <div className="bg-surface border border-border rounded-xl p-4 overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="w-full min-w-[520px] text-xs">
               <thead>
                 <tr className="text-fg-muted border-b border-border">
                   <th className="text-left pb-2 pr-4 font-medium w-28">Date</th>
                   <th className="text-left pb-2 pr-3 font-medium w-16">Sent</th>
-                  <th className="pb-2 pr-3 font-medium w-48 text-left">Volume</th>
+                  <th className="pb-2 pr-3 font-medium text-left">Volume</th>
                   <th className="text-left pb-2 pr-3 font-medium w-20">Delivered</th>
                   <th className="text-left pb-2 pr-3 font-medium w-16">Bounced</th>
                   <th className="text-left pb-2 font-medium w-20">Complained</th>
@@ -152,100 +173,119 @@ export default function SesAuditPage() {
               <tbody>
                 {data.metrics.map(row => (
                   <tr key={row.date} className="border-b border-border last:border-0">
-                    <td className="py-1.5 pr-4 text-fg-muted font-mono">{row.date}</td>
-                    <td className="py-1.5 pr-3 text-foreground font-mono">{row.sent > 0 ? row.sent.toLocaleString() : <span className="text-fg-faint">—</span>}</td>
+                    <td className="py-1.5 pr-4 text-fg-muted tabular-nums">{row.date}</td>
+                    <td className="py-1.5 pr-3 text-foreground tabular-nums">{row.sent > 0 ? row.sent.toLocaleString() : <span className="text-fg-muted">—</span>}</td>
                     <td className="py-1.5 pr-3">
-                      <div className="w-48 h-2 bg-surface rounded-full overflow-hidden">
+                      <div className="w-full min-w-24 max-w-48 h-2 bg-surface-2 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-surface-3 rounded-full"
+                          className="h-full bg-brand/60 rounded-full"
                           style={{ width: `${(row.sent / maxSent) * 100}%` }}
                         />
                       </div>
                     </td>
-                    <td className="py-1.5 pr-3 text-fg-muted font-mono">{row.delivered > 0 ? row.delivered : <span className="text-fg-faint">—</span>}</td>
-                    <td className={`py-1.5 pr-3 font-mono ${row.bounced > 0 ? "text-warning/70" : "text-fg-faint"}`}>{row.bounced > 0 ? row.bounced : "—"}</td>
-                    <td className={`py-1.5 font-mono ${row.complained > 0 ? "text-destructive/70" : "text-fg-faint"}`}>{row.complained > 0 ? row.complained : "—"}</td>
+                    <td className="py-1.5 pr-3 text-fg-muted tabular-nums">{row.delivered > 0 ? row.delivered : "—"}</td>
+                    <td className={`py-1.5 pr-3 tabular-nums ${row.bounced > 0 ? "text-warning" : "text-fg-muted"}`}>{row.bounced > 0 ? row.bounced : "—"}</td>
+                    <td className={`py-1.5 tabular-nums ${row.complained > 0 ? "text-destructive" : "text-fg-muted"}`}>{row.complained > 0 ? row.complained : "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
       )}
 
       {data && data.metrics.length === 0 && (
-        <p className="text-fg-muted text-sm">No CloudWatch data — the IAM role may need <code className="bg-surface px-1 rounded-md">cloudwatch:GetMetricData</code> permission.</p>
+        <div className="flex flex-col gap-1 text-sm">
+          <p className="text-fg-muted">No sending stats yet.</p>
+          <details className="text-fg-muted">
+            <summary className="cursor-pointer">Technical details</summary>
+            <p className="mt-1 text-xs">
+              If emails have gone out, the server role may be missing the{" "}
+              <code className="bg-surface px-1 rounded-md">cloudwatch:GetMetricData</code> permission.
+            </p>
+          </details>
+        </div>
       )}
 
       {/* Suppression list */}
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
-            <h2 className="text-sm font-semibold text-fg-muted uppercase tracking-wider">Suppression list</h2>
-            <p className="text-fg-faint text-xs mt-0.5">Emails SES won't deliver to due to bounce or complaint</p>
+            <h2 className="text-lg font-bold">Suppression list</h2>
+            <p className="text-fg-muted text-sm mt-0.5">Addresses SES won&apos;t deliver to after a bounce or complaint</p>
           </div>
-          <span className="text-fg-muted text-xs">{data?.suppressed.length ?? 0} total</span>
+          <span className="text-fg-muted text-sm">{data?.suppressed.length ?? 0} total</span>
         </div>
 
         {/* Filters */}
-        <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="Filter by email…"
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Input
+            type="search"
+            aria-label="Filter by email"
+            placeholder="Filter by email"
             value={suppressedFilter}
             onChange={e => setSuppressedFilter(e.target.value)}
-            className="flex-1 bg-surface border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder-white/25 focus:border-border-strong"
+            className="h-10 sm:h-9 sm:flex-1"
           />
-          {(["ALL", "BOUNCE", "COMPLAINT"] as const).map(r => (
-            <button
-              key={r}
-              onClick={() => setReasonFilter(r)}
-              className={`px-3 py-2 text-xs rounded-md transition-colors ${
-                reasonFilter === r
-                  ? "bg-surface-2 text-foreground"
-                  : "bg-surface text-fg-muted hover:text-foreground hover:bg-surface-2"
-              }`}
-            >
-              {r === "ALL" ? "All" : r === "BOUNCE" ? "Bounces" : "Complaints"}
-            </button>
-          ))}
+          <div className="flex flex-wrap gap-1" role="group" aria-label="Reason">
+            {(["ALL", "BOUNCE", "COMPLAINT"] as const).map(r => (
+              <Button
+                key={r}
+                size="sm"
+                variant={reasonFilter === r ? "secondary" : "ghost"}
+                aria-pressed={reasonFilter === r}
+                className="h-10 sm:h-9"
+                onClick={() => setReasonFilter(r)}
+              >
+                {r === "ALL" ? "All" : r === "BOUNCE" ? "Bounces" : "Complaints"}
+              </Button>
+            ))}
+          </div>
         </div>
 
         {filteredSuppressed.length === 0 ? (
-          <p className="text-fg-muted text-sm">{data?.suppressed.length === 0 ? "No suppressed emails." : "No matches."}</p>
+          <p className="text-fg-muted text-sm">{data?.suppressed.length === 0 ? "No suppressed addresses." : "No addresses match this filter."}</p>
         ) : (
-          <div className="bg-surface border border-border rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-fg-muted text-xs border-b border-border">
-                  <th className="text-left px-4 py-2.5 font-medium">Email</th>
-                  <th className="text-left px-4 py-2.5 font-medium">Reason</th>
-                  <th className="text-left px-4 py-2.5 font-medium">Last updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredSuppressed.map(s => (
-                  <tr key={s.email} className="border-b border-border last:border-0">
-                    <td className="px-4 py-2.5 text-fg-secondary font-mono text-xs">{s.email}</td>
-                    <td className="px-4 py-2.5">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        s.reason === "COMPLAINT"
-                          ? "bg-destructive/10 text-destructive/80"
-                          : "bg-warning/10 text-warning/80"
-                      }`}>
-                        {s.reason}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-fg-muted text-xs font-mono">
-                      {s.lastUpdated ? new Date(s.lastUpdated).toLocaleString() : "—"}
-                    </td>
+          <>
+            {/* Phones: one card per address */}
+            <ul className="flex flex-col gap-2 sm:hidden">
+              {filteredSuppressed.map(s => (
+                <li key={s.email} className="flex flex-col gap-1 rounded-xl border border-border bg-surface p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0 break-all font-mono text-sm text-fg-secondary">{s.email}</span>
+                    <ReasonBadge reason={s.reason} />
+                  </div>
+                  <span className="text-xs text-fg-muted">
+                    {s.lastUpdated ? new Date(s.lastUpdated).toLocaleString() : "—"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <div className="hidden sm:block bg-surface border border-border rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-fg-muted text-xs border-b border-border">
+                    <th className="text-left px-4 py-2.5 font-medium">Email</th>
+                    <th className="text-left px-4 py-2.5 font-medium">Reason</th>
+                    <th className="text-left px-4 py-2.5 font-medium">Last updated</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {filteredSuppressed.map(s => (
+                    <tr key={s.email} className="border-b border-border last:border-0">
+                      <td className="px-4 py-2.5 text-left text-fg-secondary font-mono text-xs">{s.email}</td>
+                      <td className="px-4 py-2.5 text-left"><ReasonBadge reason={s.reason} /></td>
+                      <td className="px-4 py-2.5 text-left text-fg-muted text-xs tabular-nums">
+                        {s.lastUpdated ? new Date(s.lastUpdated).toLocaleString() : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
-      </div>
+      </section>
 
     </div>
   )

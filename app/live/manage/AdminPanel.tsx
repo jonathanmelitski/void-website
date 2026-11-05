@@ -1,32 +1,60 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import dynamic from "next/dynamic"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
+import { Field } from "@/components/ui/field"
+import { NativeSelect } from "@/components/ui/native-select"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog"
 import { DataTable, ColumnDef } from "@/components/ui/data-table"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { SimpleEditor } from "@/components/tiptap-templates/simple/simple-editor"
 import type { Editor } from "@tiptap/react"
 import { Spinner } from "@/components/ui/spinner"
+import { apiFetch } from "@/lib/api-fetch"
+import { useAuth } from "@/lib/use-auth"
+import { toast } from "@/components/ui/sonner"
+import { CONNECTION_HINT, deleteMany, friendlyError } from "./api-helpers"
+
+// Tiptap is heavy; only load it when the invite-email dialog opens.
+const SimpleEditor = dynamic(
+  () => import("@/components/tiptap-templates/simple/simple-editor").then(m => m.SimpleEditor),
+  { ssr: false, loading: () => <Skeleton className="h-64 w-full rounded-none" /> },
+)
 
 type UserRow = { username: string; email: string; enabled: boolean; status: string; role: string }
 
-const ROLE_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
-  ADMIN: "default", COACH: "secondary", USER: "outline",
+const ROLES = ["USER", "COACH", "ADMIN"] as const
+const ROLE_LABEL: Record<string, string> = { USER: "User", COACH: "Coach", ADMIN: "Admin" }
+const ROLE_RANK: Record<string, number> = { USER: 0, COACH: 1, ADMIN: 2 }
+
+const STATUS_LABEL: Record<string, string> = {
+  CONFIRMED: "Active",
+  FORCE_CHANGE_PASSWORD: "Invited",
+  RESET_REQUIRED: "Reset required",
+  UNCONFIRMED: "Unconfirmed",
 }
 
+function RoleOptions() {
+  return ROLES.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)
+}
+
+type PendingRole = { user: UserRow; role: string; isSelf: boolean }
+
 export function AdminPanel() {
+  const { user: me } = useAuth()
   const [users, setUsers] = useState<UserRow[]>([])
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(true)
+
+  // Role change state
+  const [pendingRole, setPendingRole] = useState<PendingRole | null>(null)
+  const [savingRoleFor, setSavingRoleFor] = useState<string | null>(null)
 
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<UserRow[] | null>(null)
@@ -62,56 +90,87 @@ export function AdminPanel() {
 
   function loadUsers() {
     setIsLoading(true)
-    fetch("/api/admin/users")
+    apiFetch("/api/admin/users")
       .then(r => r.json())
-      .then(data => { if (Array.isArray(data)) setUsers(data); else setError(data.error ?? "Failed to load users") })
-      .catch(() => setError("Failed to load users"))
+      .then(data => { if (Array.isArray(data)) setUsers(data); else setError("Couldn't load users. Reload to try again.") })
+      .catch(() => setError(`Couldn't load users. ${CONNECTION_HINT}`))
       .finally(() => setIsLoading(false))
   }
 
-  async function handleRoleChange(username: string, role: string) {
-    setUsers(prev => prev.map(u => u.username === username ? { ...u, role } : u))
-    const res = await fetch("/api/admin/assign-role", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, role }),
-    })
-    if (!res.ok) { const d = await res.json(); setError(d.error ?? "Failed to update role") }
+  function isSelf(u: UserRow) {
+    if (!me) return false
+    return u.username === me.username || (!!u.email && u.email.toLowerCase() === me.email?.toLowerCase())
   }
 
-  async function handleDelete(targets: UserRow[], clearSelection: () => void) {
-    setIsDeleting(true)
+  function requestRoleChange(u: UserRow, role: string) {
+    if (role === u.role) return
+    const self = isSelf(u)
+    const demoting = (ROLE_RANK[role] ?? 0) < (ROLE_RANK[u.role] ?? 0)
+    if (self || demoting) {
+      setPendingRole({ user: u, role, isSelf: self })
+      return
+    }
+    void applyRoleChange(u, role)
+  }
+
+  async function applyRoleChange(u: UserRow, role: string) {
+    const previous = u.role
+    setSavingRoleFor(u.username)
+    setUsers(prev => prev.map(x => x.username === u.username ? { ...x, role } : x))
     try {
-      await Promise.all(targets.map(u =>
-        fetch("/api/admin/delete-user", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: u.username }),
-        })
-      ))
-      const deletedUsernames = new Set(targets.map(u => u.username))
-      setUsers(prev => prev.filter(u => !deletedUsernames.has(u.username)))
-      clearSelection()
+      const res = await apiFetch("/api/admin/assign-role", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u.username, role }),
+        waitForSession: true,
+      })
+      if (!res.ok) {
+        setUsers(prev => prev.map(x => x.username === u.username ? { ...x, role: previous } : x))
+        toast.error(await friendlyError(res, `Couldn't change ${u.email || "the user"}'s role. Try again.`))
+        return
+      }
+      toast.success(`${u.email || "User"} is now ${ROLE_LABEL[role] ?? role}`)
     } catch {
-      setError("Failed to delete user(s)")
+      setUsers(prev => prev.map(x => x.username === u.username ? { ...x, role: previous } : x))
+      toast.error(`Couldn't change the role. ${CONNECTION_HINT}`)
     } finally {
-      setIsDeleting(false)
-      setDeleteTarget(null)
+      setSavingRoleFor(null)
+      setPendingRole(null)
     }
   }
 
-  async function handleInvite() {
-    if (!inviteEmail.trim()) return
+  async function handleDelete(targets: UserRow[]) {
+    setIsDeleting(true)
+    const deleted = await deleteMany(
+      targets,
+      u => apiFetch("/api/admin/delete-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u.username }),
+        waitForSession: true,
+      }),
+      { one: "user", many: "users" },
+    )
+    const deletedUsernames = new Set(deleted.map(u => u.username))
+    if (deletedUsernames.size > 0) setUsers(prev => prev.filter(u => !deletedUsernames.has(u.username)))
+    setIsDeleting(false)
+    setDeleteTarget(null)
+  }
+
+  async function handleInvite(e?: React.FormEvent) {
+    e?.preventDefault()
+    if (!inviteEmail.trim()) { setInviteError("Enter an email address."); return }
     setIsInviting(true)
     setInviteError("")
     try {
-      const res = await fetch("/api/admin/invite-user", {
+      const res = await apiFetch("/api/admin/invite-user", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+        waitForSession: true,
       })
+      if (!res.ok) { setInviteError(await friendlyError(res, "Couldn't send the invite. Check the address and try again.")); return }
       const data = await res.json()
-      if (!res.ok) { setInviteError(data.error ?? "Failed to invite user"); return }
       const newUser: UserRow = {
         username: data.username,
         email: data.email,
@@ -121,30 +180,33 @@ export function AdminPanel() {
       }
       setUsers(prev => [newUser, ...prev])
       setInviteEmail("")
+      toast.success(`Invite sent to ${data.email}`)
     } catch {
-      setInviteError("Failed to invite user")
+      setInviteError(`Couldn't send the invite. ${CONNECTION_HINT}`)
     } finally {
       setIsInviting(false)
     }
   }
 
-  async function handleBulkInvite() {
+  async function handleBulkInvite(e: React.FormEvent) {
+    e.preventDefault()
+    if (!bulkText.trim()) return
     setIsBulkInviting(true)
     setBulkSummary(null)
     try {
-      const res = await fetch("/api/admin/invite-bulk", {
+      const res = await apiFetch("/api/admin/invite-bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ emails: bulkText, role: bulkRole }),
+        waitForSession: true,
       })
-      const data = await res.json()
       if (!res.ok) {
-        setBulkSummary({ succeeded: [], failed: [{ email: "", error: data.error ?? "Request failed" }] })
+        setBulkSummary({ succeeded: [], failed: [{ email: "", error: await friendlyError(res, "Couldn't send the invites. Try again.") }] })
         return
       }
-      setBulkSummary(data)
+      setBulkSummary(await res.json())
     } catch {
-      setBulkSummary({ succeeded: [], failed: [{ email: "", error: "Request failed" }] })
+      setBulkSummary({ succeeded: [], failed: [{ email: "", error: `Couldn't send the invites. ${CONNECTION_HINT}` }] })
     } finally {
       setIsBulkInviting(false)
     }
@@ -154,8 +216,8 @@ export function AdminPanel() {
     setBulkOpen(false)
     setBulkText("")
     setBulkRole("USER")
+    if (bulkSummary) loadUsers()
     setBulkSummary(null)
-    loadUsers()
   }
 
   async function openTemplateDialog() {
@@ -164,16 +226,16 @@ export function AdminPanel() {
     setTemplateSaved(false)
     setIsTemplateLoading(true)
     try {
-      const res = await fetch("/api/admin/invite-template")
-      const data = await res.json()
+      const res = await apiFetch("/api/admin/invite-template")
       if (res.ok) {
+        const data = await res.json()
         setTemplateSubject(data.subject)
         setTemplateBody(data.bodyHtml)
       } else {
-        setTemplateError(data.error ?? `Error ${res.status}`)
+        setTemplateError(await friendlyError(res, "Couldn't load the invite email. Close and try again."))
       }
-    } catch (err) {
-      setTemplateError(err instanceof Error ? err.message : "Failed to load template")
+    } catch {
+      setTemplateError(`Couldn't load the invite email. ${CONNECTION_HINT}`)
     } finally {
       setIsTemplateLoading(false)
     }
@@ -185,94 +247,116 @@ export function AdminPanel() {
     setTemplateError("")
     setTemplateSaved(false)
     try {
-      const res = await fetch("/api/admin/invite-template", {
+      const res = await apiFetch("/api/admin/invite-template", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subject: templateSubject, bodyHtml: html }),
+        waitForSession: true,
       })
-      const data = await res.json()
-      if (!res.ok) { setTemplateError(data.error ?? "Failed to save template"); return }
+      if (!res.ok) { setTemplateError(await friendlyError(res, "Couldn't save the invite email. Try again.")); return }
       setTemplateSaved(true)
+      toast.success("Invite email saved")
     } catch {
-      setTemplateError("Failed to save template")
+      setTemplateError(`Couldn't save the invite email. ${CONNECTION_HINT}`)
     } finally {
       setIsSavingTemplate(false)
     }
   }
 
+  function roleSelect(u: UserRow, className?: string) {
+    return (
+      <NativeSelect
+        aria-label={`Role for ${u.email || u.username}`}
+        value={u.role}
+        disabled={savingRoleFor === u.username}
+        onChange={e => requestRoleChange(u, e.target.value)}
+        className={className ?? "w-28"}
+      >
+        <RoleOptions />
+      </NativeSelect>
+    )
+  }
+
+  function statusBadge(u: UserRow) {
+    return (
+      <Badge variant="outline" className="shrink-0 text-xs text-fg-muted border-border">
+        {STATUS_LABEL[u.status] ?? u.status}
+      </Badge>
+    )
+  }
+
   const columns: ColumnDef<UserRow>[] = [
-    { header: "Email", cell: u => u.email || u.username },
     {
-      header: "Status",
+      header: "Email",
       cell: u => (
-        <Badge variant="outline" className="text-xs text-fg-muted border-border">{u.status}</Badge>
+        <span>
+          {u.email || u.username}
+          {isSelf(u) && <span className="ml-2 text-xs text-fg-muted">(you)</span>}
+        </span>
       ),
     },
-    {
-      header: "Role",
-      cell: u => (
-        <div className="flex items-center gap-2">
-          <Badge variant={ROLE_VARIANT[u.role] ?? "outline"}>{u.role}</Badge>
-          <Select value={u.role} onValueChange={role => handleRoleChange(u.username, role)}>
-            <SelectTrigger size="sm" className="w-24 bg-surface border-border text-foreground">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="USER">USER</SelectItem>
-              <SelectItem value="COACH">COACH</SelectItem>
-              <SelectItem value="ADMIN">ADMIN</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      ),
-    },
+    { header: "Status", cell: u => statusBadge(u) },
+    { header: "Role", cell: u => roleSelect(u) },
   ]
 
   if (error) return <p className="text-sm text-destructive">{error}</p>
 
+  const pendingDemotesSelfAdmin = pendingRole?.isSelf && pendingRole.user.role === "ADMIN"
+
   return (
     <div className="flex flex-col gap-4 text-left">
       {/* Invite controls */}
-      <div className="flex flex-col gap-2">
-        <Label className="text-sm text-fg-secondary">Invite user</Label>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Input
-            type="email"
-            placeholder="user@example.com"
-            value={inviteEmail}
-            onChange={e => setInviteEmail(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") handleInvite() }}
-            className="bg-surface border-border text-foreground placeholder:text-fg-faint max-w-xs"
-          />
-          <Select value={inviteRole} onValueChange={setInviteRole}>
-            <SelectTrigger size="sm" className="w-28 bg-surface border-border text-foreground">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="USER">USER</SelectItem>
-              <SelectItem value="COACH">COACH</SelectItem>
-              <SelectItem value="ADMIN">ADMIN</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button size="sm" onClick={handleInvite} disabled={isInviting || !inviteEmail.trim()}>
-            {isInviting ? "Inviting…" : "Invite"}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setBulkOpen(true)}>
-            Bulk invite
-          </Button>
-          <Button size="sm" variant="ghost" className="text-fg-muted hover:text-foreground" onClick={openTemplateDialog}>
-            Customize email
+      <form onSubmit={handleInvite} noValidate className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+          <Field label="Invite user" error={inviteError} className="w-full sm:w-72">
+            <Input
+              type="email"
+              placeholder="name@example.com"
+              value={inviteEmail}
+              onChange={e => setInviteEmail(e.target.value)}
+              className="h-10 sm:h-9"
+            />
+          </Field>
+          <NativeSelect
+            aria-label="Role for the invite"
+            value={inviteRole}
+            onChange={e => setInviteRole(e.target.value)}
+            className="w-28 [&>select]:h-10 sm:[&>select]:h-9"
+          >
+            <RoleOptions />
+          </NativeSelect>
+          <Button type="submit" className="h-10 sm:h-9" loading={isInviting}>
+            Send invite
           </Button>
         </div>
-        {inviteError && <p className="text-xs text-destructive">{inviteError}</p>}
-      </div>
+        <div className="-ml-3 flex flex-wrap items-center">
+          <Button type="button" size="sm" variant="ghost" className="h-10 sm:h-8" onClick={() => setBulkOpen(true)}>
+            Bulk invite
+          </Button>
+          <Button type="button" size="sm" variant="ghost" className="h-10 sm:h-8" onClick={openTemplateDialog}>
+            Customize invite email
+          </Button>
+        </div>
+      </form>
 
       <DataTable
         columns={columns}
         data={users}
         isLoading={isLoading}
-        emptyMessage="No users found."
+        emptyMessage="No users yet. Invite someone above."
         getRowKey={u => u.username}
+        mobileCard={u => (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-start justify-between gap-2">
+              <p className="min-w-0 break-all font-medium">
+                {u.email || u.username}
+                {isSelf(u) && <span className="ml-2 text-xs font-normal text-fg-muted">(you)</span>}
+              </p>
+              {statusBadge(u)}
+            </div>
+            {roleSelect(u, "w-full [&>select]:h-10")}
+          </div>
+        )}
         toolbar={(selectedRows, clearSelection) => {
           clearFnRef.current = clearSelection
           if (selectedRows.length === 0) return null
@@ -288,19 +372,44 @@ export function AdminPanel() {
       />
 
       <ConfirmDialog
+        open={pendingRole !== null}
+        onOpenChange={open => { if (!open && !savingRoleFor) setPendingRole(null) }}
+        title={pendingRole?.isSelf ? "Change your own role?" : `Make ${pendingRole?.user.email || "this user"} ${ROLE_LABEL[pendingRole?.role ?? ""] ?? ""}?`}
+        description={
+          pendingRole?.isSelf
+            ? pendingDemotesSelfAdmin
+              ? "You'll lose admin access right away, including Users, Audit, Marketing and Live Server. Another admin will have to restore it."
+              : `Your role changes to ${ROLE_LABEL[pendingRole.role] ?? pendingRole.role}.`
+            : <>
+                <span className="font-medium text-foreground">{pendingRole?.user.email || pendingRole?.user.username}</span>{" "}
+                goes from {ROLE_LABEL[pendingRole?.user.role ?? ""]} to {ROLE_LABEL[pendingRole?.role ?? ""]} and loses access that comes with their current role.
+              </>
+        }
+        confirmLabel={pendingRole?.isSelf ? "Change my role" : `Make ${ROLE_LABEL[pendingRole?.role ?? ""] ?? ""}`}
+        destructive
+        isLoading={savingRoleFor !== null}
+        onConfirm={() => pendingRole && applyRoleChange(pendingRole.user, pendingRole.role)}
+      />
+
+      <ConfirmDialog
         open={deleteTarget !== null}
-        onOpenChange={open => { if (!open) setDeleteTarget(null) }}
+        onOpenChange={open => { if (!open && !isDeleting) setDeleteTarget(null) }}
         title={`Delete ${deleteTarget && deleteTarget.length > 1 ? `${deleteTarget.length} users` : "user"}?`}
-        description="This will permanently remove the user(s) from Cognito. This action cannot be undone."
+        description={
+          deleteTarget?.length === 1
+            ? <><span className="font-medium text-foreground">{deleteTarget[0].email || deleteTarget[0].username}</span> loses access to Void Live. This can&apos;t be undone.</>
+            : "These users lose access to Void Live. This can't be undone."
+        }
+        confirmLabel={deleteTarget && deleteTarget.length > 1 ? `Delete ${deleteTarget.length} users` : "Delete user"}
         isLoading={isDeleting}
-        onConfirm={() => deleteTarget && handleDelete(deleteTarget, clearFnRef.current)}
+        onConfirm={() => deleteTarget && handleDelete(deleteTarget)}
       />
 
       {/* Bulk invite dialog */}
-      <Dialog open={bulkOpen} onOpenChange={open => { if (!open) handleBulkDismiss() }}>
+      <Dialog open={bulkOpen} onOpenChange={open => { if (!open && !isBulkInviting) handleBulkDismiss() }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Bulk invite users</DialogTitle>
+            <DialogTitle>Bulk invite</DialogTitle>
           </DialogHeader>
 
           {bulkSummary ? (
@@ -323,36 +432,27 @@ export function AdminPanel() {
               </DialogFooter>
             </div>
           ) : (
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-sm text-fg-secondary">Emails</Label>
-                <textarea
-                  className="min-h-32 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-fg-faint resize-none"
-                  placeholder="One email per line, or comma-separated"
+            <form onSubmit={handleBulkInvite} noValidate className="flex flex-col gap-4">
+              <Field label="Emails" hint="One per line, or comma-separated">
+                <Textarea
+                  className="min-h-32 resize-none"
+                  placeholder="name@example.com"
                   value={bulkText}
                   onChange={e => setBulkText(e.target.value)}
                 />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-sm text-fg-secondary">Role</Label>
-                <Select value={bulkRole} onValueChange={setBulkRole}>
-                  <SelectTrigger className="bg-surface border-border text-foreground w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="USER">USER</SelectItem>
-                    <SelectItem value="COACH">COACH</SelectItem>
-                    <SelectItem value="ADMIN">ADMIN</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={handleBulkDismiss}>Cancel</Button>
-                <Button onClick={handleBulkInvite} disabled={isBulkInviting || !bulkText.trim()}>
-                  {isBulkInviting ? "Inviting…" : "Invite all"}
+              </Field>
+              <Field label="Role" className="w-40">
+                <NativeSelect value={bulkRole} onChange={e => setBulkRole(e.target.value)}>
+                  <RoleOptions />
+                </NativeSelect>
+              </Field>
+              <DialogFooter className="pt-2">
+                <Button type="button" variant="ghost" onClick={handleBulkDismiss} disabled={isBulkInviting}>Cancel</Button>
+                <Button type="submit" loading={isBulkInviting} disabled={!bulkText.trim()}>
+                  Send invites
                 </Button>
               </DialogFooter>
-            </div>
+            </form>
           )}
         </DialogContent>
       </Dialog>
@@ -387,22 +487,19 @@ export function AdminPanel() {
                 ))}
               </div>
 
-              {/* Subject */}
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-xs text-fg-muted">Subject</Label>
+              <Field label="Subject">
                 <Input
                   value={templateSubject}
                   onChange={e => setTemplateSubject(e.target.value)}
                   placeholder="You're invited to Void Live"
-                  className="bg-surface border-border text-foreground placeholder:text-fg-faint"
                 />
-              </div>
+              </Field>
 
               {/* Body */}
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs text-fg-muted">
-                  Body <span className="text-fg-faint font-normal">— must include {"{username}"} and {"{####}"}</span>
-                </Label>
+                <p className="text-sm font-medium text-fg-secondary">
+                  Body <span className="text-fg-muted font-normal">— must include {"{username}"} and {"{####}"}</span>
+                </p>
                 <div className="rounded-xl border border-border overflow-hidden">
                   <SimpleEditor
                     key={templateBody}
@@ -413,18 +510,18 @@ export function AdminPanel() {
                 </div>
               </div>
 
-              {templateError && <p className="text-xs text-destructive">{templateError}</p>}
+              {templateError && <p role="alert" className="text-sm text-destructive">{templateError}</p>}
             </div>
           )}
 
-          <div className="px-6 pb-6 pt-3 flex items-center justify-between shrink-0 border-t border-border">
+          <div className="px-6 pb-6 pt-3 flex flex-wrap items-center justify-between gap-2 shrink-0 border-t border-border">
             <span className="text-xs text-fg-muted">
-              {templateSaved ? "Saved" : "Changes will apply to all future invites"}
+              {templateSaved ? "Saved" : "Changes apply to all future invites"}
             </span>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setTemplateOpen(false)}>Cancel</Button>
-              <Button onClick={handleSaveTemplate} disabled={isSavingTemplate || !templateSubject.trim()}>
-                {isSavingTemplate ? "Saving…" : "Save template"}
+              <Button variant="ghost" onClick={() => setTemplateOpen(false)}>Cancel</Button>
+              <Button onClick={handleSaveTemplate} loading={isSavingTemplate} disabled={!templateSubject.trim()}>
+                Save changes
               </Button>
             </div>
           </div>

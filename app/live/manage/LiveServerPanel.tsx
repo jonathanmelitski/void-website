@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { StepProgress } from "@/components/ui/step-progress"
 import type { StepDef } from "@/lib/step-types"
 import type { LiveServerInfo } from "@/app/api/live-server/route"
-import { Spinner } from "@/components/ui/spinner"
+import { Skeleton } from "@/components/ui/skeleton"
 
 const STATUS_DOT: Record<string, string> = {
   online:   "bg-success",
@@ -134,18 +134,25 @@ export function LiveServerPanel() {
   }
 
   const status = info?.status ?? "offline"
-  const canStart = !acting && status === "offline"
-  const canStop = !acting && (status === "online" || status === "unhealthy" || status === "starting")
-  const canDestroy = !acting
+  // Nothing is actionable until the first status arrives
+  const ready = !loading && info !== null
+  const canStart = ready && !acting && status === "offline"
+  const canStop = ready && !acting && (status === "online" || status === "unhealthy" || status === "starting")
+  const canDestroy = ready && !acting
 
   return (
-    <section className="flex flex-col gap-6 max-w-lg">
-      <h2 className="text-lg font-bold">Live Server</h2>
+    <section className="flex flex-col gap-6 max-w-lg text-left">
+      <h2 className="text-lg font-bold">Live server</h2>
 
       {/* Status card */}
       <div className="border border-border rounded-xl p-5 flex flex-col gap-4">
         {loading ? (
-          <Spinner size="md" />
+          <div className="flex flex-col gap-3" aria-busy="true" aria-label="Loading server status">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-48" />
+          </div>
+        ) : !info ? (
+          <p className="text-sm text-destructive">Couldn&apos;t read the server status. It retries every few seconds.</p>
         ) : (
           <>
             <div className="flex items-center gap-3">
@@ -179,11 +186,11 @@ export function LiveServerPanel() {
       {/* Actions */}
       <div className="flex items-center gap-3 flex-wrap">
         <Button size="sm" disabled={!canStart} onClick={() => runAction("start")}>
-          {acting && status === "offline" ? "Starting…" : "Start Server"}
+          {acting && status === "offline" ? "Starting…" : "Start server"}
         </Button>
 
         <Button size="sm" variant="destructive" disabled={!canStop} onClick={() => runAction("stop")}>
-          {acting && status !== "offline" ? "Stopping…" : "Stop Server"}
+          {acting && status !== "offline" ? "Stopping…" : "Stop server"}
         </Button>
 
         <Button
@@ -193,7 +200,7 @@ export function LiveServerPanel() {
           onClick={handleDestroyClick}
           className={confirmingDestroy ? "text-destructive border border-destructive/40 animate-pulse" : "text-fg-muted hover:text-destructive"}
         >
-          {acting ? "Destroying…" : confirmingDestroy ? "Confirm — click again" : "Destroy All"}
+          {acting ? "Working…" : confirmingDestroy ? "Click again to destroy all" : "Destroy all"}
         </Button>
       </div>
 
@@ -205,7 +212,15 @@ export function LiveServerPanel() {
       )}
 
       {/* Error */}
-      {error && <p className="text-destructive text-sm">{error}</p>}
+      {error && (
+        <div role="alert" className="flex flex-col gap-1 text-sm">
+          <p className="text-destructive">The last server action failed. Try again, or use Destroy all to clean up.</p>
+          <details className="text-fg-muted">
+            <summary className="cursor-pointer">Technical details</summary>
+            <p className="mt-1 font-mono text-xs break-all">{error}</p>
+          </details>
+        </div>
+      )}
 
       {/* Logs */}
       {status !== "offline" && (
@@ -217,7 +232,7 @@ export function LiveServerPanel() {
             onClick={handleFetchLogs}
             className="self-start text-fg-muted hover:text-foreground"
           >
-            {fetchingLogs ? "Fetching logs…" : "Fetch Logs"}
+            {fetchingLogs ? "Fetching logs…" : "Fetch logs"}
           </Button>
           {logs && (
             <pre className="text-xs text-fg-secondary bg-surface border border-border rounded-xl p-4 overflow-auto max-h-96 whitespace-pre-wrap break-all">
@@ -229,7 +244,7 @@ export function LiveServerPanel() {
 
       <p className="text-fg-muted text-xs">
         Start before a game goes live, stop when it ends.
-        Use <span className="text-fg-muted">Destroy All</span> to force-clean any orphaned AWS resources (EIPs, instances, SG, DNS) — even from failed starts.
+        Use <span className="text-fg-secondary">Destroy all</span> to force-clean any orphaned AWS resources (EIPs, instances, SG, DNS) — even from failed starts.
       </p>
     </section>
   )

@@ -2,73 +2,82 @@
 
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
+import { Field } from "@/components/ui/field"
+import { NativeSelect } from "@/components/ui/native-select"
+import { apiFetch } from "@/lib/api-fetch"
+import { toast } from "@/components/ui/sonner"
 import type { EventItem } from "@/lib/aws/dynamo"
+import { CONNECTION_HINT, friendlyError } from "./api-helpers"
 
 export function UserPanel() {
   const [events, setEvents] = useState<EventItem[]>([])
   const [selectedEventId, setSelectedEventId] = useState("")
   const [file, setFile] = useState<File | null>(null)
-  const [status, setStatus] = useState<"idle" | "uploading" | "done" | "error">("idle")
+  const [fileKey, setFileKey] = useState(0)
+  const [status, setStatus] = useState<"idle" | "uploading" | "error">("idle")
   const [message, setMessage] = useState("")
 
   useEffect(() => {
-    fetch("/api/events").then(r => r.json()).then(data => {
+    apiFetch("/api/events").then(r => r.json()).then(data => {
       if (Array.isArray(data)) setEvents(data)
-    })
+    }).catch(() => setMessage(`Couldn't load events. ${CONNECTION_HINT}`))
   }, [])
 
   async function handleUpload() {
-    if (!file || !selectedEventId) { setMessage("Select an event and a photo first"); setStatus("error"); return }
+    if (!file || !selectedEventId) { setMessage("Pick an event and a photo first."); setStatus("error"); return }
     setStatus("uploading"); setMessage("")
     try {
-      const presignRes = await fetch("/api/upload/presign", {
+      const presignRes = await apiFetch("/api/upload/presign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ eventId: selectedEventId, filename: file.name, contentType: file.type }),
+        waitForSession: true,
       })
-      if (!presignRes.ok) { const d = await presignRes.json(); setMessage(d.error ?? "Failed to get upload URL"); setStatus("error"); return }
+      if (!presignRes.ok) { setMessage(await friendlyError(presignRes, "Couldn't start the upload. Try again.")); setStatus("error"); return }
       const { url } = await presignRes.json()
       const uploadRes = await fetch(url, { method: "PUT", body: file, headers: { "Content-Type": file.type } })
-      if (!uploadRes.ok) { setMessage("Upload failed"); setStatus("error"); return }
-      setMessage("Photo uploaded successfully.")
-      setStatus("done")
+      if (!uploadRes.ok) { setMessage("The photo didn't upload. Try again."); setStatus("error"); return }
+      toast.success("Photo uploaded")
+      setStatus("idle")
       setFile(null)
+      setFileKey(k => k + 1) // clear the file input
     } catch {
-      setMessage("An unexpected error occurred")
+      setMessage(`The photo didn't upload. ${CONNECTION_HINT}`)
       setStatus("error")
     }
   }
 
   return (
-    <div className="flex flex-col gap-5 text-left">
-      <div className="flex flex-col gap-1.5">
-        <Label className="text-fg-secondary">Event</Label>
-        <select
+    <div className="flex max-w-md flex-col gap-5 text-left">
+      <Field label="Event">
+        <NativeSelect
           value={selectedEventId}
           onChange={e => setSelectedEventId(e.target.value)}
-          className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-foreground"
+          className="[&>select]:h-10 sm:[&>select]:h-9"
         >
-          <option value="">— choose an event —</option>
+          <option value="">Choose an event</option>
           {events.map(ev => <option key={ev.id} value={ev.id}>{ev.title}</option>)}
-        </select>
-      </div>
+        </NativeSelect>
+      </Field>
 
-      <div className="flex flex-col gap-1.5">
-        <Label className="text-fg-secondary">Photo</Label>
+      <Field label="Photo">
         <input
+          key={fileKey}
           type="file"
           accept="image/*"
           onChange={e => { setFile(e.target.files?.[0] ?? null); setStatus("idle"); setMessage("") }}
-          className="text-sm text-fg-secondary file:mr-3 file:rounded-md file:border-0 file:bg-surface-2 file:px-3 file:py-1 file:text-sm file:text-foreground hover:file:bg-surface-3"
+          className="text-sm text-fg-secondary file:mr-3 file:h-10 file:rounded-md file:border-0 file:bg-surface-2 file:px-3 file:text-sm file:text-foreground hover:file:bg-surface-3 sm:file:h-8"
         />
-      </div>
+      </Field>
 
-      {status === "uploading" && <p className="text-sm text-fg-muted">Uploading…</p>}
-      {status === "done" && <p className="text-sm text-success">{message}</p>}
-      {status === "error" && <p className="text-sm text-destructive">{message}</p>}
+      {message && <p role="alert" className="text-sm text-destructive">{message}</p>}
 
-      <Button onClick={handleUpload} disabled={status === "uploading" || !file || !selectedEventId} className="w-fit">
+      <Button
+        onClick={handleUpload}
+        loading={status === "uploading"}
+        disabled={!file || !selectedEventId}
+        className="h-10 w-fit sm:h-9"
+      >
         Upload photo
       </Button>
     </div>
