@@ -1,4 +1,9 @@
+import Image from "next/image"
+import Link from "next/link"
 import { EventCard } from "@/components/gallery/EventCard"
+import { Button } from "@/components/ui/button"
+import { PageContainer } from "@/components/ui/page"
+import teamPhoto from "@/public/void-team.png"
 import type { EventItem } from "@/lib/aws/dynamo"
 
 async function getRecentEvents(): Promise<EventItem[]> {
@@ -16,22 +21,70 @@ export default async function App() {
   const recentEvents = await getRecentEvents()
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col items-center gap-8 px-4 pb-16 pt-8 sm:px-6 lg:px-8">
-      <h1 className="font-display text-6xl leading-none tracking-wide text-center pt-12 pb-4 md:text-8xl">
-        Void Ultimate
-      </h1>
-      <b className="text-lg text-center">
-        Men&apos;s Club Ultimate Frisbee (Void) is a student group open to all students at the University of Pennsylvania. Void was founded in 1976 and is the longest continuously-run Ultimate program in Philadelphia. We compete as a D1 Men&apos;s College Ultimate program. Our program has won one national championship (1985) and has alumni playing at the highest levels of club and professionally in the UFA.
-      </b>
+    <PageContainer className="flex flex-col gap-16 md:gap-24">
+      <section aria-labelledby="home-title" className="grid items-center gap-10 pt-4 md:pt-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-14">
+        <div className="flex flex-col gap-6">
+          {/* Stacked on purpose: one line of Bebas at this size overflows phones and the half-width hero column. */}
+          <h1 id="home-title" className="font-display text-8xl leading-[0.82] tracking-wide text-foreground xl:text-9xl">
+            <span className="block">Void</span>
+            <span className="block">Ultimate</span>
+          </h1>
+          <p className="max-w-[34rem] text-lg leading-relaxed text-fg-secondary md:text-xl">
+            Penn&apos;s men&apos;s ultimate frisbee team. Founded in 1976, Void is the longest continuously run ultimate program in Philadelphia.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <Button asChild size="lg">
+              <Link href="/roster">Meet the roster</Link>
+            </Button>
+            <Button asChild size="lg" variant="outline" className="bg-background/60">
+              <Link href="/donate">Support the team</Link>
+            </Button>
+          </div>
+        </div>
+        <figure className="overflow-hidden rounded-xl border border-border bg-surface">
+          <Image
+            src={teamPhoto}
+            alt="The Void Ultimate team posing together on the field"
+            priority
+            placeholder="blur"
+            sizes="(min-width: 1024px) 560px, 100vw"
+            className="h-auto w-full object-cover"
+          />
+        </figure>
+      </section>
 
-      <b className="text-lg text-center">
-        We offer an A team and a B team, called Null. While Void is competitive in nature, we do not cut from the program. Anyone who wants to play on Null can. Our goals as a club are to introduce the sport and grow love for Ultimate on Null, and to compete at the highest levels on Void.
-      </b>
+      <section aria-labelledby="program-title" className="grid gap-6 border-t border-border pt-10 md:grid-cols-[minmax(0,14rem)_minmax(0,1fr)] md:gap-12">
+        <h2 id="program-title" className="font-display text-4xl leading-none tracking-wide text-foreground">
+          The program
+        </h2>
+        <div className="flex max-w-[65ch] flex-col gap-4 text-base leading-relaxed text-fg-secondary">
+          <p>
+            We compete as a D1 men&apos;s college ultimate program. Void won a national championship in 1985, and our alumni play at the highest levels of club ultimate and professionally in the UFA.
+          </p>
+          <p>
+            There are two teams: Void, our A team, and Null, our B team. Void is competitive, but we don&apos;t cut from the program &ndash; anyone at Penn who wants to play on Null can. Null is where people learn the sport and fall for it; Void is where we compete at the highest level.
+          </p>
+          <p>
+            New to ultimate? You&apos;re welcome. Reach us at{" "}
+            <a href="mailto:void.ultimate@gmail.com" className="text-foreground underline underline-offset-4 hover:text-brand-text">
+              void.ultimate@gmail.com
+            </a>
+            .
+          </p>
+        </div>
+      </section>
 
       {recentEvents.length > 0 && (
-        <section className="w-full mt-4">
-          <h2 className="mb-4 text-lg font-semibold">Recent events</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <section aria-labelledby="events-title" className="flex flex-col gap-6">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <h2 id="events-title" className="font-display text-4xl leading-none tracking-wide text-foreground">
+              Recent events
+            </h2>
+            <Link href="/news" className="text-sm font-medium text-fg-secondary underline-offset-4 hover:text-foreground hover:underline">
+              Read the news
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {recentEvents.map(event => (
               <EventCard key={event.id} event={{
                 id: event.id,
@@ -47,6 +100,6 @@ export default async function App() {
           </div>
         </section>
       )}
-    </div>
+    </PageContainer>
   )
 }
