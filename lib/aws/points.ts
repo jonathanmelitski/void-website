@@ -2,11 +2,10 @@ import {
   PutCommand,
   GetCommand,
   DeleteCommand,
-  QueryCommand,
   UpdateCommand,
-  ScanCommand,
 } from "@aws-sdk/lib-dynamodb"
 import { dynamo } from "./dynamo"
+import { queryAll, scanAll } from "./paginate"
 
 // DynamoDB table: VoidPoints
 // GSI: GameIdIndex — PK: gameId, SK: pointNumber (number, projects all)
@@ -31,28 +30,25 @@ export type PointItem = {
 }
 
 export async function listPointsByGame(gameId: string): Promise<PointItem[]> {
-  const result = await dynamo.send(
-    new QueryCommand({
-      TableName: TABLE(),
-      IndexName: "GameIdIndex",
-      KeyConditionExpression: "gameId = :gameId",
-      ExpressionAttributeValues: { ":gameId": gameId },
-      ScanIndexForward: true, // ascending by pointNumber
-    })
-  )
-  return (result.Items ?? []) as PointItem[]
+  return queryAll<PointItem>({
+    TableName: TABLE(),
+    IndexName: "GameIdIndex",
+    KeyConditionExpression: "gameId = :gameId",
+    ExpressionAttributeValues: { ":gameId": gameId },
+    ScanIndexForward: true, // ascending by pointNumber
+  })
 }
 
 // TODO: add PlayerIdIndex GSI to VoidPoints when roster grows significantly
+// (playerIds is a list, so this needs a denormalised point-player item; a list can't be a GSI key).
+// Until then: a full-table Scan, paged — the filter is applied per 1 MB page.
 export async function listPointsByPlayer(playerId: string): Promise<PointItem[]> {
-  const result = await dynamo.send(
-    new ScanCommand({
-      TableName: TABLE(),
-      FilterExpression: "contains(playerIds, :playerId)",
-      ExpressionAttributeValues: { ":playerId": playerId },
-    })
-  )
-  return ((result.Items ?? []) as PointItem[]).sort((a, b) => a.pointNumber - b.pointNumber)
+  const items = await scanAll<PointItem>({
+    TableName: TABLE(),
+    FilterExpression: "contains(playerIds, :playerId)",
+    ExpressionAttributeValues: { ":playerId": playerId },
+  })
+  return items.sort((a, b) => a.pointNumber - b.pointNumber)
 }
 
 export async function getPoint(id: string): Promise<PointItem | null> {
