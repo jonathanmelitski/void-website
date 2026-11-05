@@ -417,8 +417,8 @@ export default function LiveEventPage() {
 
       {/* Film viewer overlay */}
       {filmViewer && (
-        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col">
-          <div className="flex items-center gap-4 px-6 py-4 border-b border-border">
+        <div role="dialog" aria-modal="true" aria-label="Game film" className="fixed inset-0 z-50 bg-background flex flex-col">
+          <div className="flex items-center gap-4 px-4 sm:px-6 py-3 border-b border-border">
             <button
               onClick={() => setFilmViewer(null)}
               className="text-fg-muted hover:text-foreground text-sm transition-colors"
@@ -429,7 +429,7 @@ export default function LiveEventPage() {
               {filmViewer.clips.length > 1 ? `Game Film (${filmViewer.clips.length} clips)` : (filmViewer.clips[0]?.title ?? "Game Film")}
             </span>
           </div>
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
             <FilmViewer
               clips={filmViewer.clips}
               initialAnnotations={filmViewer.annotations}
