@@ -99,7 +99,6 @@ export default function ManageNewsletterPage() {
   const inFlightSaves = useRef<Set<Promise<void>>>(new Set())
 
   const isAdmin = user?.groups.includes("ADMIN") ?? false
-  const isCoachOrAdmin = user?.groups.includes("COACH") || user?.groups.includes("ADMIN")
 
   async function loadNewsletter() {
     try {

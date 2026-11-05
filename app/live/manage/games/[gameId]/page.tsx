@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { useRequireAuth } from "@/hooks/use-require-auth"
+import { apiFetch, errorMessage } from "@/lib/api-fetch"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { StepProgress } from "@/components/ui/step-progress"
@@ -13,6 +14,14 @@ import type { PlayerItem } from "@/lib/aws/players"
 import type { GamePlayerItem } from "@/lib/aws/game-players"
 import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
+
+// Scoring writes go through apiFetch: an expired session opens the in-place sign-in sheet and the
+// write continues after sign-in (waitForSession). Failures surface inline instead of being dropped.
+// Hook point for the future offline queue: these handlers are where mutations would be enqueued.
+const SCORING_WRITE = { waitForSession: true } as const
+function writeErrorText(err: unknown, fallback: string): string {
+  return err instanceof Error && (err.name === "NetworkError" || err.name === "SessionExpiredError") ? err.message : fallback
+}
 
 const STATUS_VARIANT: Record<GameStatus, "default" | "secondary" | "outline"> = {
   SCHEDULED: "outline",
@@ -391,9 +400,11 @@ function GameStatusControl({
   onUpdate: (g: GameItem) => void
 }) {
   const [saving, setSaving] = useState(false)
+  const [statusError, setStatusError] = useState("")
 
   async function setStatus(status: GameStatus) {
     setSaving(true)
+    setStatusError("")
     try {
       const body: Record<string, unknown> = { status }
       if (status === "FINAL") {
@@ -401,12 +412,16 @@ function GameStatusControl({
           : game.scoreVoid < game.scoreOpponent ? "LOSS"
           : "TIE"
       }
-      const res = await fetch(`/api/games/${game.id}`, {
+      const res = await apiFetch(`/api/games/${game.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        ...SCORING_WRITE,
       })
       if (res.ok) onUpdate(await res.json())
+      else setStatusError(await errorMessage(res, "Couldn't update the game. Try again."))
+    } catch (err) {
+      setStatusError(writeErrorText(err, "Couldn't update the game. Try again."))
     } finally {
       setSaving(false)
     }
@@ -430,6 +445,7 @@ function GameStatusControl({
       >
         {saving ? "…" : game.status === "SCHEDULED" ? "Start Game" : "End Game"}
       </Button>
+      {statusError && <p role="alert" className="text-destructive text-xs">{statusError}</p>}
     </div>
   )
 }
@@ -643,7 +659,8 @@ function ActivePointSection({
     setAddingEvent(true)
     setEventError("")
     try {
-      const res = await fetch("/api/point-events", {
+      const res = await apiFetch("/api/point-events", {
+        ...SCORING_WRITE,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -660,7 +677,8 @@ function ActivePointSection({
         onEventAdded(await res.json())
         if (eventType === "SUBSTITUTION" && opts.playerId && opts.playerInId) {
           const newIds = point.playerIds.filter(id => id !== opts.playerId).concat(opts.playerInId)
-          const pr = await fetch(`/api/points/${point.id}`, {
+          const pr = await apiFetch(`/api/points/${point.id}`, {
+            ...SCORING_WRITE,
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ playerIds: newIds }),
@@ -669,16 +687,25 @@ function ActivePointSection({
         }
         setLogStep(null)
       } else {
-        setEventError((await res.json()).error ?? "Failed to add event")
+        setEventError(await errorMessage(res, "Couldn't add the event. Try again."))
       }
+    } catch (err) {
+      setEventError(writeErrorText(err, "Couldn't add the event. Try again."))
     } finally {
       setAddingEvent(false)
     }
   }
 
   async function handleDeleteEvent(id: string) {
-    await fetch(`/api/point-events/${id}?gameId=${point.gameId}`, { method: "DELETE" })
-    onEventDeleted(id)
+    setEventError("")
+    try {
+      const res = await apiFetch(`/api/point-events/${id}?gameId=${point.gameId}`, { method: "DELETE", ...SCORING_WRITE })
+      // 404: already gone on the server, so dropping it locally is right
+      if (res.ok || res.status === 404) onEventDeleted(id)
+      else setEventError(await errorMessage(res, "Couldn't delete the event. Try again."))
+    } catch (err) {
+      setEventError(writeErrorText(err, "Couldn't delete the event. Try again."))
+    }
   }
 
   async function handleCompletePoint(voidScored: boolean) {
@@ -687,12 +714,17 @@ function ActivePointSection({
       : (point.lineType === "O" ? "BREAK" : "HOLD")
     setCompleting(true)
     try {
-      const res = await fetch(`/api/points/${point.id}`, {
+      setEventError("")
+      const res = await apiFetch(`/api/points/${point.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ outcome, status: "COMPLETE" }),
+        ...SCORING_WRITE,
       })
       if (res.ok) onPointCompleted(await res.json())
+      else setEventError(await errorMessage(res, "Couldn't finish the point. Try again."))
+    } catch (err) {
+      setEventError(writeErrorText(err, "Couldn't finish the point. Try again."))
     } finally {
       setCompleting(false)
     }
@@ -1239,7 +1271,8 @@ function CompletedPointRow({
     setAddingEvent(true)
     setEventError("")
     try {
-      const res = await fetch("/api/point-events", {
+      const res = await apiFetch("/api/point-events", {
+        ...SCORING_WRITE,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1257,7 +1290,8 @@ function CompletedPointRow({
         if (eventType === "SUBSTITUTION" && opts.playerId && opts.playerInId) {
           const newIds = point.playerIds.filter(id => id !== opts.playerId).concat(opts.playerInId)
           setEditPlayerIds(newIds)
-          const pr = await fetch(`/api/points/${point.id}`, {
+          const pr = await apiFetch(`/api/points/${point.id}`, {
+            ...SCORING_WRITE,
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ playerIds: newIds }),
@@ -1266,16 +1300,25 @@ function CompletedPointRow({
         }
         setLogStep(null)
       } else {
-        setEventError((await res.json()).error ?? "Failed to add event")
+        setEventError(await errorMessage(res, "Couldn't add the event. Try again."))
       }
+    } catch (err) {
+      setEventError(writeErrorText(err, "Couldn't add the event. Try again."))
     } finally {
       setAddingEvent(false)
     }
   }
 
   async function handleDeleteEvent(id: string) {
-    await fetch(`/api/point-events/${id}?gameId=${point.gameId}`, { method: "DELETE" })
-    onEventDeleted(id)
+    setEventError("")
+    try {
+      const res = await apiFetch(`/api/point-events/${id}?gameId=${point.gameId}`, { method: "DELETE", ...SCORING_WRITE })
+      // 404: already gone on the server, so dropping it locally is right
+      if (res.ok || res.status === 404) onEventDeleted(id)
+      else setEventError(await errorMessage(res, "Couldn't delete the event. Try again."))
+    } catch (err) {
+      setEventError(writeErrorText(err, "Couldn't delete the event. Try again."))
+    }
   }
 
   return (
