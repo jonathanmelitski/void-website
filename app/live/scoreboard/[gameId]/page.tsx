@@ -6,6 +6,7 @@ import type { GameItem } from "@/lib/aws/games"
 import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem } from "@/lib/aws/point-events"
 import type { LiveGameMessage } from "@/lib/live-types"
+import { deriveGameStats, displayScore } from "@/lib/stats/derive"
 
 type ConnStatus = "connecting" | "connected" | "reconnecting" | "polling" | "final"
 type Possession = "VOID" | "OPP"
@@ -181,7 +182,11 @@ export default function ScoreboardOverlay() {
 
   const half    = game?.secondHalfStartCompletedCount != null ? "2ND" : "1ST"
   const isFinal = game?.status === "FINAL"
-  const maxScore = Math.max(game?.scoreVoid ?? 0, game?.scoreOpponent ?? 0)
+  // Score shown: the live push while IN_PROGRESS, else derived from the point record (film edits included)
+  const shown = game ? displayScore(game, deriveGameStats(game, points, pointEvents)) : null
+  const scoreVoid = shown?.score.us ?? 0
+  const scoreOpponent = shown?.score.them ?? 0
+  const maxScore = Math.max(scoreVoid, scoreOpponent)
   const scoreBoxW = maxScore >= 10 ? 78 : 60
 
   const showBanner = !!breakChance && !breakDisplay
@@ -295,7 +300,7 @@ export default function ScoreboardOverlay() {
             </div>
 
             <VoidBlock
-              score={game?.scoreVoid ?? 0}
+              score={scoreVoid}
               possession={possession}
               voidOnOLine={activePoint?.lineType === "O"}
               flash={scoreFlash === "VOID"}
@@ -330,7 +335,7 @@ export default function ScoreboardOverlay() {
 
             <OppBlock
               name={game?.opponent ?? ""}
-              score={game?.scoreOpponent ?? 0}
+              score={scoreOpponent}
               possession={possession}
               oppOnOLine={activePoint?.lineType === "D"}
               flash={scoreFlash === "OPP"}

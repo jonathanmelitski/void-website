@@ -7,6 +7,7 @@ import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { LiveGameMessage } from "@/lib/live-types"
+import { deriveGameStats, displayScore } from "@/lib/stats/derive"
 
 // --- Connection status ---
 type ConnStatus = "connecting" | "connected" | "reconnecting" | "polling" | "final"
@@ -229,6 +230,16 @@ export default function LiveWatchPage() {
   const completedPoints = points
     .filter(p => p.status === "COMPLETE")
     .sort((a, b) => a.pointNumber - b.pointNumber)
+  // Score shown: the live push while IN_PROGRESS, else derived from the point record (film edits included)
+  const stats = game ? deriveGameStats(game, points, pointEvents, players) : null
+  const shown = game && stats ? displayScore(game, stats) : null
+  const shownResult = shown ? shown.result : game?.result
+  const pointChips = shown?.derived && stats
+    ? stats.points.filter(p => p.scorer).map(p => ({ id: p.id, pointNumber: p.pointNumber, lineType: p.lineType, outcome: p.outcome, voidScored: p.scorer === "US" }))
+    : completedPoints.map(p => ({
+        id: p.id, pointNumber: p.pointNumber, lineType: p.lineType, outcome: p.outcome,
+        voidScored: (p.outcome === "HOLD" && p.lineType === "O") || (p.outcome === "BREAK" && p.lineType === "D"),
+      }))
   // Field direction: teams switch ends after every point.
   // At halftime the direction resets from the opposite starting end (whoever pulled now receives).
   // secondHalfStartCompletedCount marks when half was called; direction resets from !voidReceivingFirst.
@@ -304,14 +315,14 @@ export default function LiveWatchPage() {
         <div className="flex flex-col items-center gap-1">
           <span className="text-white/40 text-xs font-medium tracking-widest uppercase">VOID</span>
           <span className={`text-7xl font-black font-mono transition-transform duration-300 ${scorePulse === "VOID" ? "scale-125 text-green-400" : "text-white"}`}>
-            {game.scoreVoid}
+            {shown?.score.us ?? game.scoreVoid}
           </span>
         </div>
         <span className="text-white/20 text-3xl font-thin">–</span>
         <div className="flex flex-col items-center gap-1">
           <span className="text-white/40 text-xs font-medium tracking-widest uppercase">{game.opponent}</span>
           <span className={`text-7xl font-black font-mono transition-transform duration-300 ${scorePulse === "OPP" ? "scale-125 text-green-400" : "text-white"}`}>
-            {game.scoreOpponent}
+            {shown?.score.them ?? game.scoreOpponent}
           </span>
         </div>
       </div>
@@ -378,14 +389,12 @@ export default function LiveWatchPage() {
       )}
 
       {/* Completed points summary */}
-      {completedPoints.length > 0 && (
+      {pointChips.length > 0 && (
         <section className="mt-6">
           <h2 className="text-xs font-medium text-white/30 uppercase tracking-widest mb-3">Points</h2>
           <div className="flex flex-wrap gap-1.5">
-            {completedPoints.map(point => {
-              const voidScored =
-                (point.outcome === "HOLD" && point.lineType === "O") ||
-                (point.outcome === "BREAK" && point.lineType === "D")
+            {pointChips.map(point => {
+              const { voidScored } = point
               return (
                 <span
                   key={point.id}
@@ -408,13 +417,13 @@ export default function LiveWatchPage() {
       {game.status === "FINAL" && (
         <div className="mt-8 border border-white/10 rounded-xl px-6 py-5 text-center">
           <p className={`text-2xl font-black ${
-            game.result === "WIN" ? "text-green-400" :
-            game.result === "LOSS" ? "text-red-400" :
+            shownResult === "WIN" ? "text-green-400" :
+            shownResult === "LOSS" ? "text-red-400" :
             "text-yellow-400"
           }`}>
-            {game.result === "WIN" ? "VOID Wins" : game.result === "LOSS" ? `${game.opponent} Wins` : "Tie"}
+            {shownResult === "WIN" ? "VOID Wins" : shownResult === "LOSS" ? `${game.opponent} Wins` : "Tie"}
           </p>
-          <p className="text-white/40 text-sm mt-1">Final · {game.scoreVoid} – {game.scoreOpponent}</p>
+          <p className="text-white/40 text-sm mt-1">Final · {shown?.score.us ?? game.scoreVoid} – {shown?.score.them ?? game.scoreOpponent}</p>
         </div>
       )}
     </div>

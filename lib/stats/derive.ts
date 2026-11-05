@@ -250,3 +250,13 @@ export function deriveGameStats(
     warnings,
   }
 }
+
+// Score/result for live surfaces (/live/watch, /live/scoreboard). While a game is IN_PROGRESS the live
+// console's pushed score stays authoritative: it moves when a point is completed, in step with the
+// score-flash animations. Otherwise (FINAL, or film-only games still SCHEDULED) the derived record wins.
+export function displayScore(game: StatsGame, stats: GameStats): { score: Score; result: GameResult | null; derived: boolean } {
+  if (game.status === "IN_PROGRESS") {
+    return { score: { us: game.scoreVoid, them: game.scoreOpponent }, result: game.result ?? null, derived: false }
+  }
+  return { score: stats.score, result: stats.result, derived: true }
+}
