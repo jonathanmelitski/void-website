@@ -1,15 +1,18 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
+import { CalendarDays } from "lucide-react"
 import { useAuth } from "@/lib/use-auth"
 import { useRequireAuth } from "@/hooks/use-require-auth"
-import { usePrefetchIntent } from "@/hooks/use-prefetch-intent"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EventCard } from "@/components/gallery/EventCard"
 import type { GalleryEvent } from "@/models/GalleryModels"
-import { Spinner } from "@/components/ui/spinner"
+import { Skeleton, SkeletonCard } from "@/components/ui/skeleton"
+import { EmptyState } from "@/components/ui/empty-state"
+import { PageContainer, PageHeader } from "@/components/ui/page"
 
 function getHighestRole(groups: string[]) {
   if (groups.includes("ADMIN")) return "ADMIN"
@@ -17,8 +20,10 @@ function getHighestRole(groups: string[]) {
   return "USER"
 }
 
-const ROLE_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
-  ADMIN: "default",
+const ROLE_LABEL: Record<string, string> = { ADMIN: "Admin", COACH: "Coach", USER: "Player" }
+
+const ROLE_VARIANT: Record<string, "brand" | "secondary" | "outline"> = {
+  ADMIN: "brand",
   COACH: "secondary",
   USER: "outline",
 }
@@ -30,95 +35,130 @@ interface EventItem {
   location?: string
   description?: string
   coverPhotoKey?: string
+  isPrivate?: boolean
   createdAt: string
 }
 
+type LiveEvent = GalleryEvent & { isPrivate?: boolean }
+
 export default function LivePage() {
-  const { signOut } = useAuth()
+  const { signOut, status } = useAuth()
   const { user, isLoading } = useRequireAuth()
   const router = useRouter()
-  const managePrefetch = usePrefetchIntent("/live/manage")
-  const [events, setEvents] = useState<GalleryEvent[]>([])
+  const [events, setEvents] = useState<LiveEvent[]>([])
   const [eventsLoading, setEventsLoading] = useState(true)
-  const [eventsError, setEventsError] = useState<string | null>(null)
+  const [eventsError, setEventsError] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+  // Whether the last events fetch went out with a confirmed session (private events need one).
+  const [fetchedAuthed, setFetchedAuthed] = useState<boolean | null>(null)
 
-  useEffect(() => {
-    if (!user) return
+  const loadEvents = useCallback((authed: boolean) => {
+    setEventsError(false)
+    setFetchedAuthed(authed)
     fetch("/api/events")
       .then(res => {
         if (!res.ok) throw new Error(`${res.status}`)
         return res.json()
       })
       .then((data: EventItem[]) => {
-        const gallery: GalleryEvent[] = data.map(event => ({
-          ...event,
-          photos: [],
-          coverPhotoId: "",
-        }))
-        setEvents(gallery)
-        setEventsError(null)
+        setEvents(data.map(event => ({ ...event, photos: [], coverPhotoId: "" })))
       })
-      .catch(e => setEventsError(e instanceof Error ? e.message : "Failed to load events"))
+      .catch(() => setEventsError(true))
       .finally(() => setEventsLoading(false))
-  }, [user])
+  }, [])
 
-  if (isLoading || !user) {
-    return (
-      <div className="flex items-center justify-center min-h-[50dvh]">
-        <Spinner size="md" />
-      </div>
-    )
-  }
+  // Start loading events alongside the auth check (the API filters private events by session);
+  // fetch once more after sign-in is confirmed if the first request went out before that.
+  useEffect(() => {
+    const authed = status === "authenticated"
+    if (fetchedAuthed === null || (authed && !fetchedAuthed)) loadEvents(authed)
+  }, [status, fetchedAuthed, loadEvents])
+
+  if (isLoading || !user) return <LiveHomeSkeleton />
 
   const role = getHighestRole(user.groups)
+  const canManage = role === "ADMIN" || role === "COACH"
+
+  async function handleSignOut() {
+    setSigningOut(true)
+    try {
+      await signOut()
+      router.push("/live/login")
+    } finally {
+      setSigningOut(false)
+    }
+  }
 
   return (
-    <div className="flex flex-col p-8 lg:px-16 gap-8 text-left">
-      <div className="flex items-end justify-between">
-        <div>
-          <h1 className="text-4xl font-display leading-none tracking-wide">Void Live</h1>
-          <p className="text-fg-muted mt-1 text-sm">{user.email}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Badge variant={ROLE_VARIANT[role] ?? "outline"}>{role}</Badge>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-fg-muted hover:text-foreground hover:bg-surface-2"
-            onClick={() => router.push("/live/manage")}
-            onMouseEnter={managePrefetch.onMouseEnter}
-          >
-            Manage
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-fg-muted hover:text-foreground hover:bg-surface-2"
-            onClick={() => signOut().then(() => router.push("/live/login"))}
-          >
-            Sign out
-          </Button>
-        </div>
-      </div>
+    <PageContainer>
+      <PageHeader
+        title="Void Live"
+        description={
+          <span className="flex flex-wrap items-center gap-2">
+            {user.email && <span className="min-w-0 break-all">{user.email}</span>}
+            <Badge variant={ROLE_VARIANT[role] ?? "outline"}>{ROLE_LABEL[role] ?? role}</Badge>
+          </span>
+        }
+        actions={
+          <>
+            {canManage && (
+              <Button asChild variant="outline" size="lg">
+                <Link href="/live/manage">Manage</Link>
+              </Button>
+            )}
+            <Button variant="ghost" size="lg" loading={signingOut} onClick={handleSignOut}>
+              Sign out
+            </Button>
+          </>
+        }
+      />
 
-      <div>
-        <h2 className="text-xl font-bold mb-4">Events</h2>
+      <section aria-labelledby="events-heading">
+        <h2 id="events-heading" className="text-lg font-semibold mb-4">Events</h2>
         {eventsLoading ? (
-          <div className="flex items-center justify-center py-16">
-            <Spinner size="md" />
-          </div>
+          <EventGridSkeleton />
         ) : eventsError ? (
-          <p className="text-destructive/70 text-sm py-16 text-center">Failed to load events — {eventsError}</p>
+          <EmptyState
+            icon={<CalendarDays />}
+            title="Couldn't load events"
+            description="Check your connection and try again."
+            action={<Button size="sm" variant="outline" onClick={() => { setEventsLoading(true); loadEvents(status === "authenticated") }}>Try again</Button>}
+          />
         ) : events.length === 0 ? (
-          <p className="text-fg-muted text-sm py-16 text-center">No events yet.</p>
+          <EmptyState
+            icon={<CalendarDays />}
+            title="No events yet"
+            description={canManage ? "Create an event in Manage to start scoring games." : "Events will show up here once a coach adds them."}
+          />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {events.map(event => (
-              <EventCard key={event.id} event={event} href={`/live/events/${event.id}`} />
+              <EventCard key={event.id} event={event} isPrivate={event.isPrivate} href={`/live/events/${event.id}`} />
             ))}
           </div>
         )}
-      </div>
+      </section>
+    </PageContainer>
+  )
+}
+
+function EventGridSkeleton() {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" aria-busy aria-label="Loading events">
+      {[0, 1, 2].map(i => <SkeletonCard key={i} />)}
     </div>
+  )
+}
+
+function LiveHomeSkeleton() {
+  return (
+    <PageContainer>
+      <div className="mb-6 flex flex-col gap-3 md:mb-8">
+        <Skeleton className="h-10 w-48 md:h-12" />
+        <Skeleton className="h-5 w-64 max-w-full" />
+      </div>
+      <Skeleton className="h-6 w-24 mb-4" />
+      <EventGridSkeleton />
+    </PageContainer>
   )
 }
