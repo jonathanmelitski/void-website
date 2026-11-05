@@ -6,12 +6,13 @@ import {
 import { cognitoClient, cognitoUsernameFromAccessToken } from "@/lib/aws/cognito"
 import { setSessionCookies } from "@/lib/auth/cookies"
 import { secretHash } from "@/lib/aws/cognito-secret"
+import { authError } from "@/lib/auth-errors"
 
 export async function POST(request: NextRequest) {
   const { email, password } = await request.json()
 
   if (!email || !password) {
-    return NextResponse.json({ error: "Email and password are required" }, { status: 400 })
+    return NextResponse.json({ error: "Enter your email and password." }, { status: 400 })
   }
 
   try {
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest) {
 
     const tokens = result.AuthenticationResult
     if (!tokens?.AccessToken || !tokens?.RefreshToken) {
-      return NextResponse.json({ error: "Authentication failed" }, { status: 401 })
+      return NextResponse.json({ error: "Couldn't sign you in. Try again." }, { status: 401 })
     }
 
     const response = NextResponse.json({ ok: true })
@@ -53,7 +54,6 @@ export async function POST(request: NextRequest) {
 
     return response
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Login failed"
-    return NextResponse.json({ error: message }, { status: 401 })
+    return NextResponse.json(authError(err, "login"), { status: 401 })
   }
 }

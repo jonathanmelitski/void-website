@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server"
 import { ForgotPasswordCommand } from "@aws-sdk/client-cognito-identity-provider"
 import { cognitoClient } from "@/lib/aws/cognito"
 import { secretHash } from "@/lib/aws/cognito-secret"
+import { authError } from "@/lib/auth-errors"
 
 export async function POST(request: NextRequest) {
   const { email } = await request.json()
 
   if (!email) {
-    return NextResponse.json({ error: "Email is required" }, { status: 400 })
+    return NextResponse.json({ error: "Enter your email." }, { status: 400 })
   }
 
   try {
@@ -20,7 +21,11 @@ export async function POST(request: NextRequest) {
     )
     return NextResponse.json({ ok: true })
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Failed to initiate password reset"
-    return NextResponse.json({ error: message }, { status: 400 })
+    // Don't reveal whether an account exists: an unknown (or unverified) email looks like success
+    const name = err instanceof Error ? err.name : ""
+    if (name === "UserNotFoundException" || name === "InvalidParameterException") {
+      return NextResponse.json({ ok: true })
+    }
+    return NextResponse.json(authError(err, "reset"), { status: 400 })
   }
 }
