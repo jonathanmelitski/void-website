@@ -1,0 +1,61 @@
+name: Deploy Email Worker Lambda
+
+# Updates the code of the existing void-email-worker Lambda (created once by hand; see
+# email-worker/README.md). The function runs under its own least-privilege role, so no access
+# keys are passed to it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "email-worker/**"
+      - "lib/bulk-send.ts"
+      - "lib/newsletter-html.ts"
+      - "lib/newsletter-prose-css.ts"
+      - "lib/newsletter-text-compat.ts"
+      - ".github/workflows/deploy-email-worker.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check
+        run: npx tsx scripts/bulk-send.check.ts
+
+      - name: Bundle
+        run: |
+          mkdir -p email-worker/dist
+          node_modules/.bin/esbuild email-worker/handler.ts \
+            --bundle \
+            --platform=node \
+            --target=node20 \
+            --outfile=email-worker/dist/handler.js
+
+      - name: Zip
+        run: zip -j email-worker/dist/function.zip email-worker/dist/handler.js
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.VOID_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.VOID_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.VOID_REGION }}
+
+      - name: Update Lambda code
+        run: |
+          aws lambda update-function-code \
+            --function-name void-email-worker \
+            --zip-file fileb://email-worker/dist/function.zip
+          aws lambda wait function-updated --function-name void-email-worker

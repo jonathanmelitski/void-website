@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
-import { getSend, deleteSend } from "@/lib/aws/sends"
+import { getSend, deleteSend, summarizeSend } from "@/lib/aws/sends"
 import { deleteEventsForSend } from "@/lib/aws/tracking"
 
 
@@ -15,6 +15,8 @@ export async function GET(
   const send = await getSend(id)
   if (!send) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
+  // ?summary=1: counts and status only (the progress monitor polls this every ~2 s).
+  if (request.nextUrl.searchParams.get("summary") === "1") return NextResponse.json(summarizeSend(send))
   return NextResponse.json(send)
 }
 

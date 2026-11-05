@@ -15,7 +15,9 @@ import { PutObjectCommand } from "@aws-sdk/client-s3"
 import { s3 } from "@/lib/aws/s3"
 import { randomUUID } from "crypto"
 import { buildNewsletterHtml, injectTracking } from "@/lib/newsletter-html"
+import { newsletterTextBody } from "@/lib/newsletter-text-compat"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
+import { listAllPaced, runBatchedSend, selectResumeRecipients, withThrottleRetry } from "@/lib/bulk-send"
 
 const client = new SESv2Client({
   region: process.env.VOID_REGION!,
@@ -93,15 +95,13 @@ export async function listContacts(
   topicName: string
 ): Promise<{ email: string; unsubscribed: boolean }[]> {
   // Verify the topic exists so callers get a proper error (e.g. subscribe → 404)
-  const topics = await getTopics()
+  const topics = await withThrottleRetry(getTopics)
   if (!topics.some(t => t.TopicName === topicName)) {
     throw new Error(`Topic not found: ${topicName}`)
   }
 
-  const results: { email: string; unsubscribed: boolean }[] = []
-
-  let nextToken: string | undefined
-  do {
+  // SES contact-list APIs allow ~1 request/s: pace the pages and back off on TooManyRequests.
+  return listAllPaced(async nextToken => {
     const res = await client.send(
       new ListContactsCommand({
         ContactListName: CONTACT_LIST,
@@ -112,13 +112,11 @@ export async function listContacts(
         NextToken: nextToken,
       })
     )
-    for (const c of res.Contacts ?? []) {
-      results.push({ email: c.EmailAddress!, unsubscribed: false })
+    return {
+      items: (res.Contacts ?? []).map(c => ({ email: c.EmailAddress!, unsubscribed: false })),
+      nextToken: res.NextToken,
     }
-    nextToken = res.NextToken
-  } while (nextToken)
-
-  return results
+  })
 }
 
 export async function createContact(topicName: string, email: string): Promise<void> {
@@ -271,17 +269,41 @@ type SendCallbacks = {
   onResult?: (email: string, status: "sent" | "failed") => void
 }
 
+/** Optional hooks for progress persistence and resume. Every hook is awaited; a throw stops the run. */
+export type SendRunControl = {
+  /** Addresses an earlier run already handled; they are skipped (resume). */
+  exclude?: { sent?: string[]; failed?: string[]; unknown?: string[] }
+  /** Epoch ms: no new batch starts after this; the result then has stoppedEarly + remaining. */
+  deadline?: number
+  /** After the list is loaded, before any email goes out. */
+  onListed?: (info: { toSend: number; skipped: number; trackedLinks: string[] }) => Promise<void>
+  beforeBatch?: (emails: string[]) => Promise<void>
+  afterBatch?: (result: { sent: string[]; failed: string[] }) => Promise<void>
+}
+
 export async function sendNewsletterToList(
   _newsletterId: string,
   newsletter: NewsletterItem,
   listName: string,
   opts: SendOpts = {},
   sendId?: string,
-  callbacks?: SendCallbacks
-): Promise<{ sent: number; failed: number; failedRecipients: string[]; trackedLinks: string[] }> {
+  callbacks?: SendCallbacks,
+  control: SendRunControl = {}
+): Promise<{
+  sent: number
+  failed: number
+  failedRecipients: string[]
+  trackedLinks: string[]
+  sentRecipients: string[]
+  remaining: number
+  stoppedEarly: boolean
+}> {
   const contacts = await listContacts(listName)
-  const active = contacts.filter(c => !c.unsubscribed)
+  const active = contacts.filter(c => !c.unsubscribed).map(c => c.email)
+  // Dedupes (case-insensitive) and, on a resume, drops everyone already handled.
+  const { toSend, skipped } = selectResumeRecipients(active, control.exclude ?? {})
   const baseHtml = buildNewsletterHtml(newsletter, "light", true, opts.includeWebLink)
+  const textBody = newsletterTextBody(newsletter, opts.includeWebLink)
   const subject = opts.subject || newsletter.title
   const replyTo = opts.replyTo ? [opts.replyTo] : undefined
   const from = buildFrom(opts.fromName)
@@ -291,52 +313,54 @@ export async function sendNewsletterToList(
     trackedLinks = injectTracking(baseHtml, "probe", sendId).links
   }
 
-  console.log(JSON.stringify({ event: "send_start", sendId, listName, total: active.length, ts: new Date().toISOString() }))
-  callbacks?.onStart?.(active.length)
+  console.log(JSON.stringify({ event: "send_start", sendId, listName, total: toSend.length, skipped, ts: new Date().toISOString() }))
+  await control.onListed?.({ toSend: toSend.length, skipped, trackedLinks })
+  callbacks?.onStart?.(toSend.length)
 
-  let sent = 0
-  const failedRecipients: string[] = []
-
-  const BATCH = 10
-  const BATCH_DELAY_MS = 1000
-  for (let i = 0; i < active.length; i += BATCH) {
-    if (i > 0) await new Promise(r => setTimeout(r, BATCH_DELAY_MS))
-    const batch = active.slice(i, i + BATCH)
-    await Promise.allSettled(
-      batch.map(async contact => {
-        let html = baseHtml
-        if (opts.trackingEnabled && sendId) {
-          html = injectTracking(baseHtml, randomUUID(), sendId).html
-        }
-        try {
-          await client.send(
-            new SendEmailCommand({
-              FromEmailAddress: from,
-              ReplyToAddresses: replyTo,
-              Destination: { ToAddresses: [contact.email] },
-              Content: {
-                Simple: {
-                  Subject: { Data: subject },
-                  Body: { Html: { Data: html } },
-                },
+  const result = await runBatchedSend({
+    recipients: toSend,
+    deadline: control.deadline,
+    beforeBatch: control.beforeBatch,
+    afterBatch: control.afterBatch,
+    onResult: callbacks?.onResult,
+    sendOne: async email => {
+      let html = baseHtml
+      if (opts.trackingEnabled && sendId) {
+        html = injectTracking(baseHtml, randomUUID(), sendId).html
+      }
+      try {
+        await client.send(
+          new SendEmailCommand({
+            FromEmailAddress: from,
+            ReplyToAddresses: replyTo,
+            Destination: { ToAddresses: [email] },
+            Content: {
+              Simple: {
+                Subject: { Data: subject },
+                Body: { Html: { Data: html }, ...textBody },
               },
-              ListManagementOptions: { ContactListName: CONTACT_LIST, TopicName: listName },
-            })
-          )
-          sent++
-          console.log(JSON.stringify({ event: "email_sent", sendId, email: contact.email, status: "sent", ts: new Date().toISOString() }))
-          callbacks?.onResult?.(contact.email, "sent")
-        } catch (err) {
-          console.error(JSON.stringify({ event: "email_sent", sendId, email: contact.email, status: "failed", error: err instanceof Error ? err.message : String(err), ts: new Date().toISOString() }))
-          failedRecipients.push(contact.email)
-          callbacks?.onResult?.(contact.email, "failed")
-        }
-      })
-    )
-  }
+            },
+            ListManagementOptions: { ContactListName: CONTACT_LIST, TopicName: listName },
+          })
+        )
+        console.log(JSON.stringify({ event: "email_sent", sendId, email, status: "sent", ts: new Date().toISOString() }))
+      } catch (err) {
+        console.error(JSON.stringify({ event: "email_sent", sendId, email, status: "failed", error: err instanceof Error ? err.message : String(err), ts: new Date().toISOString() }))
+        throw err
+      }
+    },
+  })
 
-  console.log(JSON.stringify({ event: "send_complete", sendId, sent, failed: failedRecipients.length, ts: new Date().toISOString() }))
-  return { sent, failed: failedRecipients.length, failedRecipients, trackedLinks }
+  console.log(JSON.stringify({ event: result.stoppedEarly ? "send_paused" : "send_complete", sendId, sent: result.sent.length, failed: result.failed.length, remaining: result.remaining.length, ts: new Date().toISOString() }))
+  return {
+    sent: result.sent.length,
+    failed: result.failed.length,
+    failedRecipients: result.failed,
+    trackedLinks,
+    sentRecipients: result.sent,
+    remaining: result.remaining.length,
+    stoppedEarly: result.stoppedEarly,
+  }
 }
 
 export async function sendToEmails(
@@ -348,6 +372,7 @@ export async function sendToEmails(
   callbacks?: SendCallbacks
 ): Promise<{ sent: number; failed: number; failedRecipients: string[]; trackedLinks: string[] }> {
   const baseHtml = buildNewsletterHtml(newsletter, "light", true, opts.includeWebLink)
+  const textBody = newsletterTextBody(newsletter, opts.includeWebLink)
   const subject = opts.subject || newsletter.title
   const replyTo = opts.replyTo ? [opts.replyTo] : undefined
   const from = buildFrom(opts.fromName)
@@ -382,7 +407,7 @@ export async function sendToEmails(
               Content: {
                 Simple: {
                   Subject: { Data: subject },
-                  Body: { Html: { Data: html } },
+                  Body: { Html: { Data: html }, ...textBody },
                 },
               },
               ListManagementOptions: { ContactListName: CONTACT_LIST, TopicName: listName },
@@ -409,6 +434,7 @@ export async function sendTestEmail(
   sendId?: string
 ): Promise<{ trackedLinks: string[] }> {
   let html = buildNewsletterHtml(newsletter, "light", true, opts.includeWebLink)
+  const textBody = newsletterTextBody(newsletter, opts.includeWebLink)
   let trackedLinks: string[] = []
   if (opts.trackingEnabled && sendId) {
     const result = injectTracking(html, randomUUID(), sendId)
@@ -426,7 +452,7 @@ export async function sendTestEmail(
       Content: {
         Simple: {
           Subject: { Data: subject },
-          Body: { Html: { Data: html } },
+          Body: { Html: { Data: html }, ...textBody },
         },
       },
     })
