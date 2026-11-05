@@ -1,26 +1,41 @@
-import RosterView from "./RosterView";
-import type { Player } from "@/models/RosterModels";
-import { SamplePlayers } from "@/models/SampleData";
+import { Users } from "lucide-react"
+import RosterView from "./RosterView"
+import { Team, type Player } from "@/models/RosterModels"
+import { listPlayers } from "@/lib/aws/players"
+import { EmptyState } from "@/components/ui/empty-state"
 
-async function getPlayers(): Promise<Player[]> {
-  try {
-    const base = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000"
-    const res = await fetch(`${base}/api/players`, { cache: "no-store" })
-    if (!res.ok) throw new Error("API unavailable")
-    return res.json()
-  } catch {
-    // Fall back to hardcoded data if the players table hasn't been provisioned yet
-    return SamplePlayers
-  }
-}
+// The roster changes rarely; serve a cached render and refresh it in the background
+export const revalidate = 300
 
 export default async function Roster() {
-  const raw = await getPlayers()
-  const players: Player[] = [...raw].sort((a, b) => {
-    if (a.is_captain && !b.is_captain) return -1
-    if (!a.is_captain && b.is_captain) return 1
-    return a.last_name.localeCompare(b.last_name)
-  })
+  let players: Player[]
+  try {
+    // Archived players and other teams' players never appear on the public roster.
+    // listPlayers() already orders captains first, then by last name.
+    players = (await listPlayers())
+      .filter(p => p.is_active && p.team === "VOID")
+      .map(p => ({ ...p, team: Team.void }))
+  } catch (err) {
+    console.error("Roster: failed to load players", err)
+    return (
+      <div className="px-4 lg:px-16">
+        <EmptyState
+          variant="page"
+          icon={<Users className="size-6" />}
+          title="The roster isn't available right now"
+          description="Please check back in a few minutes."
+        />
+      </div>
+    )
+  }
+
+  if (players.length === 0) {
+    return (
+      <div className="px-4 lg:px-16">
+        <EmptyState variant="page" icon={<Users className="size-6" />} title="No players yet" description="The roster will appear here once players are added." />
+      </div>
+    )
+  }
 
   return (
     <div className="lg:px-16 not-lg:px-4">

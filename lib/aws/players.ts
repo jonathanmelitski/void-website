@@ -23,8 +23,14 @@ export type PlayerItem = {
 }
 
 export async function listPlayers(): Promise<PlayerItem[]> {
-  const result = await dynamo.send(new ScanCommand({ TableName: TABLE() }))
-  const items = (result.Items ?? []) as PlayerItem[]
+  // A Scan returns at most 1 MB per call; follow LastEvaluatedKey so nobody is silently dropped
+  const items: PlayerItem[] = []
+  let ExclusiveStartKey: Record<string, unknown> | undefined
+  do {
+    const result = await dynamo.send(new ScanCommand({ TableName: TABLE(), ExclusiveStartKey }))
+    items.push(...((result.Items ?? []) as PlayerItem[]))
+    ExclusiveStartKey = result.LastEvaluatedKey
+  } while (ExclusiveStartKey)
   return items.sort((a, b) => {
     if (a.is_captain && !b.is_captain) return -1
     if (!a.is_captain && b.is_captain) return 1

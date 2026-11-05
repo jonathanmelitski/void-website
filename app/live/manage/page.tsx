@@ -78,8 +78,8 @@ function ManagePageInner() {
   ]
 
   return (
-    <div className="flex flex-col p-8 lg:px-16 gap-8 text-left">
-      <div className="flex items-end justify-between">
+    <div className="flex min-w-0 flex-col gap-8 px-4 py-6 text-left sm:p-8 lg:px-16">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <button
             onClick={() => router.push("/live")}
@@ -103,16 +103,24 @@ function ManagePageInner() {
         </div>
       </div>
 
-      <div className="flex items-center gap-1 border-b border-border -mb-4">
+      {/* Scrolls sideways on phones; the active tab is kept in view */}
+      <div
+        role="tablist"
+        aria-label="Manage sections"
+        className="-mx-4 -mb-4 flex items-center gap-1 overflow-x-auto overscroll-x-contain border-b border-border px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"
+      >
         {tabs.map(tab => (
           <button
             key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            ref={el => { if (el && activeTab === tab.id) el.scrollIntoView({ block: "nearest", inline: "nearest" }) }}
             onClick={() => {
               setActiveTab(tab.id)
               router.replace(`/live/manage?tab=${tab.id}`, { scroll: false })
             }}
             className={[
-              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+              "-mb-px min-h-11 shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition-colors",
               activeTab === tab.id
                 ? "border-foreground text-foreground"
                 : "border-transparent text-fg-muted hover:text-foreground",

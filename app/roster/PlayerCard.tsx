@@ -98,24 +98,7 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                             </div>
                         )}
 
-                        {/* Toggle Button */}
-                        <button
-                            onClick={() => setShowStats(!showStats)}
-                            className="absolute bottom-4 left-4 z-20 px-3 py-2 rounded-full bg-surface-2 hover:bg-surface-3 text-foreground transition-colors backdrop-blur-sm text-sm font-bold flex items-center gap-1"
-                            title={showStats ? "Hide Stats" : "View Stats"}
-                        >
-                            {showStats ? (
-                                <>
-                                    <ChevronLeft size={16} />
-                                    <span>Close</span>
-                                </>
-                            ) : (
-                                <>
-                                    <span>Stats</span>
-                                    <ChevronRight size={16} />
-                                </>
-                            )}
-                        </button>
+                        {/* Stats toggle removed until per-player stats are wired in (roster redesign) */}
                     </motion.div>
 
                     {/* Player Info */}
@@ -216,14 +199,6 @@ export default function PlayerCard({ player, index }: PlayerCardProps) {
                             </div>
                         </div>
 
-                        {/* Toggle Button - Front */}
-                        <button
-                            onClick={() => setShowStats(!showStats)}
-                            className="mt-4 px-4 py-2 rounded-full bg-surface-2 hover:bg-surface-3 text-foreground transition-colors backdrop-blur-sm text-sm font-bold flex items-center gap-1 self-center"
-                        >
-                            <span>Stats</span>
-                            <ChevronRight size={16} />
-                        </button>
                     </div>
 
                     {/* Back of Card - Stats */}
