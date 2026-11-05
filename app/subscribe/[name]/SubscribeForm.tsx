@@ -1,104 +1,134 @@
 "use client"
 
 import { useState } from "react"
-import { useParams } from "next/navigation"
+import Link from "next/link"
+import { CheckCircle2, MailCheck } from "lucide-react"
+import { apiFetch } from "@/lib/api-fetch"
+import { Button } from "@/components/ui/button"
+import { Field } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 
-export default function SubscribePage() {
-  const { name } = useParams<{ name: string }>()
-  const listName = decodeURIComponent(name)
+type Props = {
+  /** SES list slug used by the API (never shown). */
+  listName: string
+  /** Human name, e.g. "the Void newsletter". */
+  listTitle: string
+  listDescription: string
+}
 
+type Status = "idle" | "loading" | "success" | "already" | "error"
+
+export function SubscribeForm({ listName, listTitle, listDescription }: Props) {
   const [email, setEmail] = useState("")
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "already" | "error">("idle")
+  const [status, setStatus] = useState<Status>("idle")
   const [errorMsg, setErrorMsg] = useState("")
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!email.trim()) return
+    const value = email.trim()
+    if (!value) {
+      setStatus("error")
+      setErrorMsg("Enter your email address.")
+      return
+    }
     setStatus("loading")
     setErrorMsg("")
 
     try {
-      const res = await fetch(`/api/subscribe/${encodeURIComponent(listName)}`, {
+      const res = await apiFetch(`/api/subscribe/${encodeURIComponent(listName)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim() }),
+        body: JSON.stringify({ email: value }),
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
 
       if (res.ok) {
         setStatus("success")
       } else if (res.status === 409 && data.error === "already_subscribed") {
         setStatus("already")
+      } else if (res.status === 400) {
+        setStatus("error")
+        setErrorMsg("That email address doesn't look right. Check it and try again.")
       } else if (res.status === 404) {
         setStatus("error")
-        setErrorMsg("This subscription link is no longer active.")
+        setErrorMsg("This sign-up link is no longer active.")
       } else {
         setStatus("error")
-        setErrorMsg(data.error ?? "Something went wrong. Please try again.")
+        setErrorMsg("Couldn't subscribe you right now. Try again in a minute.")
       }
     } catch {
       setStatus("error")
-      setErrorMsg("Something went wrong. Please try again.")
+      setErrorMsg("Couldn't reach the server. Check your connection and try again.")
     }
   }
 
+  const done = status === "success" || status === "already"
+
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-6">
-      <div className="w-full max-w-sm flex flex-col gap-6">
-
-        {/* Logo / brand mark */}
-        <div className="flex flex-col gap-1">
-          <p className="text-fg-muted text-xs uppercase tracking-widest font-medium">Void Ultimate</p>
-          <h1 className="text-2xl font-display leading-none tracking-wide text-foreground">Stay in the loop.</h1>
-          <p className="text-fg-muted text-sm mt-1">
-            Subscribe to <span className="text-fg-secondary">{listName}</span> for updates.
-          </p>
-        </div>
-
-        {status === "success" ? (
-          <div className="bg-success/10 border border-success/20 rounded-xl px-5 py-4">
-            <p className="text-success font-semibold text-sm">You&apos;re subscribed!</p>
-            <p className="text-success/60 text-xs mt-1">
-              We&apos;ll be in touch at <span className="font-mono">{email}</span>.
-            </p>
-          </div>
-        ) : status === "already" ? (
-          <div className="bg-surface border border-border rounded-xl px-5 py-4">
-            <p className="text-fg-secondary font-semibold text-sm">Already subscribed</p>
-            <p className="text-fg-muted text-xs mt-1">
-              <span className="font-mono">{email}</span> is already on this list.
-            </p>
+    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-16 pt-10 sm:px-6 md:pt-20">
+      <div className="rounded-xl border border-border bg-card p-6 shadow-sm sm:p-8">
+        {done ? (
+          <div role="status" className="flex flex-col gap-4">
+            <div className="flex size-10 items-center justify-center rounded-full bg-success/10 text-success">
+              {status === "success" ? <CheckCircle2 aria-hidden="true" className="size-5" /> : <MailCheck aria-hidden="true" className="size-5" />}
+            </div>
+            <div className="flex flex-col gap-1">
+              <h1 className="font-display text-4xl leading-none tracking-wide text-foreground">
+                {status === "success" ? "You're subscribed" : "Already subscribed"}
+              </h1>
+              <p className="text-sm text-fg-secondary">
+                {status === "success" ? (
+                  <>We&apos;ll send {listTitle} to <span className="font-medium text-foreground">{email.trim()}</span>.</>
+                ) : (
+                  <><span className="font-medium text-foreground">{email.trim()}</span> already gets {listTitle}. Nothing else to do.</>
+                )}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild>
+                <Link href="/news">Read past issues</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href="/">Go home</Link>
+              </Button>
+            </div>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-            <input
-              type="email"
-              placeholder="your@email.com"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              disabled={status === "loading"}
-              required
-              className="w-full bg-surface border border-border rounded-xl px-4 py-3 text-sm text-foreground placeholder-white/25 focus:border-border-strong disabled:opacity-50 transition-colors"
-            />
-
-            {status === "error" && (
-              <p className="text-destructive text-xs">{errorMsg}</p>
-            )}
-
-            <button
-              type="submit"
-              disabled={status === "loading" || !email.trim()}
-              className="w-full py-3 bg-foreground text-background text-sm font-semibold rounded-xl hover:bg-foreground/90 transition-colors disabled:opacity-40"
-            >
-              {status === "loading" ? "Subscribing…" : "Subscribe"}
-            </button>
-          </form>
+          <>
+            <div className="mb-6 flex flex-col gap-2">
+              <h1 className="font-display text-4xl leading-none tracking-wide text-foreground">Stay in the loop</h1>
+              <p className="text-sm text-fg-secondary">
+                Subscribe to {listTitle}. {listDescription}
+              </p>
+            </div>
+            <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
+              <Field label="Email" error={status === "error" ? errorMsg : undefined}>
+                <Input
+                  type="email"
+                  name="email"
+                  autoComplete="email"
+                  inputMode="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={e => {
+                    setEmail(e.target.value)
+                    if (status === "error") setStatus("idle")
+                  }}
+                  disabled={status === "loading"}
+                  required
+                  className="h-11"
+                />
+              </Field>
+              <Button type="submit" size="lg" loading={status === "loading"} className="w-full">
+                {status === "loading" ? "Subscribing…" : "Subscribe"}
+              </Button>
+            </form>
+          </>
         )}
-
-        <p className="text-fg-faint text-xs">
-          You can unsubscribe at any time via the link in any email we send.
-        </p>
       </div>
+      <p className="mt-4 px-1 text-xs text-fg-muted">
+        You can unsubscribe at any time from the link in any email we send.
+      </p>
     </div>
   )
 }
