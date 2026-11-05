@@ -4,7 +4,7 @@ import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } fr
 import { useHotkeys } from "react-hotkeys-hook"
 import {
   Play, Pause, Volume2, VolumeX, Maximize, Minimize, ChevronRight,
-  Columns2, Link2, PanelRightClose, PanelRightOpen, VideoOff,
+  Columns2, Keyboard, Link2, PanelRightClose, PanelRightOpen, VideoOff, X,
 } from "lucide-react"
 import { YouTubePlayer, type YouTubePlayerHandle } from "./YouTubePlayer"
 import { PointEventEditor, controlHasFocus } from "./PointEventEditor"
@@ -25,6 +25,11 @@ import {
   type CoverageSpan, type FilmSyncPoint, type FilmTrack,
 } from "@/lib/film-tracks"
 import { Spinner } from "@/components/ui/spinner"
+import { Kbd } from "@/components/ui/kbd"
+import { Tooltip } from "@/components/ui/tooltip"
+import { toast } from "@/components/ui/sonner"
+import { apiFetch, errorMessage } from "@/lib/api-fetch"
+import { ShortcutSheet } from "./ShortcutSheet"
 
 interface FilmViewerProps {
   /** All of the game's clips: main track (no trackId) plus any camera angles */
@@ -71,15 +76,19 @@ function SectionToggle({ open, label, detail, onClick }: { open: boolean; label:
       type="button"
       onClick={onClick}
       aria-expanded={open}
-      className="self-start flex items-center gap-1 text-[11px] uppercase tracking-wider text-fg-muted hover:text-foreground transition-colors"
+      title={`${open ? "Hide" : "Show"} ${label.toLowerCase()}${detail ? ` (${detail})` : ""}`}
+      className="self-start flex items-center gap-1 rounded-md text-xs text-fg-secondary hover:text-foreground transition-colors"
     >
-      <ChevronRight size={11} className={`transition-transform ${open ? "rotate-90" : ""}`} />
+      <ChevronRight size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />
       {label}
-      {detail && <span className="normal-case tracking-normal text-fg-faint">· {detail}</span>}
-      <span className="normal-case tracking-normal text-fg-faint">— {open ? "hide" : "show"}</span>
+      {!open && detail && <span className="text-fg-muted">· {detail}</span>}
     </button>
   )
 }
+
+const POINT_LEGEND: [string, string][] = [
+  ["O-HOLD", "O-line hold"], ["O-BREAK", "O-line break"], ["D-HOLD", "D-line hold"], ["D-BREAK", "D-line break"],
+]
 
 // Per-viewer layout conveniences (collapsed sections), remembered in this browser only
 type LayoutPrefs = { lanes: boolean; editor: boolean; sidebar: boolean }
@@ -288,6 +297,9 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
   const [players, setPlayers] = useState<PlayerItem[]>([])
   const [activePointId, setActivePointId] = useState<string | null>(null)
   const [editMode, setEditMode] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const openShortcuts = useCallback(() => setShowShortcuts(true), [])
+  const [canFullscreen] = useState(() => document.fullscreenEnabled !== false)
   const [layout, setLayout] = useState<LayoutPrefs>(readLayoutPrefs)
   useEffect(() => {
     try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)) } catch { /* storage unavailable */ }
@@ -314,7 +326,12 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
   const chromeObserverRef = useRef<ResizeObserver | null>(null)
   const measureVideoFit = useCallback(() => {
     const chromeH = chromeElRef.current?.getBoundingClientRect().height ?? 0
-    const vh = window.innerHeight
+    // Inside the film overlay the space below its header is what's available, not the whole window
+    const host = chromeElRef.current?.closest<HTMLElement>("[data-film-scroll]")
+    const hostStyle = host ? getComputedStyle(host) : null
+    const vh = host && hostStyle
+      ? host.clientHeight - parseFloat(hostStyle.paddingTop) - parseFloat(hostStyle.paddingBottom)
+      : window.innerHeight
     const maxH = Math.round(Math.max(vh * MIN_VIDEO_VIEWPORT_SHARE, vh - chromeH - 24))
     const wide = window.matchMedia("(min-width: 768px)").matches
     setVideoFit(prev => prev && prev.maxH === maxH && prev.wide === wide ? prev : { maxH, wide })
@@ -603,15 +620,18 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
 
   const saveEditorLine = useCallback(async (playerIds: string[]) => {
     if (!editorPointId) return
-    const res = await fetch(`/api/points/${editorPointId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ playerIds }),
-    })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error((data as { error?: string }).error ?? "Failed to save line")
+    let res: Response
+    try {
+      res = await apiFetch(`/api/points/${editorPointId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ playerIds }),
+        waitForSession: true,
+      })
+    } catch {
+      throw new Error("Couldn't save the line. Check your connection and try again.")
     }
+    if (!res.ok) throw new Error(await errorMessage(res, "Couldn't save the line. Try again."))
     const updated: PointItem = await res.json()
     setPoints(prev => prev.map(p => p.id === updated.id ? updated : p))
   }, [editorPointId])
@@ -640,6 +660,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
     const track = allTracks[Number(e.key) - 1]
     if (track && allTracks.length > 1) switchTrack(track.id)
   }, playKeys, [allTracks, switchTrack])
+  useHotkeys("shift+slash", () => setShowShortcuts(s => !s), { enabled: !syncOpen }, [syncOpen])
   useHotkeys("v", () => {
     if (allTracks.length < 2) return
     setSplitTrackId(cur => cur ? null : (allTracks.find(t => t.id !== activeTrackId)?.id ?? null))
@@ -678,20 +699,24 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
   const addPointTag = useCallback(async (point: PointItem) => {
     const anchor = mainAnchorNow()
     if (!anchor) return
-    const res = await fetch("/api/film/annotations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        clipId: anchor.clip.id,
-        videoTimestampMs: anchor.clipMs,
-        text: "",
-        pointId: point.id,
-      }),
-    })
-    if (res.ok) {
+    try {
+      const res = await apiFetch("/api/film/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clipId: anchor.clip.id,
+          videoTimestampMs: anchor.clipMs,
+          text: "",
+          pointId: point.id,
+        }),
+        waitForSession: true,
+      })
+      if (!res.ok) throw new Error()
       const annotation: FilmAnnotationItem = await res.json()
       setAnnotations(prev => [...prev, annotation])
       choosePoint(point.id)
+    } catch {
+      toast.error(`Couldn't tag point ${point.pointNumber}. Check your connection and try again.`)
     }
   }, [mainAnchorNow, choosePoint])
 
@@ -954,7 +979,8 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
     setMeasuredDurations(prev => {
       if (prev[clip.id]) return prev
       if (canAnnotate) {
-        fetch(`/api/film/clips/${clip.id}`, {
+        // Background backfill; the measured value is already used locally, so a failure needs no message
+        apiFetch(`/api/film/clips/${clip.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ durationSeconds: duration }),
@@ -1000,8 +1026,9 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
     if (creatingPoint || !activeClip || !anchor) return
     setCreatingPoint(true)
     try {
-      const pointRes = await fetch("/api/points", {
+      const pointRes = await apiFetch("/api/points", {
         method: "POST",
+        waitForSession: true,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           gameId: activeClip.gameId,
@@ -1013,11 +1040,17 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           playerIds: npPlayerIds,
         }),
       })
-      if (!pointRes.ok) return
+      if (!pointRes.ok) {
+        toast.error(await errorMessage(pointRes, `Couldn't create point ${npNumber}. Try again.`))
+        return
+      }
       const point: PointItem = await pointRes.json()
+      setPoints(prev => [...prev, point].sort((a, b) => a.pointNumber - b.pointNumber))
+      setShowNewPointForm(false)
 
-      const annRes = await fetch("/api/film/annotations", {
+      const annRes = await apiFetch("/api/film/annotations", {
         method: "POST",
+        waitForSession: true,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clipId: anchor.clip.id,
@@ -1025,15 +1058,16 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           text: "",
           pointId: point.id,
         }),
-      })
-      if (annRes.ok) {
+      }).catch(() => null)
+      if (annRes?.ok) {
         const annotation: FilmAnnotationItem = await annRes.json()
         setAnnotations(prev => [...prev, annotation])
         choosePoint(point.id)
+      } else {
+        toast.error(`Point ${point.pointNumber} was created but not tagged on the film. Use "Tag at" on it to try again.`)
       }
-
-      setPoints(prev => [...prev, point].sort((a, b) => a.pointNumber - b.pointNumber))
-      setShowNewPointForm(false)
+    } catch {
+      toast.error(`Couldn't create point ${npNumber}. Check your connection and try again.`)
     } finally {
       setCreatingPoint(false)
     }
@@ -1067,9 +1101,17 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
     setSelectedPointId(null)
     setShowPointPicker(false)
 
+    // On failure the note comes back into the box (unless something new was typed) so nothing is lost
+    const restore = (message: string) => {
+      setAnnotations(prev => prev.filter(a => a.id !== tempId))
+      setNewText(cur => cur.trim() ? cur : capturedText)
+      setSelectedPointId(cur => cur ?? capturedPointId)
+      toast.error(message)
+    }
     try {
-      const res = await fetch("/api/film/annotations", {
+      const res = await apiFetch("/api/film/annotations", {
         method: "POST",
+        waitForSession: true,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clipId: anchor.clip.id,
@@ -1082,12 +1124,10 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
         const confirmed: FilmAnnotationItem = await res.json()
         setAnnotations(prev => prev.map(a => a.id === tempId ? confirmed : a))
       } else {
-        setAnnotations(prev => prev.filter(a => a.id !== tempId))
-        setNewText(capturedText)
+        restore(await errorMessage(res, "Couldn't save your note. Try again."))
       }
     } catch {
-      setAnnotations(prev => prev.filter(a => a.id !== tempId))
-      setNewText(capturedText)
+      restore("Couldn't save your note. Check your connection and try again.")
     } finally {
       setSubmitting(false)
     }
@@ -1168,8 +1208,12 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
     setIsMuted(next)
   }
 
+  // Control bar buttons: 40px targets on phones, compact on laptops
+  const ctrlBtn = "inline-flex shrink-0 items-center justify-center size-10 md:size-7 rounded-md transition-colors hover:bg-surface-2"
   const overlayVisible = !isFullscreen || isPaused || overlayHovered || overlayRecentKey || (canAnnotate && editMode)
   const hasLanes = totalDurationMs > 0 && (globalEventMarks.length > 0 || angleTracks.length > 0)
+  const legendEventTypes = [...new Set(globalEventMarks.map(m => m.event.eventType))]
+    .sort((a, b) => Object.keys(POINT_EVENT_META).indexOf(a) - Object.keys(POINT_EVENT_META).indexOf(b))
   const laneSummary = [
     globalEventMarks.length > 0 && "events",
     angleTracks.length > 0 && "angles",
@@ -1182,13 +1226,32 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
     }>
       {/* Timeline lanes — live events and angle coverage, collapsible as one group above the scrubber */}
       {hasLanes && (
-        <div className="flex flex-col gap-1">
-          <SectionToggle
-            open={layout.lanes}
-            label="Timeline lanes"
-            detail={laneSummary}
-            onClick={() => updateLayout({ lanes: !layout.lanes })}
-          />
+        <div className="hidden md:flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <SectionToggle
+              open={layout.lanes}
+              label="Timeline lanes"
+              detail={laneSummary}
+              onClick={() => updateLayout({ lanes: !layout.lanes })}
+            />
+            {layout.lanes && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-fg-muted" aria-label="Colour key">
+                {legendEventTypes.map(t => (
+                  <span key={t} className="flex items-center gap-1">
+                    <span className={`h-2.5 w-1 rounded-full ${POINT_EVENT_META[t].dot}`} />
+                    {POINT_EVENT_META[t].label}
+                  </span>
+                ))}
+                {legendEventTypes.length > 0 && globalMetaSegments.length > 0 && <span className="h-3 w-px bg-border" />}
+                {globalMetaSegments.length > 0 && POINT_LEGEND.map(([key, label]) => (
+                  <span key={key} className="flex items-center gap-1">
+                    <span className={`size-2 rounded-full ${POINT_COLORS[key]}`} />
+                    {label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
           {layout.lanes && (
             <div className="flex flex-col gap-1">
             {/* Live-recorded point events for tagged points */}
@@ -1325,11 +1388,12 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
       </div>
 
       {/* Control bar — on narrow screens the clip pills drop to their own scrollable row */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-0.5" onClick={e => e.stopPropagation()}>
+      <div className="flex flex-wrap items-center gap-x-1 md:gap-x-2 gap-y-1.5 px-0.5" onClick={e => e.stopPropagation()}>
         <button
           onClick={togglePlayPause}
-          className="text-foreground hover:text-foreground transition-colors shrink-0"
+          className={`${ctrlBtn} text-foreground`}
           aria-label={isPaused ? "Play" : "Pause"}
+          title={isPaused ? "Play (Space)" : "Pause (Space)"}
         >
           {isPaused ? <Play size={16} fill="currentColor" /> : <Pause size={16} fill="currentColor" />}
         </button>
@@ -1343,7 +1407,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                 key={t.id}
                 onClick={() => switchTrack(t.id)}
                 title={`${t.name} (${i + 1})`}
-                className={`shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors ${t.id === activeTrackId ? "bg-brand/25 text-foreground" : "text-fg-muted hover:text-foreground"}`}
+                className={`shrink-0 whitespace-nowrap px-3 py-2 md:px-2 md:py-0.5 rounded-md text-xs md:text-[11px] font-medium transition-colors ${t.id === activeTrackId ? "bg-brand/25 text-foreground" : "text-fg-muted hover:text-foreground"}`}
               >
                 {t.name}
               </button>
@@ -1356,7 +1420,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
               <button
                 key={clip.id}
                 onClick={() => jumpToClip(i)}
-                className={`shrink-0 whitespace-nowrap px-2.5 py-1 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                className={`shrink-0 whitespace-nowrap px-3 py-2 md:px-2.5 md:py-1 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
                   i === activeClipIdx
                     ? "bg-surface-3 text-foreground"
                     : "bg-surface text-fg-muted hover:text-foreground hover:bg-surface-2"
@@ -1368,13 +1432,14 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
             ))}
           </div>
         )}
-        <div className="ml-auto flex items-center gap-2.5 shrink-0">
+        <div className="ml-auto flex items-center gap-0.5 shrink-0">
           {allTracks.length > 1 && !isFullscreen && (
             <button
               onClick={() => setSplitTrackId(cur => cur ? null : (allTracks.find(t => t.id !== activeTrackId)?.id ?? null))}
-              className={`transition-colors ${splitTrackId ? "text-brand-text" : "text-fg-muted hover:text-foreground"}`}
+              className={`${ctrlBtn} ${splitTrackId ? "text-brand-text" : "text-fg-muted hover:text-foreground"}`}
               title="Side-by-side angles (V)"
               aria-label="Toggle side-by-side angles"
+              aria-pressed={!!splitTrackId}
             >
               <Columns2 size={15} />
             </button>
@@ -1382,7 +1447,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           {canAnnotate && angleTracks.length > 0 && !isFullscreen && (
             <button
               onClick={() => openSync(onAngle ? activeTrackId : angleTracks[0].id)}
-              className="text-fg-muted hover:text-foreground transition-colors"
+              className={`${ctrlBtn} hidden md:inline-flex text-fg-muted hover:text-foreground`}
               title="Sync camera angles to Main"
               aria-label="Open angle sync editor"
             >
@@ -1391,27 +1456,39 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           )}
           <button
             onClick={toggleMute}
-            className="text-fg-muted hover:text-foreground transition-colors"
+            className={`${ctrlBtn} text-fg-muted hover:text-foreground`}
             aria-label={isMuted ? "Unmute" : "Mute"}
           >
             {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
           </button>
-          <button
-            onClick={toggleFullscreen}
-            className="text-fg-muted hover:text-foreground transition-colors"
-            aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-          >
-            {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
-          </button>
+          <Tooltip content={<span className="flex items-center gap-1.5">Keyboard shortcuts <kbd className="font-mono">?</kbd></span>}>
+            <button
+              onClick={openShortcuts}
+              className={`${ctrlBtn} hidden pointer-fine:inline-flex text-fg-muted hover:text-foreground`}
+              aria-label="Keyboard shortcuts"
+              aria-haspopup="dialog"
+            >
+              <Keyboard size={15} />
+            </button>
+          </Tooltip>
+          {(canFullscreen || isFullscreen) && (
+            <button
+              onClick={toggleFullscreen}
+              className={`${ctrlBtn} text-fg-muted hover:text-foreground`}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            >
+              {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+            </button>
+          )}
         </div>
       </div>
     </div>
   )
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4">
-      {/* Left: video + controls */}
-      <div className="flex-1 min-w-0 flex flex-col gap-2">
+    <div className="flex flex-col lg:flex-row gap-4 text-left lg:h-full lg:min-h-0">
+      {/* Left: video + controls (scrolls on its own on laptops so the sidebar stays put) */}
+      <div className="flex-1 min-w-0 flex flex-col gap-2 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
         <div
           ref={containerRef}
           className={isFullscreen ? "theme-dark relative bg-black h-full" : "relative flex flex-col gap-2"}
@@ -1459,7 +1536,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                       onClick={() => switchTrack(MAIN_TRACK_ID)}
                       className="px-3 py-1.5 rounded-md bg-surface-2 hover:bg-surface-3 text-xs text-foreground transition-colors"
                     >
-                      Watch Main here <kbd className="ml-1 font-mono text-[11px] text-fg-muted">1</kbd>
+                      Watch Main here <Kbd className="ml-1">1</Kbd>
                     </button>
                     {nextSpan && (
                       <button
@@ -1503,7 +1580,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                         <option key={t.id} value={t.id} className="bg-card">{t.name}</option>
                       ))}
                     </select>
-                    <button onClick={() => setSplitTrackId(null)} className="text-fg-muted hover:text-foreground" aria-label="Close split view">×</button>
+                    <button onClick={() => setSplitTrackId(null)} className="inline-flex size-6 items-center justify-center rounded-md text-fg-muted hover:text-foreground" aria-label="Close side-by-side view"><X size={14} /></button>
                   </div>
                 }
               />
@@ -1553,17 +1630,20 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                     editable={canAnnotate && editMode}
                     onToggleEdit={canAnnotate ? toggleEditMode : undefined}
                     onCollapse={() => updateLayout({ editor: false })}
+                    onShowShortcuts={openShortcuts}
                     isPaused={isPaused}
                   />
                 ) : (
                   <div className="flex items-center gap-2 rounded-xl border border-dashed border-border px-4 py-3 text-xs text-fg-muted">
                     <span className="flex-1">
                       {globalMetaSegments.length > 0
-                        ? <>Play or scrub into a tagged point (or press <kbd className="font-mono text-fg-secondary">]</kbd>) to see its timeline.</>
-                        : "Tag a point at its pull to start building its timeline against the film."}
+                        ? <>Play or scrub into a tagged point<span className="hidden pointer-fine:inline"> (or press <Kbd>]</Kbd>)</span> to see its timeline.</>
+                        : canAnnotate
+                          ? <>Tag a point at its pull to start building its timeline against the film.<span className="md:hidden"> Tagging works best on a laptop.</span></>
+                          : "No points are tagged on this film yet."}
                     </span>
-                    <button onClick={() => updateLayout({ editor: false })} className="flex items-center gap-1 text-[11px] uppercase tracking-wider text-fg-muted hover:text-foreground" aria-label="Hide point timeline">
-                      <ChevronRight size={11} className="rotate-90" /> Hide
+                    <button onClick={() => updateLayout({ editor: false })} className="flex items-center gap-1 rounded-md text-xs text-fg-muted hover:text-foreground" aria-label="Hide point timeline">
+                      <ChevronRight size={12} className="rotate-90" /> Hide
                     </button>
                   </div>
                 )}
@@ -1577,34 +1657,36 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
       {!layout.sidebar && !isFullscreen && (
         <button
           onClick={() => updateLayout({ sidebar: true })}
-          className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs text-fg-muted hover:text-foreground hover:border-border-strong transition-colors lg:w-9 lg:self-start lg:px-0 lg:py-3 lg:[writing-mode:vertical-rl]"
+          className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2.5 text-xs text-fg-muted hover:text-foreground hover:border-border-strong transition-colors lg:w-9 lg:self-start lg:px-0 lg:py-3 lg:[writing-mode:vertical-rl]"
           title="Show points & notes"
         >
           <PanelRightOpen size={13} className="lg:rotate-90" /> Points &amp; notes
         </button>
       )}
       {layout.sidebar && !isFullscreen && (
-        <div className="w-full lg:w-80 shrink-0 flex flex-col border border-border rounded-xl overflow-hidden lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100dvh-2rem)]">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
-            <span className="text-sm font-semibold">Game Film</span>
+        <div className="w-full lg:w-80 shrink-0 flex flex-col border border-border rounded-xl overflow-hidden lg:self-start lg:max-h-full">
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-border shrink-0">
+            <h2 className="text-sm font-semibold">Points &amp; notes</h2>
             {points.length > 0 && (
               <span className="text-xs bg-surface-2 rounded-full px-2 py-0.5 font-mono tabular-nums">
-                {points.length} pts
+                {points.length}
               </span>
             )}
-            <span className="ml-auto text-[11px] text-fg-faint font-mono">[ ] nav</span>
-          <button
-            onClick={() => updateLayout({ sidebar: false })}
-            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-fg-muted hover:text-foreground hover:bg-surface-2 transition-colors"
-            title="Hide points & notes"
-          >
-            <PanelRightClose size={13} /> Hide
-          </button>
+            <span className="ml-auto hidden pointer-fine:inline-flex items-center gap-1 text-[11px] text-fg-muted" title="Previous / next tagged point">
+              <Kbd>[</Kbd><Kbd>]</Kbd>
+            </span>
+            <button
+              onClick={() => updateLayout({ sidebar: false })}
+              className="ml-auto pointer-fine:ml-0 flex items-center gap-1 rounded-md px-2 py-2 md:px-1.5 md:py-1 text-xs text-fg-muted hover:text-foreground hover:bg-surface-2 transition-colors"
+              title="Hide points & notes"
+            >
+              <PanelRightClose size={13} /> Hide
+            </button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-0.5 min-h-0 max-h-[50vh] lg:max-h-none">
             {sidebarEntries.length === 0 ? (
-              <p className="text-fg-muted text-sm text-center py-6">No points or notes yet.</p>
+              <p className="text-fg-muted text-sm text-center py-6 px-4">No points or notes yet.</p>
             ) : (
               sidebarEntries.map(entry => {
                 if (entry.kind === "point") {
@@ -1633,14 +1715,14 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                           disabled={pointEvents.length === 0}
                           aria-expanded={isExpanded}
                           aria-label={`${isExpanded ? "Hide" : "Show"} events for point ${point.pointNumber}`}
-                          className="shrink-0 pl-1.5 pr-0.5 py-2 text-fg-muted hover:text-foreground disabled:opacity-0 transition-colors"
+                          className="shrink-0 flex items-center justify-center w-8 md:w-auto md:pl-1.5 md:pr-0.5 py-3 md:py-2 text-fg-muted hover:text-foreground disabled:opacity-0 transition-colors"
                         >
                           <ChevronRight size={12} className={`transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                         </button>
                         <button
                           onClick={isTagged ? () => jumpToAnnotation(markerAnn!) : undefined}
                           disabled={!isTagged}
-                          className={`flex-1 min-w-0 flex items-center gap-2 pl-1 pr-3 py-2 text-left rounded-xl transition-colors ${
+                          className={`flex-1 min-w-0 flex items-center gap-2 pl-1 pr-3 py-3 md:py-2 text-left rounded-xl transition-colors ${
                             isTagged ? "hover:bg-surface-2 cursor-pointer" : "cursor-default opacity-50"
                           }`}
                         >
@@ -1792,6 +1874,9 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                 </button>
               </div>
 
+              <p className="md:hidden text-[11px] text-fg-muted">Creating and tagging points works best on a laptop.</p>
+
+              <div className="hidden md:contents">
               <div className="border-t border-border my-0.5" />
 
               <button
@@ -1922,10 +2007,12 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                   )}
                 </>
               )}
+              </div>
             </div>
           )}
         </div>
       )}
+      <ShortcutSheet open={showShortcuts} onOpenChange={setShowShortcuts} canEdit={canAnnotate} />
     </div>
   )
 }

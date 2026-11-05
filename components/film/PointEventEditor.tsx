@@ -12,6 +12,7 @@ import { POINT_EVENT_META, POINT_EVENT_TYPES, eventNeedsPlayer, type PointEventT
 import { isEventComplete, resolveOffsets, type SaveStatus } from "@/hooks/use-film-point-events"
 import { PlayerPicker, type PickerMode } from "./PlayerPicker"
 import { LineEditor } from "./LineEditor"
+import { Kbd } from "@/components/ui/kbd"
 
 interface PointEventEditorProps {
   point: PointItem
@@ -38,6 +39,8 @@ interface PointEventEditorProps {
   onToggleEdit?: () => void
   /** Collapse the editor to a one-line bar to free space for video */
   onCollapse?: () => void
+  /** Opens the viewer's keyboard shortcut sheet */
+  onShowShortcuts?: () => void
 }
 
 // ─── Layout constants ────────────────────────────────────────────────────────
@@ -117,7 +120,7 @@ function pickerStepFor(type: PointEventType): PickerState["step"] | null {
 export function PointEventEditor({
   point, events, players, rangeMs, getPlayheadMs, onSeek, onEdit,
   undo, redo, canUndo, canRedo, saveStatus, saveError, onRetrySave, onSaveLine, isPaused,
-  editable, onToggleEdit, onCollapse,
+  editable, onToggleEdit, onCollapse, onShowShortcuts,
 }: PointEventEditorProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const trackRef = useRef<HTMLDivElement>(null)
@@ -137,7 +140,6 @@ export function PointEventEditor({
   const [picker, setPicker] = useState<PickerState | null>(null)
   const [lineOpen, setLineOpen] = useState(false)
   const [snapEnabled, setSnapEnabled] = useState(true)
-  const [showHelp, setShowHelp] = useState(false)
   const [iframeHasFocus, setIframeHasFocus] = useState(false)
 
   const [wasEditable, setWasEditable] = useState(editable)
@@ -212,6 +214,17 @@ export function PointEventEditor({
     const p = playerById.get(ev.playerId)
     return `${meta.short} ${p ? `#${p.number}` : "?"}`
   }, [playerById])
+
+  // Jersey numbers first, then first names for players without a number (#0 means "no number")
+  const lineLabel = useMemo(() => {
+    const onLine = point.playerIds.map(id => playerById.get(id)).filter((p): p is PlayerItem => !!p)
+    const numbered = onLine.filter(p => p.number > 0).sort((a, b) => a.number - b.number).map(p => `#${p.number}`)
+    const named = onLine.filter(p => !(p.number > 0)).map(p => p.first_name).sort()
+    return {
+      short: [...numbered, ...named].join(" "),
+      full: onLine.map(p => `${p.number > 0 ? `#${p.number} ` : ""}${p.first_name} ${p.last_name}`).join(", "),
+    }
+  }, [point.playerIds, playerById])
 
   const describe = useCallback((ev: PointEventItem) => {
     if (ev.eventType === "TIMEOUT") return ev.team === "VOID" ? "Void" : ev.team === "OPP" ? "Opponent" : "Team?"
@@ -479,7 +492,7 @@ export function PointEventEditor({
   useHotkeys("mod+z", undo, hk, [undo])
   useHotkeys(["mod+shift+z", "ctrl+y"], redo, hk, [redo])
   useHotkeys("mod+a", () => setSelected(new Set(events.map(e => e.id))), hk, [events])
-  useHotkeys("escape", () => { setSelected(new Set()); setShowHelp(false) }, hkNav, [])
+  useHotkeys("escape", () => setSelected(new Set()), hkNav, [])
   useHotkeys("tab", () => stepSelection(1), hkNavKeys, [stepSelection, popoverOpen])
   useHotkeys("shift+tab", () => stepSelection(-1), hkNavKeys, [stepSelection, popoverOpen])
   useHotkeys("enter", () => {
@@ -489,7 +502,6 @@ export function PointEventEditor({
   useHotkeys("equal", () => zoomAround(0.67), hkNav, [zoomAround])
   useHotkeys("minus", () => zoomAround(1.5), hkNav, [zoomAround])
   useHotkeys("backslash", fitView, hkNav, [fitView])
-  useHotkeys("shift+slash", () => setShowHelp(h => !h), hkNav, [])
   useHotkeys("shift+l", () => setLineOpen(true), hk, [])
   useHotkeys("e", () => onToggleEdit?.(), { enabled: !!onToggleEdit && !popoverOpen, preventDefault: true }, [onToggleEdit])
 
@@ -655,7 +667,9 @@ export function PointEventEditor({
     <div
       ref={rootRef}
       tabIndex={-1}
-      className={`relative flex flex-col rounded-xl border bg-surface select-none transition-colors ${editable ? "border-amber-300/40" : "border-white/10"}`}
+      // While editing, Esc belongs to the editor (clear selection, close pickers), not to the film overlay
+      data-film-esc-layer={editable || popoverOpen ? "" : undefined}
+      className={`relative flex flex-col rounded-xl border bg-surface select-none transition-colors ${editable ? "border-warning/40" : "border-border"}`}
     >
       {/* Header */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 border-b border-border text-xs">
@@ -672,18 +686,12 @@ export function PointEventEditor({
           type="button"
           onClick={editable ? () => setLineOpen(o => !o) : undefined}
           disabled={!editable}
-          title={editable ? "Edit line (⇧L)" : "Line"}
-          className={`flex items-center gap-1 min-w-0 px-1.5 py-0.5 rounded-md border transition-colors disabled:cursor-default ${lineOpen ? "border-border-strong bg-surface-2" : editable ? "border-border hover:border-border-strong" : "border-transparent"}`}
+          title={lineLabel.full ? `${editable ? "Edit line (⇧L): " : "Line: "}${lineLabel.full}` : editable ? "Edit line (⇧L)" : "Line"}
+          className={`flex items-center gap-1 min-w-0 max-w-full px-1.5 py-0.5 rounded-md border transition-colors disabled:cursor-default ${lineOpen ? "border-border-strong bg-surface-2" : editable ? "border-border hover:border-border-strong" : "border-transparent"}`}
         >
           <span className="text-fg-muted">Line</span>
-          <span className={`font-mono truncate ${point.playerIds.length === 7 || !editable ? "text-fg-secondary" : "text-warning"}`}>
-            {point.playerIds.length === 0
-              ? "—"
-              : point.playerIds
-                  .map(id => playerById.get(id)?.number)
-                  .filter((n): n is number => n !== undefined)
-                  .sort((a, b) => a - b)
-                  .join(" ")}
+          <span className={`truncate ${point.playerIds.length === 7 || !editable ? "text-fg-secondary" : "text-warning"}`}>
+            {lineLabel.short || "—"}
           </span>
         </button>
 
@@ -703,17 +711,25 @@ export function PointEventEditor({
           <IconButton label="Zoom out (−)" onClick={() => zoomAround(1.5)}><ZoomOut size={14} /></IconButton>
           <IconButton label="Zoom in (=)" onClick={() => zoomAround(0.67)}><ZoomIn size={14} /></IconButton>
           <IconButton label="Fit point (\)" onClick={fitView}><Maximize2 size={13} /></IconButton>
-          <IconButton label="Shortcuts (?)" onClick={() => setShowHelp(h => !h)} active={showHelp}><Keyboard size={14} /></IconButton>
+          {onShowShortcuts && (
+            <span className="hidden pointer-fine:contents">
+              <IconButton label="Keyboard shortcuts (?)" onClick={onShowShortcuts}><Keyboard size={14} /></IconButton>
+            </span>
+          )}
           {onToggleEdit && (
-            <button
-              type="button"
-              onClick={onToggleEdit}
-              title={editable ? "Done editing (E)" : "Edit events (E)"}
-              className={`ml-1.5 flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] transition-colors ${editable ? "border-warning/50 bg-warning/15 text-warning hover:bg-warning/25" : "border-border text-fg-secondary hover:text-foreground hover:border-border-strong"}`}
-            >
-              {editable ? <Check size={12} /> : <Pencil size={11} />}
-              {editable ? "Done" : "Edit"}
-            </button>
+            <>
+              {/* Dense drag-and-key editing needs a laptop; phones keep the read-only timeline */}
+              <span className="ml-1.5 text-[11px] text-fg-muted md:hidden">Edit on a laptop</span>
+              <button
+                type="button"
+                onClick={onToggleEdit}
+                title={editable ? "Done editing (E)" : "Edit events (E)"}
+                className={`ml-1.5 hidden md:flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] transition-colors ${editable ? "border-warning/50 bg-warning/15 text-warning hover:bg-warning/25" : "border-border text-fg-secondary hover:text-foreground hover:border-border-strong"}`}
+              >
+                {editable ? <Check size={12} /> : <Pencil size={11} />}
+                {editable ? "Done" : "Edit"}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -789,7 +805,7 @@ export function PointEventEditor({
                   isGhost ? "border border-dashed border-border-strong bg-surface-2 text-fg-secondary"
                     : isSel ? `bg-surface-3 text-foreground ring-1 ring-foreground z-10 ${editable ? "cursor-grab" : "cursor-pointer"}`
                     : `bg-surface-2 text-foreground hover:bg-surface-2 ${editable ? "cursor-grab" : "cursor-pointer"}`,
-                  !complete && !isGhost && editable ? "outline outline-1 outline-dashed outline-amber-300/70" : "",
+                  !complete && !isGhost && editable ? "outline outline-1 outline-dashed outline-warning/70" : "",
                 ].join(" ")}
                 style={{ left: x, top: y, width: w, height: CHIP_H }}
               >
@@ -823,7 +839,7 @@ export function PointEventEditor({
           <div ref={playheadRef} className="absolute top-0 bottom-0 left-0 pointer-events-none z-30" style={{ opacity: 0 }}>
             <div className="absolute top-0 bottom-0 w-px bg-destructive" />
             <div className="absolute top-0 -translate-x-1/2 w-2.5 h-2.5 rotate-45 -mt-1.5 bg-destructive" />
-            <span ref={playheadLabelRef} className="absolute top-0.5 left-1.5 text-[9px] font-mono text-red-300 bg-black/70 rounded px-0.5" />
+            <span ref={playheadLabelRef} className="absolute top-0.5 left-1.5 text-[11px] leading-none font-mono text-destructive bg-card/90 rounded-md px-0.5" />
           </div>
 
           {/* Player picker */}
@@ -851,12 +867,13 @@ export function PointEventEditor({
               <span className={POINT_EVENT_META[single.eventType].text}>{POINT_EVENT_META[single.eventType].label}</span>
               {describe(single) && <span className="text-fg-secondary truncate">{describe(single)}</span>}
               <span className="font-mono text-fg-muted">{formatPointTime(offsets.get(single.id) ?? 0, true)}</span>
-              <span className="ml-auto text-fg-muted"><Kbd>Tab</Kbd> next event</span>
+              <span className="ml-auto hidden pointer-fine:inline-flex items-center gap-1 text-fg-muted"><Kbd>Tab</Kbd> next event</span>
             </>
           ) : (
             <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-fg-muted">
-              Click an event to jump to it · <Kbd>Tab</Kbd><Kbd>⇧Tab</Kbd> step through events
-              {onToggleEdit && <> · <Kbd>E</Kbd> edit</>}
+              <span><span className="pointer-coarse:hidden">Click</span><span className="hidden pointer-coarse:inline">Tap</span> an event to jump to it</span>
+              <span className="hidden pointer-fine:inline-flex items-center gap-x-1">· <Kbd>Tab</Kbd><Kbd>⇧Tab</Kbd> step through events</span>
+              {onToggleEdit && <span className="hidden md:pointer-fine:inline-flex items-center gap-x-1">· <Kbd>E</Kbd> edit</span>}
             </span>
           )
         ) : single ? (
@@ -879,7 +896,7 @@ export function PointEventEditor({
             )}
             <span className="font-mono text-fg-muted">{formatPointTime(offsets.get(single.id) ?? 0, true)}</span>
             <span className="ml-auto flex items-center gap-2 text-fg-muted">
-              <Kbd>,</Kbd><Kbd>.</Kbd> nudge <Kbd>M</Kbd> to playhead
+              <span className="hidden pointer-fine:inline-flex items-center gap-1"><Kbd>,</Kbd><Kbd>.</Kbd> nudge <Kbd>M</Kbd> to playhead</span>
               <button onClick={deleteSelected} className="ml-1 text-fg-muted hover:text-destructive transition-colors" aria-label="Delete event">
                 <Trash2 size={13} />
               </button>
@@ -930,7 +947,6 @@ export function PointEventEditor({
         />
       )}
 
-      {showHelp && <ShortcutHelp onClose={() => setShowHelp(false)} />}
     </div>
   )
 }
@@ -954,13 +970,6 @@ function IconButton({ label, onClick, disabled, active, children }: {
   )
 }
 
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-md border border-border bg-surface font-mono text-[11px] text-fg-secondary">
-      {children}
-    </kbd>
-  )
-}
 
 function SaveIndicator({ status, error, incomplete, onRetry }: {
   status: SaveStatus; error: string | null; incomplete: number; onRetry: () => void
@@ -979,47 +988,5 @@ function SaveIndicator({ status, error, incomplete, onRetry }: {
         ? <><Loader2 size={12} className="animate-spin" /> Saving</>
         : <><Check size={12} /> Saved</>}
     </span>
-  )
-}
-
-const SHORTCUTS: [string, string][] = [
-  ["Space / K", "Play / pause"],
-  ["J / L", "Back / forward 5s"],
-  ["← / →", "Back / forward 1s (⇧ for 0.1s)"],
-  ["P F T B A G", "Add Pull · Pull finished · Turn · Block · Assist · Goal at playhead"],
-  ["S / O", "Add Sub · Timeout at playhead"],
-  ["Tab / ⇧Tab", "Select next / previous event and jump to it"],
-  ["Click · ⇧Click · ⌘Click", "Select · add · toggle"],
-  ["Drag empty track", "Box-select"],
-  [", / .", "Nudge selection 0.1s (⇧ for 1s)"],
-  ["M", "Move selection to playhead"],
-  ["⇧M", "Slide the whole point so the selected event (or Pull finished) hits the playhead"],
-  ["Enter / double-click", "Change player"],
-  ["E", "Toggle edit mode (coaches)"],
-  ["⇧L", "Edit the line for this point"],
-  ["⌫", "Delete selection"],
-  ["⌘A · Esc", "Select all · clear"],
-  ["⌘Z / ⇧⌘Z", "Undo / redo"],
-  ["= / − / \\ · ⌘scroll", "Zoom in / out / fit · zoom at cursor"],
-  ["Alt while dragging", "Bypass snapping"],
-  ["[ / ]", "Previous / next tagged point"],
-]
-
-function ShortcutHelp({ onClose }: { onClose: () => void }) {
-  return (
-    <div className="absolute right-2 top-10 z-50 w-[340px] rounded-xl border border-border-strong bg-card shadow-2xl p-3">
-      <div className="flex items-center mb-2">
-        <span className="text-xs font-semibold text-foreground">Keyboard shortcuts</span>
-        <button onClick={onClose} className="ml-auto text-fg-muted hover:text-foreground text-xs">Esc</button>
-      </div>
-      <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11px]">
-        {SHORTCUTS.map(([k, d]) => (
-          <div key={k} className="contents">
-            <span className="font-mono text-fg-secondary whitespace-nowrap">{k}</span>
-            <span className="text-fg-muted">{d}</span>
-          </div>
-        ))}
-      </div>
-    </div>
   )
 }

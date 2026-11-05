@@ -9,9 +9,15 @@ import type { FilmClipItem } from "@/lib/aws/film-clips"
 import type { FilmAnnotationItem } from "@/lib/aws/film-annotations"
 import type { GameStats, PlayerStats } from "@/lib/stats/derive"
 import { Spinner } from "@/components/ui/spinner"
+import { Button } from "@/components/ui/button"
+import { toast } from "@/components/ui/sonner"
 
 const FilmViewer = dynamic(
   () => import("@/components/film/FilmViewer").then(m => m.FilmViewer),
+  { ssr: false }
+)
+const FilmOverlay = dynamic(
+  () => import("@/components/film/FilmOverlay").then(m => m.FilmOverlay),
   { ssr: false }
 )
 
@@ -40,7 +46,8 @@ export default function MePage() {
 
   const [gameClips, setGameClips] = useState<GameClips[]>([])
   const [dataLoading, setDataLoading] = useState(true)
-  const [viewerState, setViewerState] = useState<{ clips: FilmClipItem[]; annotations: FilmAnnotationItem[] } | null>(null)
+  const [viewerState, setViewerState] = useState<{ clips: FilmClipItem[]; annotations: FilmAnnotationItem[]; title: string } | null>(null)
+  const [openingGameId, setOpeningGameId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -96,33 +103,26 @@ export default function MePage() {
     load()
   }, [user])
 
-  const openGameViewer = async (clips: FilmClipItem[]) => {
-    const annArrays = await Promise.all(
-      clips.map(c =>
-        fetch(`/api/film/annotations?clipId=${c.id}`).then(r => r.ok ? r.json() : [])
+  const openGameViewer = async (gc: GameClips) => {
+    setOpeningGameId(gc.gameId)
+    try {
+      const annArrays = await Promise.all(
+        gc.clips.map(c =>
+          fetch(`/api/film/annotations?clipId=${c.id}`).then(r => r.ok ? r.json() : [])
+        )
       )
-    )
-    setViewerState({ clips, annotations: (annArrays as FilmAnnotationItem[][]).flat() })
+      setViewerState({ clips: gc.clips, annotations: (annArrays as FilmAnnotationItem[][]).flat(), title: gc.gameLabel })
+    } catch {
+      toast.error("Couldn't open the film. Check your connection and try again.")
+    } finally {
+      setOpeningGameId(null)
+    }
   }
 
   if (isLoading || !user) {
     return (
       <div className="flex items-center justify-center min-h-[50dvh]">
         <Spinner size="md" />
-      </div>
-    )
-  }
-
-  if (viewerState) {
-    return (
-      <div className="flex flex-col p-8 lg:px-16 gap-6">
-        <button
-          onClick={() => setViewerState(null)}
-          className="text-fg-muted hover:text-foreground text-sm flex items-center gap-1 transition-colors w-fit"
-        >
-          ← My Footage
-        </button>
-        <FilmViewer clips={viewerState.clips} initialAnnotations={viewerState.annotations} canAnnotate={false} />
       </div>
     )
   }
@@ -176,15 +176,24 @@ export default function MePage() {
               {gc.clips.length} clip{gc.clips.length !== 1 ? "s" : ""}
               {gc.stats && ` · ${gc.stats.goals} G · ${gc.stats.assists} A · ${gc.stats.blocks} D · ${gc.stats.turnovers} T`}
             </p>
-            <button
-              onClick={() => openGameViewer(gc.clips)}
-              className="text-xs text-fg-muted hover:text-foreground transition-colors"
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => openGameViewer(gc)}
+              loading={openingGameId === gc.gameId}
+              disabled={openingGameId !== null}
             >
-              Watch Game Film →
-            </button>
+              Watch film
+            </Button>
           </div>
         </section>
       ))}
+
+      {viewerState && (
+        <FilmOverlay onClose={() => setViewerState(null)} title={viewerState.title} subtitle="My footage">
+          <FilmViewer clips={viewerState.clips} initialAnnotations={viewerState.annotations} canAnnotate={false} />
+        </FilmOverlay>
+      )}
     </div>
   )
 }

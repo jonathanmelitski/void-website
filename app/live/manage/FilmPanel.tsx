@@ -12,9 +12,14 @@ import { MAIN_TRACK_ID, sortClips, trackIdOf, type FilmTrack } from "@/lib/film-
 import { Spinner } from "@/components/ui/spinner"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
+import { apiFetch, errorMessage } from "@/lib/api-fetch"
 
 const FilmViewer = dynamic(
   () => import("@/components/film/FilmViewer").then(m => m.FilmViewer),
+  { ssr: false }
+)
+const FilmOverlay = dynamic(
+  () => import("@/components/film/FilmOverlay").then(m => m.FilmOverlay),
   { ssr: false }
 )
 
@@ -103,20 +108,26 @@ export function FilmPanel() {
       setDropId(null)
       return
     }
-    setOrderedIds(prev => {
-      const next = [...prev]
-      next.splice(next.indexOf(dragId), 1)
-      next.splice(next.indexOf(targetId), 0, dragId)
-      fetch("/api/film/clips/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(next.map((id, idx) => ({ id, sortOrder: idx }))),
-      }).catch(() => {})
-      return next
+    const prev = orderedIds
+    const next = [...prev]
+    next.splice(next.indexOf(dragId), 1)
+    next.splice(next.indexOf(targetId), 0, dragId)
+    setOrderedIds(next)
+    apiFetch("/api/film/clips/reorder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(next.map((id, idx) => ({ id, sortOrder: idx }))),
+      waitForSession: true,
     })
+      .then(res => { if (!res.ok) throw new Error() })
+      .catch(() => {
+        // Put the list back the way it is saved
+        setOrderedIds(cur => (cur === next ? prev : cur))
+        toast.error("Couldn't save the new clip order. Try again.")
+      })
     setDragId(null)
     setDropId(null)
-  }, [dragId])
+  }, [dragId, orderedIds])
 
   const openGameViewer = useCallback(async (syncTrackId?: string) => {
     const readyClips = orderedClips.filter(c => c.status === "READY")
@@ -147,13 +158,23 @@ export function FilmPanel() {
   const saveTracks = async (next: FilmTrack[]) => {
     if (!game) return false
     setTrackError(null)
-    const res = await fetch(`/api/games/${game.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filmTracks: next }),
-    })
+    let res: Response
+    try {
+      res = await apiFetch(`/api/games/${game.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filmTracks: next }),
+        waitForSession: true,
+      })
+    } catch {
+      setTrackError("Couldn't save the camera angles. Check your connection and try again.")
+      toast.error("Couldn't save the camera angles.")
+      return false
+    }
     if (!res.ok) {
-      setTrackError("Failed to save angles")
+      const message = await errorMessage(res, "Couldn't save the camera angles. Try again.")
+      setTrackError(message)
+      toast.error(message)
       return false
     }
     setGames(prev => prev.map(g => g.id === game.id ? { ...g, filmTracks: next } : g))
@@ -178,25 +199,6 @@ export function FilmPanel() {
   const deleteTrack = async (track: FilmTrack) => {
     if (orderedClips.some(c => trackIdOf(c) === track.id)) return
     if (await saveTracks(angleTracks.filter(t => t.id !== track.id))) setSelectedTrackId(MAIN_TRACK_ID)
-  }
-
-  if (viewerData) {
-    return (
-      <div>
-        <button
-          onClick={() => setViewerData(null)}
-          className="text-fg-muted hover:text-foreground text-sm mb-4 flex items-center gap-1 transition-colors"
-        >
-          ← Back to clips
-        </button>
-        <FilmViewer
-          clips={viewerData.clips}
-          initialAnnotations={viewerData.annotations}
-          canAnnotate
-          initialSyncTrackId={viewerData.syncTrackId}
-        />
-      </div>
-    )
   }
 
   const isAngle = selectedTrack.id !== MAIN_TRACK_ID
@@ -242,8 +244,8 @@ export function FilmPanel() {
           <div className="flex items-center justify-between gap-4">
             <h3 className="text-sm font-semibold text-fg-secondary">Film</h3>
             {hasMainFilm && (
-              <Button size="sm" variant="ghost" onClick={() => openGameViewer()}>
-                Review Film
+              <Button size="sm" variant="outline" onClick={() => openGameViewer()}>
+                Watch film
               </Button>
             )}
           </div>
@@ -425,6 +427,21 @@ export function FilmPanel() {
         isLoading={deleting}
         onConfirm={confirmDelete}
       />
+      {viewerData && (
+        <FilmOverlay
+          onClose={() => setViewerData(null)}
+          title={game ? `vs ${game.opponent}${game.round ? ` · ${game.round}` : ""}` : undefined}
+          gameId={viewerData.clips[0]?.gameId}
+          subtitle={events.find(e => e.id === selectedEventId)?.title}
+        >
+          <FilmViewer
+            clips={viewerData.clips}
+            initialAnnotations={viewerData.annotations}
+            canAnnotate
+            initialSyncTrackId={viewerData.syncTrackId}
+          />
+        </FilmOverlay>
+      )}
     </div>
   )
 }
