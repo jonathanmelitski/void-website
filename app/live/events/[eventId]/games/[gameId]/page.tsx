@@ -1,20 +1,33 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter, useParams } from "next/navigation"
+import { useParams } from "next/navigation"
+import Link from "next/link"
+import { ChevronLeft, ListX, Radio, Trophy } from "lucide-react"
 import { useRequireAuth } from "@/hooks/use-require-auth"
 import { Badge } from "@/components/ui/badge"
-import type { GameItem, GameStatus } from "@/lib/aws/games"
+import { Button } from "@/components/ui/button"
+import { EmptyState } from "@/components/ui/empty-state"
+import { Skeleton, SkeletonRow } from "@/components/ui/skeleton"
+import { PageContainer } from "@/components/ui/page"
+import { formatGameTime } from "@/lib/format-date"
+import type { GameItem, GameResult } from "@/lib/aws/games"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
-import { deriveGameStats, type GameStats } from "@/lib/stats/derive"
-import { Spinner } from "@/components/ui/spinner"
+import { deriveGameStats, type DerivedPoint, type GameStats } from "@/lib/stats/derive"
 
-const STATUS_VARIANT: Record<GameStatus, "default" | "secondary" | "outline"> = {
-  SCHEDULED: "outline",
-  IN_PROGRESS: "secondary",
-  FINAL: "default",
+const RESULT_BADGE: Record<GameResult, { label: string; variant: "success" | "destructive" | "warning" }> = {
+  WIN: { label: "Win", variant: "success" },
+  LOSS: { label: "Loss", variant: "destructive" },
+  TIE: { label: "Tie", variant: "warning" },
+}
+
+// Point outcome from Void's side: who scored, and whether it was a hold or a break.
+function pointLabel(p: DerivedPoint): { text: string; tone: string } {
+  if (!p.scorer) return { text: "No result", tone: "bg-surface-2 text-fg-muted" }
+  if (p.scorer === "US") return { text: p.lineType === "O" ? "Hold" : "Break", tone: "bg-success/15 text-success" }
+  return { text: p.lineType === "O" ? "Broken" : "Conceded", tone: "bg-destructive/15 text-destructive" }
 }
 
 const EVENT_TYPE_LABELS: Record<PointEventType, string> = {
@@ -23,7 +36,7 @@ const EVENT_TYPE_LABELS: Record<PointEventType, string> = {
   TURNOVER: "Turnover",
   BLOCK: "Block",
   PULL: "Pull",
-  PULL_FINISHED: "Pull Finished",
+  PULL_FINISHED: "Pull landed",
   SUBSTITUTION: "Sub",
   TIMEOUT: "Timeout",
 }
@@ -61,7 +74,6 @@ function toPlayerStats(stats: GameStats, players: PlayerItem[]): PlayerStat[] {
 
 export default function GameDetailPage() {
   const { user, isLoading } = useRequireAuth()
-  const router = useRouter()
   const { eventId, gameId } = useParams<{ eventId: string; gameId: string }>()
 
   const [game, setGame] = useState<GameItem | null>(null)
@@ -71,8 +83,8 @@ export default function GameDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
+  // Game data is public, so it loads alongside the auth check rather than after it.
   useEffect(() => {
-    if (!user) return
     Promise.all([
       fetch(`/api/games/${gameId}`),
       fetch("/api/players"),
@@ -89,20 +101,34 @@ export default function GameDetailPage() {
         setPoints(Array.isArray(pointsData) ? pointsData.sort((a: PointItem, b: PointItem) => a.pointNumber - b.pointNumber) : [])
         setPointEvents(Array.isArray(eventsData) ? eventsData : [])
       })
-      .catch(() => setError("Failed to load game data"))
+      .catch(() => setError("Couldn't load this game. Check your connection and reload the page."))
       .finally(() => setLoading(false))
-  }, [user, gameId])
+  }, [gameId])
 
-  if (isLoading || !user || loading) {
-    return <div className="flex items-center justify-center min-h-[50dvh]"><Spinner size="md" /></div>
-  }
+  useEffect(() => {
+    if (game) document.title = `Void vs ${game.opponent} · Void Live`
+  }, [game])
+
+  const backLink = (
+    <Link href={`/live/events/${eventId}`} className="inline-flex min-h-10 items-center gap-1 text-sm text-fg-muted hover:text-foreground">
+      <ChevronLeft className="size-4" aria-hidden />
+      Back to event
+    </Link>
+  )
+
+  if (isLoading || !user || loading) return <GameSkeleton />
 
   if (error || !game) {
     return (
-      <div className="flex flex-col p-8 lg:px-16 gap-4">
-        <button onClick={() => router.back()} className="text-fg-muted hover:text-foreground text-sm w-fit">← Back</button>
-        <p className="text-fg-muted text-sm">{error || "Game not found."}</p>
-      </div>
+      <PageContainer width="prose">
+        {backLink}
+        <EmptyState
+          variant="page"
+          icon={<Trophy />}
+          title={error === "Game not found" || !error ? "Game not found" : "Couldn't load this game"}
+          description={error === "Game not found" || !error ? "It may have been removed." : "Check your connection and reload the page."}
+        />
+      </PageContainer>
     )
   }
 
@@ -121,36 +147,53 @@ export default function GameDetailPage() {
   const { oEfficiency, dConversion } = stats
   const result = stats.result
   const isCoachOrAdmin = !!(user.groups?.includes("COACH") || user.groups?.includes("ADMIN"))
+  const isLive = game.status === "IN_PROGRESS"
+  // Stored status can stay SCHEDULED for games scored only in film; the points are the truth then.
+  const notStarted = game.status === "SCHEDULED" && stats.points.length === 0
+  const startTime = formatGameTime(game.scheduledTime)
 
   const playerStats = toPlayerStats(stats, players)
 
   return (
-    <div className="flex flex-col p-8 lg:px-16 gap-8 text-left max-w-4xl">
+    <PageContainer width="prose" className="flex flex-col gap-8 text-left">
       {/* Header */}
-      <div>
-        <button
-          onClick={() => router.push(`/live/events/${eventId}`)}
-          className="text-fg-muted hover:text-foreground text-sm mb-4 flex items-center gap-1 transition-colors"
-        >
-          ← Back to Event
-        </button>
-        <div className="flex items-start gap-3 flex-wrap">
-          <h1 className="text-3xl font-display leading-none tracking-wide">vs {game.opponent}</h1>
-          <Badge variant={STATUS_VARIANT[game.status]} className="mt-1">{game.status}</Badge>
-          {result && (
-            <span className={`text-sm font-bold mt-1 ${result === "WIN" ? "text-success" : result === "LOSS" ? "text-destructive" : "text-warning"}`}>
-              {result}
-            </span>
-          )}
+      <header className="flex flex-col gap-3">
+        {backLink}
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-4xl font-display leading-none tracking-wide md:text-5xl">Void vs {game.opponent}</h1>
+          {isLive ? (
+            <Badge variant="destructive">Live</Badge>
+          ) : notStarted ? (
+            <Badge variant="outline">Scheduled</Badge>
+          ) : result ? (
+            <Badge variant={RESULT_BADGE[result].variant}>{RESULT_BADGE[result].label}</Badge>
+          ) : null}
         </div>
-        {game.round && <p className="text-fg-muted text-sm mt-1">{game.round}</p>}
-        <p className="text-fg-secondary font-mono tabular-nums text-3xl mt-2">{stats.score.us} – {stats.score.them}</p>
+        {(game.round || (notStarted && startTime)) && (
+          <p className="text-fg-muted text-sm">{[game.round, notStarted ? startTime : null].filter(Boolean).join(" · ")}</p>
+        )}
+        {!notStarted && (
+          <p className="font-mono tabular-nums text-4xl text-foreground">{stats.score.us}–{stats.score.them}</p>
+        )}
+        {isLive && (
+          <Button asChild variant="brand" size="lg" className="w-fit">
+            <Link href={`/live/watch/${game.id}`}><Radio aria-hidden />Watch live</Link>
+          </Button>
+        )}
         {isCoachOrAdmin && stats.warnings.length > 0 && (
           <ul className="text-fg-muted text-xs mt-2 flex flex-col gap-0.5" aria-label="Data warnings">
             {stats.warnings.map((w, i) => <li key={i}>{w.message}</li>)}
           </ul>
         )}
-      </div>
+      </header>
+
+      {stats.points.length === 0 && (
+        <EmptyState
+          icon={<ListX />}
+          title={notStarted ? "This game hasn't started" : "No points recorded"}
+          description={notStarted ? "Stats and the point log appear here once points are scored." : "No points were recorded for this game."}
+        />
+      )}
 
       {/* Quick stats */}
       {scoredPoints.length > 0 && (
@@ -165,36 +208,35 @@ export default function GameDetailPage() {
       {/* Player stat table */}
       {playerStats.length > 0 && (
         <section>
-          <h2 className="text-lg font-bold mb-3">Player Stats</h2>
+          <h2 className="text-lg font-semibold mb-3">Player stats</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-fg-muted text-xs border-b border-border">
                   <th className="text-left py-2 pr-4 font-medium">Player</th>
-                  <th className="text-right py-2 px-3 font-medium text-success/70">G</th>
-                  <th className="text-right py-2 px-3 font-medium text-brand-text/70">A</th>
-                  <th className="text-right py-2 px-3 font-medium text-destructive/70">T</th>
-                  <th className="text-right py-2 px-3 font-medium text-warning/70">B</th>
-                  <th className="text-right py-2 px-3 font-medium text-fg-muted">Pl</th>
+                  {STAT_COLUMNS.map(([short, long]) => (
+                    <th key={short} className="text-right py-2 px-2 sm:px-3 font-medium">
+                      <abbr title={long} className="no-underline sm:hidden">{short}</abbr>
+                      <span className="hidden sm:inline">{long}</span>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {playerStats.map(({ player, goals, assists, turnovers, blocks, pulls }) => (
                   <tr key={player.id} className="border-b border-border hover:bg-surface-2 transition-colors">
                     <td className="py-2 pr-4">
-                      <span className="text-fg-secondary">{player.first_name} {player.last_name}</span>
-                      <span className="text-fg-faint text-xs ml-2">#{player.number}</span>
+                      <span className="text-foreground">{player.first_name} {player.last_name}</span>
+                      {!!player.number && <span className="text-fg-muted text-xs ml-2">#{player.number}</span>}
                     </td>
-                    <td className="text-right py-2 px-3 text-success font-mono">{goals || "—"}</td>
-                    <td className="text-right py-2 px-3 text-brand-text font-mono">{assists || "—"}</td>
-                    <td className="text-right py-2 px-3 text-destructive font-mono">{turnovers || "—"}</td>
-                    <td className="text-right py-2 px-3 text-warning font-mono">{blocks || "—"}</td>
-                    <td className="text-right py-2 px-3 text-fg-muted font-mono">{pulls || "—"}</td>
+                    {[goals, assists, turnovers, blocks, pulls].map((n, i) => (
+                      <td key={i} className={`text-right py-2 px-2 sm:px-3 font-mono tabular-nums ${n ? "text-foreground" : "text-fg-faint"}`}>{n || "—"}</td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="text-fg-faint text-xs mt-2">G = Goals · A = Assists · T = Turnovers · B = Blocks · Pl = Pulls</p>
+            <p className="text-fg-muted text-xs mt-2 sm:hidden">G goals · A assists · T turnovers · B blocks · Pl pulls</p>
           </div>
         </section>
       )}
@@ -202,7 +244,7 @@ export default function GameDetailPage() {
       {/* Point log */}
       {stats.points.length > 0 && (
         <section>
-          <h2 className="text-lg font-bold mb-3">Point Log</h2>
+          <h2 className="text-lg font-semibold mb-3">Point log</h2>
           <div className="flex flex-col gap-2">
             {stats.points.map(point => {
               const stored = pointsById.get(point.id)
@@ -215,30 +257,27 @@ export default function GameDetailPage() {
                 .map(p => p!.first_name)
                 .join(", ")
 
+              const label = pointLabel(point)
               return (
                 <details key={point.id} className="border border-border rounded-xl group">
                   <summary className="flex items-center gap-4 px-4 py-3 cursor-pointer list-none hover:bg-surface-2 transition-colors">
-                    <span className="text-fg-muted font-mono text-xs w-6 text-right">P{point.pointNumber}</span>
-                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${
-                      point.outcome === "HOLD" ? "bg-success/15 text-success" : point.outcome === "BREAK" ? "bg-destructive/15 text-destructive" : "bg-surface-2 text-fg-muted"
-                    }`}>
-                      {point.outcome ?? "No result"}
+                    <span className="text-fg-muted font-mono tabular-nums text-xs w-7 text-right shrink-0">P{point.pointNumber}</span>
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md shrink-0 w-[4.5rem] text-center ${label.tone}`}>
+                      {label.text}
                     </span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded-md border ${
-                      point.lineType === "O" ? "border-brand/30 text-brand-text/70" : "border-warning/30 text-warning/70"
-                    }`}>
+                    <span className="text-xs px-1.5 py-0.5 rounded-md border border-border text-fg-secondary whitespace-nowrap shrink-0">
                       {point.lineType}-line
                     </span>
                     <span className="text-fg-muted text-xs truncate flex-1">{lineNames || "—"}</span>
-                    <span className="text-fg-muted font-mono text-xs shrink-0">
-                      {point.scoreBefore.us} – {point.scoreBefore.them}
+                    <span className="text-foreground font-mono tabular-nums text-xs shrink-0" title="Score after the point">
+                      {point.scoreAfter.us}–{point.scoreAfter.them}
                     </span>
                   </summary>
                   {events.length > 0 && (
                     <div className="border-t border-border px-4 py-3 flex flex-col gap-1.5">
                       {events.map((ev, i) => (
                         <div key={ev.id} className="flex items-center gap-3 text-sm">
-                          <span className="text-fg-faint font-mono text-xs w-4 text-right">{i + 1}</span>
+                          <span className="text-fg-muted font-mono text-xs w-4 text-right">{i + 1}</span>
                           <span className={`font-medium ${EVENT_TYPE_COLORS[ev.eventType]}`}>{EVENT_TYPE_LABELS[ev.eventType]}</span>
                           <span className="text-fg-secondary">{getPlayerName(ev.playerId)}</span>
                         </div>
@@ -251,14 +290,34 @@ export default function GameDetailPage() {
           </div>
         </section>
       )}
-    </div>
+    </PageContainer>
+  )
+}
+
+const STAT_COLUMNS: [string, string][] = [["G", "Goals"], ["A", "Assists"], ["T", "Turnovers"], ["B", "Blocks"], ["Pl", "Pulls"]]
+
+function GameSkeleton() {
+  return (
+    <PageContainer width="prose" className="flex flex-col gap-8" aria-busy aria-label="Loading game">
+      <div className="flex flex-col gap-3">
+        <Skeleton className="h-5 w-28" />
+        <Skeleton className="h-10 w-72 max-w-full md:h-12" />
+        <Skeleton className="h-10 w-28" />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-[4.5rem] rounded-xl" />)}
+      </div>
+      <div className="flex flex-col gap-2">
+        {[0, 1, 2, 3, 4].map(i => <SkeletonRow key={i} />)}
+      </div>
+    </PageContainer>
   )
 }
 
 function StatCard({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="border border-border rounded-xl px-4 py-3">
-      <div className="text-2xl font-bold font-mono">{value}</div>
+      <div className="text-2xl font-semibold font-mono tabular-nums">{value}</div>
       <div className="text-fg-muted text-xs mt-0.5">{label}</div>
     </div>
   )
