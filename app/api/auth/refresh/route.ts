@@ -1,66 +1,53 @@
 import { NextRequest, NextResponse } from "next/server"
-import { InitiateAuthCommand, AuthFlowType } from "@aws-sdk/client-cognito-identity-provider"
-import { cognitoClient } from "@/lib/aws/cognito"
-import { secretHash } from "@/lib/aws/cognito-secret"
+import { refreshSession, accessTokenExpiresAt } from "@/lib/auth/refresh"
+import {
+  ACCESS_COOKIE,
+  REFRESH_COOKIE,
+  USERNAME_COOKIE,
+  cookieOptions,
+  setSessionCookies,
+} from "@/lib/auth/cookies"
 
-const cookieOptions = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax" as const,
-  path: "/",
-}
+// Client-driven refresh (lib/api-fetch.ts, AuthProvider). Shares its implementation with the proxy.
+// 200 {ok, expiresAt} | 401 {code: SESSION_EXPIRED} | 503 {code: AUTH_UNAVAILABLE}
+async function handle(request: NextRequest) {
+  const refreshToken = request.cookies.get(REFRESH_COOKIE)?.value
+  const storedUsername = request.cookies.get(USERNAME_COOKIE)?.value
+  const accessToken = request.cookies.get(ACCESS_COOKIE)?.value
 
-export async function GET(request: NextRequest) {
-  const redirectParam = request.nextUrl.searchParams.get("redirect")
-  const refreshToken = request.cookies.get("refresh_token")?.value
-  const username = request.cookies.get("cognito_username")?.value
-
-  const loginUrl = new URL("/live/login", request.url)
-
-  if (!refreshToken || !username) {
-    return redirectParam
-      ? NextResponse.redirect(loginUrl)
-      : NextResponse.json({ error: "No refresh token" }, { status: 401 })
+  if (!refreshToken) {
+    return NextResponse.json({ error: "Not signed in", code: "SESSION_EXPIRED" }, { status: 401 })
   }
 
-  try {
-    const result = await cognitoClient.send(
-      new InitiateAuthCommand({
-        AuthFlow: AuthFlowType.REFRESH_TOKEN_AUTH,
-        ClientId: process.env.COGNITO_CLIENT_ID!,
-        AuthParameters: {
-          REFRESH_TOKEN: refreshToken,
-          SECRET_HASH: secretHash(username),
-        },
-      })
-    )
+  const result = await refreshSession({ refreshToken, storedUsername, accessToken })
 
-    const tokens = result.AuthenticationResult
-    if (!tokens?.AccessToken) {
-      return redirectParam
-        ? NextResponse.redirect(loginUrl)
-        : NextResponse.json({ error: "Refresh failed" }, { status: 401 })
+  if (!result.ok) {
+    if (result.kind === "unavailable") {
+      return NextResponse.json(
+        { error: "Couldn't reach the sign-in service. Try again.", code: "AUTH_UNAVAILABLE" },
+        { status: 503, headers: { "Retry-After": "2" } }
+      )
     }
-
-    // Only allow same-origin redirects to prevent open redirect
-    const dest =
-      redirectParam?.startsWith("/")
-        ? new URL(redirectParam, request.url)
-        : null
-
-    const response = dest
-      ? NextResponse.redirect(dest)
-      : NextResponse.json({ ok: true })
-
-    response.cookies.set("access_token", tokens.AccessToken, {
-      ...cookieOptions,
-      maxAge: tokens.ExpiresIn ?? 3600,
-    })
-
-    return response
-  } catch {
-    return redirectParam
-      ? NextResponse.redirect(loginUrl)
-      : NextResponse.json({ error: "Refresh failed" }, { status: 401 })
+    const res = NextResponse.json({ error: "Session ended", code: "SESSION_EXPIRED" }, { status: 401 })
+    // The refresh token is dead; drop the stale access cookie but keep nothing that can't work.
+    res.cookies.set(ACCESS_COOKIE, "", { ...cookieOptions, maxAge: 0 })
+    return res
   }
+
+  const res = NextResponse.json({ ok: true, expiresAt: accessTokenExpiresAt(result.accessToken) })
+  setSessionCookies(res.cookies, {
+    accessToken: result.accessToken,
+    expiresIn: result.expiresIn,
+    refreshToken: result.refreshToken,
+    existingRefreshToken: refreshToken,
+    username: result.username,
+    // Migrating a pre-fix session: the old username cookie held the email; keep it for display.
+    email: storedUsername?.includes("@") ? storedUsername : undefined,
+  })
+  res.headers.set("Cache-Control", "no-store")
+  return res
 }
+
+export const POST = handle
+// Kept for older clients; same behaviour (the old ?redirect= mode had no callers and is gone).
+export const GET = handle
