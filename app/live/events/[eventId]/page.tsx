@@ -19,6 +19,10 @@ const FilmViewer = dynamic(
   () => import("@/components/film/FilmViewer").then(m => m.FilmViewer),
   { ssr: false }
 )
+const FilmOverlay = dynamic(
+  () => import("@/components/film/FilmOverlay").then(m => m.FilmOverlay),
+  { ssr: false }
+)
 
 const RESULT_COLORS: Record<string, string> = {
   WIN: "text-success",
@@ -149,7 +153,7 @@ function GameClipList({
           onClick={handleWatchAll}
           className="text-xs text-fg-muted hover:text-foreground transition-colors text-left pl-1"
         >
-          Watch Game Film → {readyCount > 1 ? `(${readyCount} clips)` : ""}
+          Watch film{readyCount > 1 ? ` (${readyCount} clips)` : ""}
         </button>
       )}
       {clips.map(clip => (
@@ -420,26 +424,13 @@ export default function LiveEventPage() {
 
       {/* Film viewer overlay */}
       {filmViewer && (
-        <div role="dialog" aria-modal="true" aria-label="Game film" className="fixed inset-0 z-50 bg-background flex flex-col">
-          <div className="flex items-center gap-4 px-4 sm:px-6 py-3 border-b border-border">
-            <button
-              onClick={() => setFilmViewer(null)}
-              className="text-fg-muted hover:text-foreground text-sm transition-colors"
-            >
-              ← Back
-            </button>
-            <span className="text-sm text-fg-secondary">
-              {filmViewer.clips.length > 1 ? `Game Film (${filmViewer.clips.length} clips)` : (filmViewer.clips[0]?.title ?? "Game Film")}
-            </span>
-          </div>
-          <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
-            <FilmViewer
-              clips={filmViewer.clips}
-              initialAnnotations={filmViewer.annotations}
-              canAnnotate={isCoachOrAdmin}
-            />
-          </div>
-        </div>
+        <FilmOverlay onClose={() => setFilmViewer(null)} gameId={filmViewer.clips[0]?.gameId} subtitle={event.title}>
+          <FilmViewer
+            clips={filmViewer.clips}
+            initialAnnotations={filmViewer.annotations}
+            canAnnotate={isCoachOrAdmin}
+          />
+        </FilmOverlay>
       )}
     </div>
   )
