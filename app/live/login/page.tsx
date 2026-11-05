@@ -1,12 +1,19 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { useAuth } from "@/lib/use-auth"
+import { safeNextPath } from "@/hooks/use-require-auth"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+
+// After sign-in go to ?next= (same-origin paths only), else /live.
+// Read from window.location so this page doesn't need a Suspense boundary.
+function nextPath() {
+  return safeNextPath(new URLSearchParams(window.location.search).get("next"))
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -19,8 +26,13 @@ export default function LoginPage() {
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
 
-  const { refreshAuth } = useAuth()
+  const { reportSignedIn, status } = useAuth()
   const router = useRouter()
+
+  // Already signed in (e.g. opened a login link in another tab): go straight on.
+  useEffect(() => {
+    if (status === "authenticated") router.replace(nextPath())
+  }, [status, router])
 
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault()
@@ -40,8 +52,8 @@ export default function LoginPage() {
         return
       }
 
-      await refreshAuth()
-      router.push("/live")
+      await reportSignedIn()
+      router.replace(nextPath())
     } catch {
       setError("An unexpected error occurred")
     } finally {
@@ -65,8 +77,8 @@ export default function LoginPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? "Failed to set password"); return }
-      await refreshAuth()
-      router.push("/live")
+      await reportSignedIn()
+      router.replace(nextPath())
     } catch {
       setError("An unexpected error occurred")
     } finally {

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/use-auth"
+import { useRequireAuth } from "@/hooks/use-require-auth"
 import { usePrefetchIntent } from "@/hooks/use-prefetch-intent"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -32,16 +33,13 @@ interface EventItem {
 }
 
 export default function LivePage() {
-  const { user, isLoading, signOut } = useAuth()
+  const { signOut } = useAuth()
+  const { user, isLoading } = useRequireAuth()
   const router = useRouter()
   const managePrefetch = usePrefetchIntent("/live/manage")
   const [events, setEvents] = useState<GalleryEvent[]>([])
   const [eventsLoading, setEventsLoading] = useState(true)
   const [eventsError, setEventsError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!isLoading && !user) router.replace("/live/login")
-  }, [user, isLoading, router])
 
   useEffect(() => {
     if (!user) return

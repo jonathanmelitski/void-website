@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
-import { useAuth } from "@/lib/use-auth"
+import { useRequireAuth } from "@/hooks/use-require-auth"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { StepProgress } from "@/components/ui/step-progress"
@@ -57,7 +57,7 @@ type ResourceStatus = {
 }
 
 export default function GameManagePage() {
-  const { user, isLoading } = useAuth()
+  const { user, isLoading } = useRequireAuth()
   const router = useRouter()
   const { gameId } = useParams<{ gameId: string }>()
 
@@ -75,10 +75,6 @@ export default function GameManagePage() {
   const [opponentDraft, setOpponentDraft] = useState("")
   const [savingOpponent, setSavingOpponent] = useState(false)
   const statusIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  useEffect(() => {
-    if (!isLoading && !user) router.replace("/live/login")
-  }, [user, isLoading, router])
 
   const loadData = useCallback(async () => {
     if (!user) return

@@ -84,12 +84,14 @@ async function doRefresh(): Promise<RefreshOutcome> {
 export function refreshSessionOnce(): Promise<RefreshOutcome> {
   if (refreshInFlight) return refreshInFlight
   const locks = typeof navigator !== "undefined" ? navigator.locks : undefined
-  const run = locks ? () => locks.request("void-auth-refresh", doRefresh) : doRefresh
-  refreshInFlight = run().finally(() => {
+  const run = (): Promise<RefreshOutcome> =>
+    locks ? (locks.request("void-auth-refresh", doRefresh) as unknown as Promise<RefreshOutcome>) : doRefresh()
+  const p = run().finally(() => {
     // Let callers that arrive in the same tick reuse the result.
     setTimeout(() => (refreshInFlight = null), 0)
   })
-  return refreshInFlight
+  refreshInFlight = p
+  return p
 }
 
 export type ApiFetchInit = RequestInit & {

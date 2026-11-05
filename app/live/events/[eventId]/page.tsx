@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import dynamic from "next/dynamic"
-import { useAuth } from "@/lib/use-auth"
+import { useRequireAuth } from "@/hooks/use-require-auth"
 import { usePrefetchIntent } from "@/hooks/use-prefetch-intent"
 import { useFilmClips } from "@/hooks/use-film-clips"
 import { useGameStats } from "@/hooks/use-game-stats"
@@ -284,7 +284,7 @@ interface EventItem {
 }
 
 export default function LiveEventPage() {
-  const { user, isLoading } = useAuth()
+  const { user, isLoading } = useRequireAuth()
   const router = useRouter()
   const { eventId } = useParams<{ eventId: string }>()
   const [event, setEvent] = useState<EventItem | null>(null)
@@ -292,10 +292,6 @@ export default function LiveEventPage() {
   const [error, setError] = useState("")
   const [filmViewer, setFilmViewer] = useState<{ clips: FilmClipItem[]; annotations: FilmAnnotationItem[] } | null>(null)
   const isCoachOrAdmin = !!(user?.groups?.includes("COACH") || user?.groups?.includes("ADMIN"))
-
-  useEffect(() => {
-    if (!isLoading && !user) router.replace("/live/login")
-  }, [user, isLoading, router])
 
   useEffect(() => {
     if (!user) return

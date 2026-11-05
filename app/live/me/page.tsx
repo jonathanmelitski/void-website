@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { useAuth } from "@/lib/use-auth"
+import { useRequireAuth } from "@/hooks/use-require-auth"
 import dynamic from "next/dynamic"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { FilmClipItem } from "@/lib/aws/film-clips"
@@ -31,7 +31,7 @@ interface GameClips {
 }
 
 export default function MePage() {
-  const { user, isLoading } = useAuth()
+  const { user, isLoading } = useRequireAuth()
   const router = useRouter()
   const [player, setPlayer] = useState<PlayerItem | null>(null)
   const [cognitoSub, setCognitoSub] = useState<string | null>(null)
@@ -40,10 +40,6 @@ export default function MePage() {
   const [gameClips, setGameClips] = useState<GameClips[]>([])
   const [dataLoading, setDataLoading] = useState(true)
   const [viewerState, setViewerState] = useState<{ clips: FilmClipItem[]; annotations: FilmAnnotationItem[] } | null>(null)
-
-  useEffect(() => {
-    if (!isLoading && !user) router.replace("/live/login")
-  }, [user, isLoading, router])
 
   useEffect(() => {
     if (!user) return

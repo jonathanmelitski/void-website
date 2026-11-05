@@ -102,12 +102,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const retryDelay = useRef(2000)
   const channel = useRef<BroadcastChannel | null>(null)
+  const checkRef = useRef<() => Promise<void>>(async () => {})
+
+  const [expiresAt, setExpiresAt] = useState<number | undefined>(undefined)
 
   const apply = useCallback((s: AuthStatus, u: AuthUser | null) => {
+    if (u?.expiresAt) setExpiresAt(u.expiresAt)
+    // Keep `user` referentially stable across re-checks: pages key data loads on it, and a
+    // background re-check must never trigger a reload that clobbers unsaved state.
+    const prev = userRef.current
+    const same =
+      !!prev && !!u &&
+      prev.username === u.username &&
+      prev.email === u.email &&
+      prev.groups.join(",") === u.groups.join(",")
+    const next = same ? prev : u ? { username: u.username, email: u.email, groups: u.groups } : null
     statusRef.current = s
-    userRef.current = u
+    userRef.current = next
     setStatus(s)
-    setUser(u)
+    setUser(next)
   }, [])
 
   const check = useCallback(async () => {
@@ -139,9 +152,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // offline / unknown: never sign out. Keep what we know and retry with backoff.
     const known = userRef.current ?? readCachedProfile()
     apply(prev === "expired" ? "expired" : "offline", known)
-    retryTimer.current = setTimeout(() => void check(), retryDelay.current)
+    retryTimer.current = setTimeout(() => void checkRef.current(), retryDelay.current)
     retryDelay.current = Math.min(retryDelay.current * 2, 30_000)
   }, [apply])
+
+  useEffect(() => {
+    checkRef.current = check
+  }, [check])
 
   const reportSignedIn = useCallback(async () => {
     await check()
@@ -163,7 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Initial check, cross-tab sync, and re-checks when the app comes back to the foreground.
   useEffect(() => {
-    void check()
+    void Promise.resolve().then(check)
 
     const onMessage = (msg: string) => {
       if (msg === "signed-in") void check().then(() => authEvents.emit("signed-in"))
@@ -210,15 +227,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Proactive refresh shortly before the access token expires, so requests rarely hit a 401.
   // (Phones suspend timers; the visibility re-check above covers that.)
   useEffect(() => {
-    if (status !== "authenticated" || !user?.expiresAt) return
-    const delay = Math.max(user.expiresAt - Date.now() - PROACTIVE_REFRESH_LEAD_MS, 10_000)
+    if (status !== "authenticated" || !expiresAt) return
+    const delay = Math.max(expiresAt - Date.now() - PROACTIVE_REFRESH_LEAD_MS, 10_000)
     const t = setTimeout(() => {
       refreshSessionOnce()
         .then(() => check())
         .catch(() => check())
     }, delay)
     return () => clearTimeout(t)
-  }, [status, user?.expiresAt, check])
+  }, [status, expiresAt, check])
 
   const value = useMemo<AuthContextValue>(
     () => ({

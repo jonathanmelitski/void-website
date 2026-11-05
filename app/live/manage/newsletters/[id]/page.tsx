@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { useAuth } from "@/lib/use-auth"
+import { useRequireAuth } from "@/hooks/use-require-auth"
 import { SimpleEditor } from "@/components/tiptap-templates/simple/simple-editor"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -62,7 +62,7 @@ function NewsletterPreview({ newsletter }: { newsletter: NewsletterItem }) {
 export default function ManageNewsletterPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
-  const { user, isLoading: authLoading } = useAuth()
+  const { user, isLoading: authLoading } = useRequireAuth({ roles: ["COACH", "ADMIN"], forbiddenHref: "/live/manage" })
 
   const [newsletter, setNewsletter] = useState<NewsletterItem | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -99,14 +99,6 @@ export default function ManageNewsletterPage() {
 
   const isAdmin = user?.groups.includes("ADMIN") ?? false
   const isCoachOrAdmin = user?.groups.includes("COACH") || user?.groups.includes("ADMIN")
-
-  useEffect(() => {
-    if (!authLoading && !user) router.replace("/live/login")
-  }, [user, authLoading, router])
-
-  useEffect(() => {
-    if (!authLoading && user && !isCoachOrAdmin) router.replace("/live/manage")
-  }, [user, authLoading, isCoachOrAdmin, router])
 
   async function loadNewsletter() {
     try {

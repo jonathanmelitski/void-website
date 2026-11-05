@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/use-auth"
+import { useRequireAuth } from "@/hooks/use-require-auth"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { UserPanel } from "./UserPanel"
@@ -40,17 +41,14 @@ export default function ManagePage() {
 }
 
 function ManagePageInner() {
-  const { user, isLoading, signOut } = useAuth()
+  const { signOut } = useAuth()
+  const { user, isLoading } = useRequireAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
   const [activeTab, setActiveTab] = useState<Tab>(() => {
     const t = searchParams.get("tab")
     return (["photos", "events", "games", "players", "film", "player-links", "newsletters", "users", "audit", "marketing", "live-server"].includes(t ?? "") ? t : "photos") as Tab
   })
-
-  useEffect(() => {
-    if (!isLoading && !user) router.replace("/live/login")
-  }, [user, isLoading, router])
 
   if (isLoading || !user) {
     return (
