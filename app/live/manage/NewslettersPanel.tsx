@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { useAuth } from "@/lib/use-auth"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { Field } from "@/components/ui/field"
 import { Badge } from "@/components/ui/badge"
 import {
   Dialog,
@@ -16,13 +17,27 @@ import {
 } from "@/components/ui/dialog"
 import { DataTable, ColumnDef } from "@/components/ui/data-table"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { apiFetch } from "@/lib/api-fetch"
+import { toast } from "@/components/ui/sonner"
 import { NEWSLETTER_TEMPLATE, parseNewsletterTemplate } from "@/lib/newsletter-template"
+import { CONNECTION_HINT, deleteMany, friendlyError } from "./api-helpers"
+import { FormFooter } from "./form-footer"
 
 type NewsletterRow = {
   id: string
   title: string
   date: string
   published: boolean
+}
+
+const slugify = (v: string) => v.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")
+
+function StatusBadge({ row }: { row: NewsletterRow }) {
+  return (
+    <Badge variant={row.published ? "default" : "outline"} className="shrink-0">
+      {row.published ? "Published" : "Draft"}
+    </Badge>
+  )
 }
 
 export function NewslettersPanel() {
@@ -39,55 +54,59 @@ export function NewslettersPanel() {
   const [duplicateTarget, setDuplicateTarget] = useState<NewsletterRow | null>(null)
   const [isDuplicating, setIsDuplicating] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
-  const [importError, setImportError] = useState("")
   const importInputRef = useRef<HTMLInputElement>(null)
 
   const isAdmin = user?.groups.includes("ADMIN") ?? false
 
   useEffect(() => {
-    fetch("/api/newsletters?all=true")
+    apiFetch("/api/newsletters?all=true")
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) setNewsletters(data)
-        else setError(data.error ?? "Failed to load newsletters")
+        else setError("Couldn't load newsletters. Reload to try again.")
       })
-      .catch(() => setError("Failed to load newsletters"))
+      .catch(() => setError(`Couldn't load newsletters. ${CONNECTION_HINT}`))
       .finally(() => setIsLoading(false))
   }, [])
 
   function onNewsletterCreated(newsletter: NewsletterRow) {
     setNewsletters(prev => [newsletter, ...prev])
     setOpen(false)
+    toast.success("Newsletter created")
   }
 
   async function handleTogglePublished(row: NewsletterRow) {
     setTogglingId(row.id)
+    const action = row.published ? "unpublish" : "publish"
     try {
-      const res = await fetch(`/api/newsletters/${row.id}`, { method: "PATCH" })
-      if (res.ok) {
-        const updated = await res.json()
-        setNewsletters(prev =>
-          prev.map(n => (n.id === updated.id ? { ...n, published: updated.published } : n))
-        )
+      const res = await apiFetch(`/api/newsletters/${row.id}`, { method: "PATCH", waitForSession: true })
+      if (!res.ok) {
+        toast.error(await friendlyError(res, `Couldn't ${action} "${row.title}". Try again.`))
+        return
       }
+      const updated = await res.json()
+      setNewsletters(prev =>
+        prev.map(n => (n.id === updated.id ? { ...n, published: updated.published } : n))
+      )
+      toast.success(updated.published ? "Published" : "Moved back to draft")
+    } catch {
+      toast.error(`Couldn't ${action} "${row.title}". ${CONNECTION_HINT}`)
     } finally {
       setTogglingId(null)
     }
   }
 
-  async function handleDelete(targets: NewsletterRow[], clearSelection: () => void) {
+  async function handleDelete(targets: NewsletterRow[]) {
     setIsDeleting(true)
-    try {
-      await Promise.all(targets.map(n => fetch(`/api/newsletters/${n.id}`, { method: "DELETE" })))
-      const deletedIds = new Set(targets.map(n => n.id))
-      setNewsletters(prev => prev.filter(n => !deletedIds.has(n.id)))
-      clearSelection()
-    } catch {
-      setError("Failed to delete newsletter(s)")
-    } finally {
-      setIsDeleting(false)
-      setDeleteTarget(null)
-    }
+    const deleted = await deleteMany(
+      targets,
+      n => apiFetch(`/api/newsletters/${n.id}`, { method: "DELETE", waitForSession: true }),
+      { one: "newsletter", many: "newsletters" },
+    )
+    const deletedIds = new Set(deleted.map(n => n.id))
+    if (deletedIds.size > 0) setNewsletters(prev => prev.filter(n => !deletedIds.has(n.id)))
+    setIsDeleting(false)
+    setDeleteTarget(null)
   }
 
   const clearFnRef = useRef<() => void>(() => {})
@@ -95,31 +114,44 @@ export function NewslettersPanel() {
   async function handleDuplicate(source: NewsletterRow, newTitle: string, newSlug: string) {
     setIsDuplicating(true)
     try {
-      const srcRes = await fetch(`/api/newsletters/${source.id}`)
+      const srcRes = await apiFetch(`/api/newsletters/${source.id}`)
       const src = srcRes.ok ? await srcRes.json() : source
 
-      const res = await fetch("/api/newsletters", {
+      const res = await apiFetch("/api/newsletters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: newTitle, slug: newSlug, date: src.date }),
+        waitForSession: true,
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        toast.error(await friendlyError(res, "Couldn't duplicate the newsletter. Try again."))
+        return
+      }
       const created = await res.json()
 
-      await fetch(`/api/newsletters/${created.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: src.body ?? "" }),
-      })
-      await fetch(`/api/newsletters/${created.id}/entries`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entries: src.entries ?? [] }),
-      })
+      const [bodyRes, entriesRes] = await Promise.all([
+        apiFetch(`/api/newsletters/${created.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: src.body ?? "" }),
+          waitForSession: true,
+        }),
+        apiFetch(`/api/newsletters/${created.id}/entries`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entries: src.entries ?? [] }),
+          waitForSession: true,
+        }),
+      ])
+      if (!bodyRes.ok || !entriesRes.ok) {
+        toast.error("The copy was created, but some content didn't copy over. Check it before sending.")
+      }
 
       setNewsletters(prev => [{ id: created.id, title: newTitle, date: src.date, published: false }, ...prev])
       setDuplicateTarget(null)
       router.push(`/live/manage/newsletters/${created.id}`)
+    } catch {
+      toast.error(`Couldn't duplicate the newsletter. ${CONNECTION_HINT}`)
     } finally {
       setIsDuplicating(false)
     }
@@ -140,37 +172,38 @@ export function NewslettersPanel() {
     if (!file) return
     // reset so the same file can be re-selected after an error
     e.target.value = ""
-    setImportError("")
     setIsImporting(true)
     try {
       const text = await file.text()
       const parsed = parseNewsletterTemplate(text)
 
       // 1. Create newsletter
-      const res = await fetch("/api/newsletters", {
+      const res = await apiFetch("/api/newsletters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: parsed.title,
           date: parsed.date,
-          slug: parsed.title.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""),
+          slug: slugify(parsed.title),
         }),
+        waitForSession: true,
       })
       if (!res.ok) {
-        const d = await res.json()
-        setImportError(d.error ?? "Failed to create newsletter")
+        toast.error(await friendlyError(res, "Couldn't import the template. Try again."))
         return
       }
       const created = await res.json()
 
       // 2. Set body
-      await fetch(`/api/newsletters/${created.id}`, {
+      const bodyRes = await apiFetch(`/api/newsletters/${created.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: parsed.body }),
+        waitForSession: true,
       })
 
       // 3. Set entries
+      let entriesOk = true
       if (parsed.entries.length > 0) {
         const entries = parsed.entries.map(e => ({
           id: crypto.randomUUID(),
@@ -180,11 +213,16 @@ export function NewslettersPanel() {
           authorUsername: "template-import",
           createdAt: new Date().toISOString(),
         }))
-        await fetch(`/api/newsletters/${created.id}/entries`, {
+        const entriesRes = await apiFetch(`/api/newsletters/${created.id}/entries`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ entries }),
+          waitForSession: true,
         })
+        entriesOk = entriesRes.ok
+      }
+      if (!bodyRes.ok || !entriesOk) {
+        toast.error("The newsletter was created, but some of the template didn't import. Check it before sending.")
       }
 
       setNewsletters(prev => [
@@ -193,82 +231,75 @@ export function NewslettersPanel() {
       ])
       router.push(`/live/manage/newsletters/${created.id}`)
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : "Failed to import template")
+      // parseNewsletterTemplate throws readable messages for malformed files
+      toast.error(err instanceof Error && err.name !== "NetworkError" ? err.message : `Couldn't import the template. ${CONNECTION_HINT}`)
     } finally {
       setIsImporting(false)
     }
   }
 
-  function buildColumns(openConfirm: (row: NewsletterRow) => void): ColumnDef<NewsletterRow>[] {
-    return [
-      { header: "Title", accessorKey: "title" },
-      { header: "Date", accessorKey: "date" },
-      {
-        header: "Status",
-        cell: row => (
-          <Badge variant={row.published ? "default" : "outline"}>
-            {row.published ? "Published" : "Draft"}
-          </Badge>
-        ),
-      },
-      {
-        header: "Actions",
-        cell: row => (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => router.push(`/live/manage/newsletters/${row.id}`)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-surface text-fg-muted hover:bg-surface-2 hover:text-foreground transition-colors"
-            >
-              Manage
-            </button>
-            <button
-              onClick={() => setDuplicateTarget(row)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-surface text-fg-muted hover:bg-surface-2 hover:text-foreground transition-colors"
-            >
-              Duplicate
-            </button>
-            <button
-              onClick={() => handleTogglePublished(row)}
-              disabled={togglingId === row.id}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-surface text-fg-muted hover:bg-surface-2 hover:text-foreground transition-colors disabled:opacity-40"
-            >
-              {row.published ? "Unpublish" : "Publish"}
-            </button>
-            {isAdmin && (
-              <button
-                onClick={() => openConfirm(row)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-destructive/10 text-destructive/70 hover:bg-destructive/20 hover:text-destructive transition-colors"
-              >
-                Delete
-              </button>
-            )}
-          </div>
-        ),
-      },
-    ]
+  function renderRowActions(row: NewsletterRow, className?: string) {
+    return (
+      <>
+        <Button asChild variant="ghost" size="sm" className={className}>
+          <Link href={`/live/manage/newsletters/${row.id}`}>Manage</Link>
+        </Button>
+        <Button variant="ghost" size="sm" className={className} onClick={() => setDuplicateTarget(row)}>
+          Duplicate
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={`w-24 ${className ?? ""}`}
+          loading={togglingId === row.id}
+          onClick={() => handleTogglePublished(row)}
+        >
+          {row.published ? "Unpublish" : "Publish"}
+        </Button>
+        {isAdmin && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`text-destructive hover:text-destructive ${className ?? ""}`}
+            onClick={() => setDeleteTarget([row])}
+          >
+            Delete
+          </Button>
+        )}
+      </>
+    )
   }
+
+  const columns: ColumnDef<NewsletterRow>[] = [
+    { header: "Title", accessorKey: "title" },
+    { header: "Date", accessorKey: "date" },
+    { header: "Status", cell: row => <StatusBadge row={row} /> },
+    {
+      header: "Actions",
+      cell: row => (
+        <div className="flex items-center gap-1">
+          {renderRowActions(row)}
+        </div>
+      ),
+    },
+  ]
 
   return (
     <div className="flex flex-col gap-4 text-left">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">Newsletters</h2>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={handleDownloadTemplate}
-            className="text-fg-muted hover:text-foreground"
-          >
-            Download Template
+        <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+          <Button size="sm" variant="ghost" className="h-10 sm:h-8" onClick={handleDownloadTemplate}>
+            Download template
           </Button>
           <Button
             size="sm"
             variant="ghost"
+            className="h-10 sm:h-8"
             onClick={() => importInputRef.current?.click()}
-            disabled={isImporting}
-            className="text-fg-muted hover:text-foreground"
+            loading={isImporting}
           >
-            {isImporting ? "Importing…" : "From Template"}
+            Import template
           </Button>
           <input
             ref={importInputRef}
@@ -279,11 +310,11 @@ export function NewslettersPanel() {
           />
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-              <Button size="sm">New Newsletter</Button>
+              <Button size="sm" className="h-10 sm:h-8">New newsletter</Button>
             </DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>Create Newsletter</DialogTitle>
+                <DialogTitle>New newsletter</DialogTitle>
               </DialogHeader>
               <CreateNewsletterForm onCreated={onNewsletterCreated} />
             </DialogContent>
@@ -292,14 +323,27 @@ export function NewslettersPanel() {
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
-      {importError && <p className="text-sm text-destructive">{importError}</p>}
 
       <DataTable
-        columns={buildColumns(row => setDeleteTarget([row]))}
+        columns={columns}
         data={newsletters}
         isLoading={isLoading}
-        emptyMessage="No newsletters yet."
+        emptyMessage="No newsletters yet. Start one with New newsletter."
         getRowKey={n => n.id}
+        mobileCard={row => (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate font-medium">{row.title}</p>
+                <p className="text-sm text-fg-muted">{row.date}</p>
+              </div>
+              <StatusBadge row={row} />
+            </div>
+            <div className="-ml-3 flex flex-wrap items-center">
+              {renderRowActions(row, "h-10")}
+            </div>
+          </div>
+        )}
         toolbar={(selectedRows, clearSelection) => {
           clearFnRef.current = clearSelection
           if (selectedRows.length === 0 || !isAdmin) return null
@@ -320,14 +364,19 @@ export function NewslettersPanel() {
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        onOpenChange={open => { if (!open) setDeleteTarget(null) }}
+        onOpenChange={open => { if (!open && !isDeleting) setDeleteTarget(null) }}
         title={`Delete ${deleteTarget && deleteTarget.length > 1 ? `${deleteTarget.length} newsletters` : "newsletter"}?`}
-        description="This action cannot be undone."
+        description={
+          deleteTarget?.length === 1
+            ? <>Delete <span className="font-medium text-foreground">{deleteTarget[0].title}</span>? This can&apos;t be undone.</>
+            : "This can't be undone."
+        }
+        confirmLabel={deleteTarget && deleteTarget.length > 1 ? `Delete ${deleteTarget.length} newsletters` : "Delete newsletter"}
         isLoading={isDeleting}
-        onConfirm={() => deleteTarget && handleDelete(deleteTarget, clearFnRef.current)}
+        onConfirm={() => deleteTarget && handleDelete(deleteTarget)}
       />
 
-      <Dialog open={duplicateTarget !== null} onOpenChange={open => { if (!open) setDuplicateTarget(null) }}>
+      <Dialog open={duplicateTarget !== null} onOpenChange={open => { if (!open && !isDuplicating) setDuplicateTarget(null) }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Duplicate newsletter</DialogTitle>
@@ -356,102 +405,93 @@ function CreateNewsletterForm({
   const [coverFile, setCoverFile] = useState<File | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
+  const [fieldErrors, setFieldErrors] = useState<{ title?: string; slug?: string; date?: string }>({})
 
   function handleTitleChange(value: string) {
     setTitle(value)
-    setSlug(value.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''))
+    setSlug(slugify(value))
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    const errs: typeof fieldErrors = {}
+    if (!title.trim()) errs.title = "Enter a title."
+    if (!slug.trim()) errs.slug = "Enter a URL slug."
+    if (!date) errs.date = "Pick a date."
+    setFieldErrors(errs)
+    if (Object.keys(errs).length > 0) return
+
     setError("")
     setIsLoading(true)
     try {
       // Create the newsletter first to get an ID
-      const res = await fetch("/api/newsletters", {
+      const res = await apiFetch("/api/newsletters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, date, slug }),
+        waitForSession: true,
       })
+      if (!res.ok) { setError(await friendlyError(res, "Couldn't create the newsletter. Try again.")); return }
       const data = await res.json()
-      if (!res.ok) { setError(data.error ?? "Failed to create newsletter"); return }
-
-      let coverPhotoKey: string | undefined
 
       if (coverFile) {
-        const presignRes = await fetch("/api/upload/newsletter-cover-presign", {
+        const presignRes = await apiFetch("/api/upload/newsletter-cover-presign", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ newsletterId: data.id, contentType: coverFile.type }),
+          waitForSession: true,
         })
-        if (!presignRes.ok) {
-          const d = await presignRes.json()
-          setError(d.error ?? "Failed to get upload URL")
-          return
-        }
-        const { url, key } = await presignRes.json()
-        const uploadRes = await fetch(url, {
-          method: "PUT",
-          body: coverFile,
-          headers: { "Content-Type": coverFile.type },
-        })
-        if (!uploadRes.ok) { setError("Cover photo upload failed"); return }
-        coverPhotoKey = key
+        const uploadRes = presignRes.ok
+          ? await (async () => {
+              const { url } = await presignRes.json()
+              return fetch(url, { method: "PUT", body: coverFile, headers: { "Content-Type": coverFile.type } })
+            })()
+          : null
+        if (!uploadRes?.ok) toast.error("Newsletter created, but the cover photo didn't upload. Add it from the editor.")
       }
 
       onCreated({ id: data.id, title, date, published: false })
     } catch {
-      setError("An unexpected error occurred")
+      setError(`Couldn't create the newsletter. ${CONNECTION_HINT}`)
     } finally {
       setIsLoading(false)
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4 pt-2">
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      <div className="flex flex-col gap-1.5">
-        <Label className="text-fg-secondary">Title</Label>
+    <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4 pt-2">
+      <Field label="Title" error={fieldErrors.title}>
         <Input
           value={title}
           onChange={e => handleTitleChange(e.target.value)}
-          placeholder="March 2026 Newsletter"
-          required
-          className="bg-surface border-border text-foreground placeholder:text-fg-faint"
+          placeholder="e.g. Spring 2026 update"
         />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label className="text-fg-secondary">Slug</Label>
+      </Field>
+      <Field label="Slug" hint="Used in the newsletter's web address" error={fieldErrors.slug}>
         <Input
           value={slug}
           onChange={e => setSlug(e.target.value)}
-          placeholder="march-2026-newsletter"
-          required
-          className="bg-surface border-border text-foreground placeholder:text-fg-faint font-mono text-sm"
+          placeholder="spring-2026-update"
+          className="font-mono"
         />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label className="text-fg-secondary">Date</Label>
+      </Field>
+      <Field label="Date" error={fieldErrors.date}>
         <Input
           type="date"
           value={date}
           onChange={e => setDate(e.target.value)}
-          required
-          className="bg-surface border-border text-foreground"
         />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label className="text-fg-secondary">Cover photo (optional)</Label>
+      </Field>
+      <Field label="Cover photo" hint="Optional">
         <input
           type="file"
           accept="image/*"
           onChange={e => setCoverFile(e.target.files?.[0] ?? null)}
           className="text-sm text-fg-secondary file:mr-3 file:rounded-md file:border-0 file:bg-surface-2 file:px-3 file:py-1 file:text-sm file:text-foreground hover:file:bg-surface-3"
         />
-      </div>
-      <Button type="submit" disabled={isLoading} className="w-fit mt-1">
-        {isLoading ? "Creating…" : "Create newsletter"}
-      </Button>
+      </Field>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      <FormFooter submitLabel="Create newsletter" isSubmitting={isLoading} />
     </form>
   )
 }
@@ -466,40 +506,26 @@ function DuplicateForm({
   isLoading: boolean
 }) {
   const [title, setTitle] = useState(defaultTitle)
-  const [slug, setSlug] = useState(
-    defaultTitle.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")
-  )
+  const [slug, setSlug] = useState(slugify(defaultTitle))
 
   function handleTitleChange(v: string) {
     setTitle(v)
-    setSlug(v.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))
+    setSlug(slugify(v))
   }
 
   return (
-    <div className="flex flex-col gap-4 pt-2">
-      <div className="flex flex-col gap-1.5">
-        <Label className="text-fg-secondary">Title</Label>
-        <Input
-          value={title}
-          onChange={e => handleTitleChange(e.target.value)}
-          className="bg-surface border-border text-foreground"
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label className="text-fg-secondary">Slug</Label>
-        <Input
-          value={slug}
-          onChange={e => setSlug(e.target.value)}
-          className="bg-surface border-border text-foreground font-mono text-sm"
-        />
-      </div>
-      <Button
-        onClick={() => onConfirm(title, slug)}
-        disabled={isLoading || !title || !slug}
-        className="w-fit"
-      >
-        {isLoading ? "Duplicating…" : "Duplicate"}
-      </Button>
-    </div>
+    <form
+      noValidate
+      className="flex flex-col gap-4 pt-2"
+      onSubmit={e => { e.preventDefault(); if (title && slug) onConfirm(title, slug) }}
+    >
+      <Field label="Title">
+        <Input value={title} onChange={e => handleTitleChange(e.target.value)} />
+      </Field>
+      <Field label="Slug">
+        <Input value={slug} onChange={e => setSlug(e.target.value)} className="font-mono" />
+      </Field>
+      <FormFooter submitLabel="Duplicate newsletter" isSubmitting={isLoading} disabled={!title || !slug} />
+    </form>
   )
 }
