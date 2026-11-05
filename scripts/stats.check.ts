@@ -2,7 +2,7 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
-import { deriveGameStats, type StatsEvent, type StatsGame, type StatsPoint, type StatsPlayer } from "../lib/stats/derive"
+import { deriveGameStats, displayScore, type StatsEvent, type StatsGame, type StatsPoint, type StatsPlayer } from "../lib/stats/derive"
 
 function check(name: string, fn: () => void) {
   fn()
@@ -183,6 +183,15 @@ check("orphan events are skipped with a warning; multiple goals warn", () => {
   assert.equal(s.players.find(p => p.playerId === "a")!.pointsPlayed, 1)
   assert.ok(s.warnings.some(w => w.code === "orphan-events"))
   assert.ok(s.warnings.some(w => w.code === "multiple-goals"))
+})
+
+check("live surfaces keep the pushed score while IN_PROGRESS, derived otherwise", () => {
+  const pts = [pt(1, "O"), pt(2, "D")]
+  const events = [ev("e1", "p1", "GOAL")] // goal logged, point not yet completed in the console
+  const live = game({ status: "IN_PROGRESS", scoreVoid: 0 })
+  assert.deepEqual(displayScore(live, deriveGameStats(live, pts, events)), { score: { us: 0, them: 0 }, result: null, derived: false })
+  const cmu = byOpp("CMU")
+  assert.deepEqual(displayScore(cmu.game, derive(cmu)).score, { us: 8, them: 10 })
 })
 
 console.log("all stats checks passed")
