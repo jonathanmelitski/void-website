@@ -98,7 +98,8 @@ async function callCognitoRefresh(refreshToken: string, username: string): Promi
       }),
       signal: AbortSignal.timeout(8000),
     })
-  } catch {
+  } catch (err) {
+    console.warn("[auth] refresh request failed:", err instanceof Error ? err.name : "unknown")
     return { ok: false, kind: "unavailable" }
   }
 
@@ -123,6 +124,7 @@ async function callCognitoRefresh(refreshToken: string, username: string): Promi
   // 4xx auth errors (NotAuthorizedException, UserNotFoundException, ...) mean the session is over.
   // Throttling and 5xx mean try again later.
   const type = data.__type ?? ""
+  console.warn(`[auth] refresh rejected: ${res.status} ${type}`)
   if (res.status >= 500 || /TooManyRequests|Throttl|InternalError|ServiceUnavailable/.test(type)) {
     return { ok: false, kind: "unavailable" }
   }

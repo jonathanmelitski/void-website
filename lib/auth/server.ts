@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
-import { AdminGetUserCommand } from "@aws-sdk/client-cognito-identity-provider"
-import { AuthError, cognitoClient, verifyToken, type TokenPayload } from "@/lib/aws/cognito"
+import { AuthError, verifyToken, type TokenPayload } from "@/lib/aws/cognito"
 import { ACCESS_COOKIE } from "./cookies"
+import { lookupEmailBySub } from "./cognito-lookup"
 
 export type Role = "ADMIN" | "COACH" | "USER"
 
@@ -70,16 +70,13 @@ const EMAIL_TTL_MS = 60 * 60 * 1000
 
 export async function getCallerEmail(payload: TokenPayload): Promise<string | undefined> {
   if (payload.email) return payload.email
-  const username = payload.username ?? payload["cognito:username"] ?? payload.sub
-  if (!username) return undefined
-  const hit = emailCache.get(username)
+  const sub = payload.sub
+  if (!sub) return undefined
+  const hit = emailCache.get(sub)
   if (hit && Date.now() - hit.at < EMAIL_TTL_MS) return hit.email ?? undefined
   try {
-    const res = await cognitoClient.send(
-      new AdminGetUserCommand({ UserPoolId: process.env.COGNITO_USER_POOL_ID!, Username: username })
-    )
-    const email = res.UserAttributes?.find((a) => a.Name === "email")?.Value ?? null
-    emailCache.set(username, { email, at: Date.now() })
+    const email = await lookupEmailBySub(sub)
+    emailCache.set(sub, { email, at: Date.now() })
     return email ?? undefined
   } catch (err) {
     console.warn("[auth] email lookup failed:", err instanceof Error ? err.name : "unknown")
