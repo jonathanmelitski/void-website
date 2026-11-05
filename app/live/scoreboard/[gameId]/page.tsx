@@ -1,32 +1,42 @@
 "use client"
 
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from "react"
 import { useParams } from "next/navigation"
 import type { GameItem } from "@/lib/aws/games"
 import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem } from "@/lib/aws/point-events"
 import type { LiveGameMessage } from "@/lib/live-types"
 import { deriveGameStats, displayScore } from "@/lib/stats/derive"
+import { formatGameTime } from "@/lib/format-date"
 
 type ConnStatus = "connecting" | "connected" | "reconnecting" | "polling" | "final"
 type Possession = "VOID" | "OPP"
 
-// ── Fixed pixel dimensions — overlay always renders in a 1920×1080 context ──
-const INDICATOR_W = 54   // logo box and half-indicator box
-const CENTER_W    = 66   // center LIVE / FINAL panel
-const BAR_H       = 48   // main score bar height
-const BANNER_H    = 20   // break-chance banner strip
-const LOGO_SIZE   = 26   // favicon inside logo box
-const SCORE_FONT  = 30   // score digits
-const NAME_FONT   = 17   // team name text
-const BREAK_FONT  = 24   // BREAK overlay text
-const BANNER_FONT = 10   // "Break Chance" banner text
-const TRIANGLE_W  = 10   // possession triangle width
-const CENTER_FONT = 8    // LIVE / FINAL label in center panel
-const HALF_FONT   = 14   // half number (1ST / 2ND)
-const HALF_SM     = 9    // half "FINAL" small text
-const STRIP_H     = 14   // bottom info strip height
-const STRIP_FONT  = 8    // bottom strip text
+// ── Pixel dimensions in a 1920×1080 canvas; the canvas is scaled to fit the browser source ──
+// Sized to stay legible after a 1080p→720p downscale and stream compression.
+const INDICATOR_W = 80   // logo box and half-indicator box
+const CENTER_W    = 110  // center LIVE / FINAL panel
+const BAR_H       = 72   // main score bar height
+const BANNER_H    = 28   // break-chance banner strip
+const LOGO_SIZE   = 40   // favicon inside logo box
+const SCORE_FONT  = 44   // score digits
+const NAME_FONT   = 26   // team name text
+const BREAK_FONT  = 34   // BREAK overlay text
+const BANNER_FONT = 14   // "Break Chance" banner text
+const TRIANGLE_W  = 14   // possession triangle width
+const CENTER_FONT = 15   // LIVE / FINAL label in center panel
+const HALF_FONT   = 22   // half number (1ST / 2ND)
+const STRIP_H     = 24   // bottom info strip height
+const STRIP_FONT  = 13   // bottom strip text
+
+// Scale the 1920×1080 canvas to the browser source size (e.g. 1280×720 in OBS)
+function subscribeResize(cb: () => void) {
+  window.addEventListener("resize", cb)
+  return () => window.removeEventListener("resize", cb)
+}
+function getCanvasScale() {
+  return Math.min(window.innerWidth / 1920, window.innerHeight / 1080) || 1
+}
 
 function inferPossession(point: PointItem | null, events: PointEventItem[]): Possession {
   if (!point) return "VOID"
@@ -180,14 +190,19 @@ export default function ScoreboardOverlay() {
     return null
   })()
 
+  const canvasScale = useSyncExternalStore(subscribeResize, getCanvasScale, () => 1)
   const half    = game?.secondHalfStartCompletedCount != null ? "2ND" : "1ST"
   const isFinal = game?.status === "FINAL"
+  const isLive  = game?.status === "IN_PROGRESS"
+  // Not started (or scored only in film): no LIVE label, show the start time instead
+  const isUpcoming = !!game && !isFinal && !isLive
+  const startLabel = game?.scheduledTime ? formatGameTime(game.scheduledTime).replace(/^\w+ /, "") : ""
   // Score shown: the live push while IN_PROGRESS, else derived from the point record (film edits included)
   const shown = game ? displayScore(game, deriveGameStats(game, points, pointEvents)) : null
   const scoreVoid = shown?.score.us ?? 0
   const scoreOpponent = shown?.score.them ?? 0
   const maxScore = Math.max(scoreVoid, scoreOpponent)
-  const scoreBoxW = maxScore >= 10 ? 78 : 60
+  const scoreBoxW = maxScore >= 10 ? 112 : 88
 
   const showBanner = !!breakChance && !breakDisplay
 
@@ -198,7 +213,7 @@ export default function ScoreboardOverlay() {
           background: transparent !important;
           background-color: transparent !important;
           margin: 0; padding: 0;
-          width: 1920px; height: 1080px;
+          width: 100vw; height: 100vh;
           overflow: hidden;
           font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
         }
@@ -224,10 +239,13 @@ export default function ScoreboardOverlay() {
         .break-out   { animation: breakOut 0.7s  cubic-bezier(0.4, 0, 0.2, 1) forwards; }
       `}</style>
 
-      {/* Fixed 1920×1080 canvas */}
+      {/* 1920×1080 canvas, scaled to the source size. Hidden until the first data arrives so a reload
+          mid-stream never flashes a fake 0–0 LIVE. */}
       <div style={{
         position: "fixed", top: 0, left: 0,
         width: 1920, height: 1080,
+        transform: `scale(${canvasScale})`, transformOrigin: "top left",
+        opacity: game ? 1 : 0, transition: "opacity 0.4s ease",
         overflow: "hidden", pointerEvents: "none",
         display: "flex", flexDirection: "column", alignItems: "center",
         justifyContent: "flex-end",
@@ -295,14 +313,14 @@ export default function ScoreboardOverlay() {
               <img
                 src="/favicon.ico"
                 alt="VOID"
-                style={{ width: LOGO_SIZE, height: LOGO_SIZE, borderRadius: 5, objectFit: "contain" }}
+                style={{ width: LOGO_SIZE, height: LOGO_SIZE, borderRadius: 6, objectFit: "contain" }}
               />
             </div>
 
             <VoidBlock
               score={scoreVoid}
               possession={possession}
-              voidOnOLine={activePoint?.lineType === "O"}
+              voidOnOLine={isLive && activePoint?.lineType === "O"}
               flash={scoreFlash === "VOID"}
               isFinal={isFinal}
               scoreBoxW={scoreBoxW}
@@ -319,25 +337,29 @@ export default function ScoreboardOverlay() {
               borderRight: "1px solid rgba(255,255,255,0.06)",
             }}>
               {isFinal ? (
-                <span style={{ fontSize: CENTER_FONT, color: "rgba(255,255,255,0.4)", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase" }}>
+                <span style={{ fontSize: CENTER_FONT, color: "rgba(255,255,255,0.85)", fontWeight: 800, letterSpacing: "0.16em", textTransform: "uppercase" }}>
                   FINAL
                 </span>
-              ) : (
-                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ position: "relative", display: "flex", width: 6, height: 6 }}>
-                    <span style={{ position: "absolute", display: "inline-flex", height: "100%", width: "100%", borderRadius: "9999px", background: "#f87171", animation: "livePing 1.1s ease-out infinite" }} />
-                    <span style={{ position: "relative", display: "inline-flex", borderRadius: "9999px", width: 6, height: 6, background: "#f87171" }} />
-                  </span>
-                  <span style={{ fontSize: CENTER_FONT, color: "#f87171", fontWeight: 700, letterSpacing: "0.16em" }}>LIVE</span>
+              ) : isUpcoming ? (
+                <span style={{ fontSize: CENTER_FONT, color: "rgba(255,255,255,0.75)", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", whiteSpace: "nowrap" }}>
+                  {startLabel || "SOON"}
                 </span>
-              )}
+              ) : isLive ? (
+                <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <span style={{ position: "relative", display: "flex", width: 10, height: 10 }}>
+                    <span style={{ position: "absolute", display: "inline-flex", height: "100%", width: "100%", borderRadius: "9999px", background: "#f87171", animation: "livePing 1.1s ease-out infinite" }} />
+                    <span style={{ position: "relative", display: "inline-flex", borderRadius: "9999px", width: 10, height: 10, background: "#f87171" }} />
+                  </span>
+                  <span style={{ fontSize: CENTER_FONT, color: "#f87171", fontWeight: 800, letterSpacing: "0.14em" }}>LIVE</span>
+                </span>
+              ) : null}
             </div>
 
             <OppBlock
               name={game?.opponent ?? ""}
               score={scoreOpponent}
               possession={possession}
-              oppOnOLine={activePoint?.lineType === "D"}
+              oppOnOLine={isLive && activePoint?.lineType === "D"}
               flash={scoreFlash === "OPP"}
               isFinal={isFinal}
               scoreBoxW={scoreBoxW}
@@ -352,11 +374,8 @@ export default function ScoreboardOverlay() {
               background: "white",
               borderLeft: "1px solid rgba(0,0,0,0.1)",
             }}>
-              {isFinal ? (
-                <span style={{ fontWeight: 900, textTransform: "uppercase", color: "black", fontSize: HALF_SM, letterSpacing: "0.04em" }}>
-                  FINAL
-                </span>
-              ) : (
+              {/* Half only while live: FINAL is already in the centre, and an upcoming game has no half */}
+              {isLive && (
                 <span style={{ fontWeight: 900, color: "black", fontSize: HALF_FONT, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
                   {half}
                 </span>
@@ -371,7 +390,7 @@ export default function ScoreboardOverlay() {
             background: "rgba(220,220,228,0.9)",
             borderTop: "1px solid rgba(0,0,0,0.07)",
           }}>
-            <span style={{ fontSize: STRIP_FONT, color: "rgba(30,30,60,0.5)", fontWeight: 600, letterSpacing: "0.2em", textTransform: "uppercase" }}>
+            <span style={{ fontSize: STRIP_FONT, color: "rgba(20,20,45,0.85)", fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase" }}>
               {[game?.round, game ? `Cap ${game.cap}` : null, "VOID Ultimate"].filter(Boolean).join("  ·  ")}
             </span>
           </div>
