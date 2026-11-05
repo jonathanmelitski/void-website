@@ -1,6 +1,7 @@
 import Link from "next/link"
 import Image from "next/image"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
+import { formatDate } from "@/lib/format-date"
 
 interface NewsletterCardProps {
   newsletter: NewsletterItem
@@ -11,11 +12,7 @@ export function NewsletterCard({ newsletter }: NewsletterCardProps) {
     ? `${process.env.NEXT_PUBLIC_S3_BASE_URL}/${newsletter.coverPhotoKey}`
     : null
 
-  const dateLabel = new Date(newsletter.date).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  })
+  const dateLabel = formatDate(newsletter.date)
 
   if (!coverUrl) {
     return (

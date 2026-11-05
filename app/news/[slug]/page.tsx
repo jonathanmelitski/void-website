@@ -1,9 +1,29 @@
 import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 import Image from "next/image"
+import Link from "next/link"
+import { ArrowLeft } from "lucide-react"
 import { getNewsletterBySlug } from "@/lib/aws/newsletters"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
 import { PROSE_CSS } from "@/lib/newsletter-prose-css"
+import { formatDate, toDateTimeAttr } from "@/lib/format-date"
+import { Button } from "@/components/ui/button"
+
+// Page-local theme overrides on top of the shared newsletter CSS (which is written for dark
+// email/preview contexts): theme tokens so the article reads in light and dark.
+const ARTICLE_CSS = `
+  .news-article .tiptap-prose { color: var(--fg-secondary); font-size: 1.0625rem; line-height: 1.7; }
+  .news-article .tiptap-prose p { font-size: inherit; line-height: inherit; }
+  .news-article .tiptap-prose h1, .news-article .tiptap-prose h2,
+  .news-article .tiptap-prose h3, .news-article .tiptap-prose h4 { color: var(--foreground); }
+  .news-article .tiptap-prose a { color: var(--brand-text); text-underline-offset: 3px; }
+  .news-article .tiptap-prose a:hover { color: var(--foreground); }
+  .news-article .tiptap-prose blockquote::before { background-color: var(--border-strong); }
+  .news-article .tiptap-prose hr { border-top-color: var(--border); }
+  .news-article .tiptap-prose code, .news-article .tiptap-prose pre {
+    background-color: var(--surface-2); color: var(--foreground); border-color: var(--border);
+  }
+`
 
 export const dynamic = "force-dynamic"
 
@@ -37,60 +57,73 @@ export default async function NewsletterDetailPage({ params }: Props) {
 
   const s3Base = process.env.NEXT_PUBLIC_S3_BASE_URL ?? ""
   const coverUrl = newsletter.coverPhotoKey ? `${s3Base}/${newsletter.coverPhotoKey}` : null
-  const dateLabel = new Date(newsletter.date).toLocaleDateString("en-US", {
-    year: "numeric", month: "long", day: "numeric",
-  })
+  const dateLabel = formatDate(newsletter.date)
+  const dateAttr = toDateTimeAttr(newsletter.date)
 
   return (
-    <>
+    <article className="news-article mx-auto w-full max-w-3xl px-4 pb-16 pt-6 sm:px-6 md:pt-10 lg:px-8">
       <style>{PROSE_CSS}</style>
+      <style>{ARTICLE_CSS}</style>
+
+      <Link
+        href="/news"
+        className="mb-6 inline-flex h-10 items-center gap-1.5 rounded-md text-sm font-medium text-fg-muted transition-colors hover:text-foreground"
+      >
+        <ArrowLeft aria-hidden="true" className="size-4" />
+        All newsletters
+      </Link>
 
       {/* Hero */}
-      <div className="w-full px-4 sm:px-8 lg:px-16 pt-8 mb-10">
+      <header className="mb-10">
         {coverUrl ? (
           <div className="relative h-64 sm:h-80 rounded-xl overflow-hidden">
             <Image src={coverUrl} alt={newsletter.title} fill className="object-cover object-center" priority />
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-            <div className="absolute bottom-0 inset-x-0 px-8 pb-8">
+            <div className="absolute bottom-0 inset-x-0 px-6 pb-6 sm:px-8 sm:pb-8 text-white">
               <h1 className="text-4xl sm:text-5xl font-display tracking-wide leading-none mb-1 drop-shadow-lg">{newsletter.title}</h1>
-              <p className="text-fg-secondary text-sm">{dateLabel}</p>
+              {dateLabel && <p className="text-white/80 text-sm"><time dateTime={dateAttr}>{dateLabel}</time></p>}
             </div>
           </div>
         ) : (
-          <div className="pt-2">
-            <h1 className="text-4xl sm:text-5xl font-display tracking-wide leading-none mb-2">{newsletter.title}</h1>
-            <p className="text-fg-muted text-sm">{dateLabel}</p>
+          <div className="flex flex-col gap-3 border-b border-border pb-8">
+            <h1 className="text-5xl sm:text-6xl font-display tracking-wide leading-[0.9] text-foreground">{newsletter.title}</h1>
+            {dateLabel && <p className="text-fg-muted text-sm"><time dateTime={dateAttr}>{dateLabel}</time></p>}
           </div>
         )}
-      </div>
+      </header>
 
       {/* Content */}
-      <div className="w-full px-4 sm:px-8 lg:px-16 pb-10">
-        {newsletter.body && newsletter.body !== "<p></p>" && (
-          <div className="tiptap-prose mb-10" dangerouslySetInnerHTML={{ __html: newsletter.body }} />
-        )}
+      {newsletter.body && newsletter.body !== "<p></p>" && (
+        <div className="tiptap-prose mb-12 max-w-[68ch]" dangerouslySetInnerHTML={{ __html: newsletter.body }} />
+      )}
 
-        {(newsletter.entries ?? []).length > 0 && (
-          <div className="bg-surface border border-border rounded-xl divide-y divide-border overflow-hidden">
-            {newsletter.entries.map(entry => (
-              <article key={entry.id} className="px-6 sm:px-10 py-8">
-                <h2 className="text-2xl sm:text-3xl font-display leading-none tracking-wide mb-1">{entry.title}</h2>
-                {entry.date && <p className="text-fg-muted text-xs mb-6">{entry.date}</p>}
-                <div className="tiptap-prose" dangerouslySetInnerHTML={{ __html: entry.body }} />
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Footer */}
-      <footer className="w-full px-4 sm:px-8 lg:px-16 py-10 mt-6 border-t border-border">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-fg-faint text-xs">
-          <span className="font-semibold tracking-widest uppercase text-fg-muted">Void Ultimate</span>
-          <span>{dateLabel}</span>
-          <a href="/news" className="hover:text-foreground transition-colors">← All newsletters</a>
+      {(newsletter.entries ?? []).length > 0 && (
+        <div className="flex flex-col divide-y divide-border border-t border-border">
+          {newsletter.entries.map(entry => (
+            <section key={entry.id} aria-labelledby={`entry-${entry.id}`} className="py-10">
+              <h2 id={`entry-${entry.id}`} className="text-3xl sm:text-4xl font-display leading-none tracking-wide text-foreground">{entry.title}</h2>
+              {entry.date && <p className="mt-2 text-fg-muted text-sm">{entry.date}</p>}
+              <div className="tiptap-prose mt-6 max-w-[68ch]" dangerouslySetInnerHTML={{ __html: entry.body }} />
+            </section>
+          ))}
         </div>
-      </footer>
-    </>
+      )}
+
+      {/* Next steps */}
+      <div className="mt-6 flex flex-col gap-4 rounded-xl border border-border bg-surface p-6 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Get the next issue</h2>
+          <p className="text-sm text-fg-muted">Newsletters land in your inbox about once a month.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild>
+            <Link href="/subscribe/void-public">Subscribe</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/news">All newsletters</Link>
+          </Button>
+        </div>
+      </div>
+    </article>
   )
 }
