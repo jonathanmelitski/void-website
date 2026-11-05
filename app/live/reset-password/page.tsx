@@ -1,14 +1,17 @@
 "use client"
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { Suspense, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { Field } from "@/components/ui/field"
+import { PageContainer } from "@/components/ui/page"
+import { FormMessage, postAuth } from "@/components/auth/auth-form"
 
-export default function ResetPasswordPage() {
-  const [email, setEmail] = useState("")
+function ResetPasswordForm() {
+  const searchParams = useSearchParams()
+  const [email, setEmail] = useState(searchParams.get("email") ?? "")
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
@@ -18,47 +21,39 @@ export default function ResetPasswordPage() {
     setError("")
     setIsLoading(true)
     try {
-      const res = await fetch("/api/auth/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error ?? "Request failed"); return }
+      const res = await postAuth("/api/auth/reset-password", { email })
+      if (!res.ok) { setError(res.error); return }
       router.push(`/live/confirm-reset?email=${encodeURIComponent(email)}`)
-    } catch {
-      setError("An unexpected error occurred")
     } finally {
       setIsLoading(false)
     }
   }
 
   return (
-    <div className="flex flex-col items-center pt-24 px-4 text-left">
-      <div className="w-full max-w-sm flex flex-col gap-6">
-        <div>
-          <h1 className="text-4xl font-display leading-none tracking-wide">Reset password</h1>
-          <p className="text-fg-muted mt-1 text-sm">We&apos;ll send a reset code to your email.</p>
-        </div>
-
-        {error && <p className="text-sm text-destructive">{error}</p>}
-
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="email" className="text-fg-secondary">Email</Label>
-            <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)}
-              placeholder="you@upenn.edu" required autoComplete="email"
-              className="bg-surface border-border text-foreground placeholder:text-fg-faint" />
-          </div>
-          <Button type="submit" disabled={isLoading}>
-            {isLoading ? "Sending…" : "Send reset code"}
-          </Button>
-        </form>
-
-        <Link href="/live/login" className="text-sm text-fg-muted hover:text-foreground transition-colors">
-          Back to sign in
-        </Link>
+    <PageContainer width="form" className="flex flex-col gap-6 text-left">
+      <div>
+        <h1 className="text-4xl font-display leading-none tracking-wide">Reset password</h1>
+        <p className="text-fg-muted mt-2 text-sm">We&apos;ll email you a code to set a new password.</p>
       </div>
-    </div>
+
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <Field label="Email">
+          <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)}
+            placeholder="you@upenn.edu" required autoComplete="email" className="h-10" />
+        </Field>
+        <FormMessage error={error} />
+        <Button type="submit" size="lg" loading={isLoading}>
+          {isLoading ? "Sending…" : "Send reset code"}
+        </Button>
+      </form>
+
+      <Link href="/live/login" className="text-sm text-fg-muted hover:text-foreground transition-colors w-fit">
+        Back to sign in
+      </Link>
+    </PageContainer>
   )
+}
+
+export default function ResetPasswordPage() {
+  return <Suspense><ResetPasswordForm /></Suspense>
 }
