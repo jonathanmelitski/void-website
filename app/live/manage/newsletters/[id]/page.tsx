@@ -12,6 +12,8 @@ import type { Editor } from "@tiptap/react"
 import type { NewsletterItem } from "@/lib/aws/newsletters"
 import { PROSE_CSS } from "@/lib/newsletter-prose-css"
 import { Spinner } from "@/components/ui/spinner"
+import { toast } from "@/components/ui/sonner"
+import { IMAGE_ACCEPT, ImagePrepError, prepareImageForUpload, putToPresignedUrl } from "@/lib/image-prep"
 
 function NewsletterPreview({ newsletter }: { newsletter: NewsletterItem }) {
   const dateLabel = new Date(newsletter.date).toLocaleDateString("en-US", {
@@ -70,6 +72,7 @@ export default function ManageNewsletterPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState("")
   const [isToggling, setIsToggling] = useState(false)
+  const [coverUploading, setCoverUploading] = useState(false)
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
   const [bodySaveStatus, setBodySaveStatus] = useState<"idle" | "pending" | "saving" | "saved" | "error">("idle")
   const [emailBodySaveStatus, setEmailBodySaveStatus] = useState<"idle" | "pending" | "saving" | "saved" | "error">("idle")
@@ -389,15 +392,26 @@ export default function ManageNewsletterPage() {
   }
 
   async function handleCoverUpload(file: File) {
-    const presignRes = await fetch("/api/upload/newsletter-cover-presign", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ newsletterId: id, contentType: file.type }),
-    })
-    if (!presignRes.ok) return
-    const { url, key } = await presignRes.json()
-    await fetch(url, { method: "PUT", body: file, headers: { "Content-Type": file.type } })
-    await saveMeta({ coverPhotoKey: key })
+    setCoverUploading(true)
+    try {
+      // Downscale + re-encode first so the cover isn't a multi-MB original in every email.
+      const image = await prepareImageForUpload(file)
+      const presignRes = await apiFetch("/api/upload/newsletter-cover-presign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newsletterId: id, contentType: image.contentType }),
+        waitForSession: true,
+      })
+      if (!presignRes.ok) throw new ImagePrepError("Couldn't start the upload. Try again.")
+      const { url, key } = await presignRes.json()
+      await putToPresignedUrl(url, image)
+      // Only point the newsletter at the new key once the upload actually landed.
+      await saveMeta({ coverPhotoKey: key })
+    } catch (err) {
+      toast.error(err instanceof ImagePrepError ? err.message : "Cover upload failed. Try again.")
+    } finally {
+      setCoverUploading(false)
+    }
   }
 
   async function moveEntry(index: number, direction: -1 | 1) {
@@ -552,10 +566,20 @@ export default function ManageNewsletterPage() {
               )}
               <input
                 type="file"
-                accept="image/*"
-                onChange={e => { const f = e.target.files?.[0]; if (f) handleCoverUpload(f) }}
-                className="text-xs text-fg-muted file:mr-2 file:rounded-md file:border-0 file:bg-surface-2 file:px-2 file:py-1 file:text-xs file:text-foreground hover:file:bg-surface-3"
+                accept={IMAGE_ACCEPT}
+                disabled={coverUploading}
+                onChange={e => {
+                  const f = e.target.files?.[0]
+                  e.target.value = "" // allow re-picking the same file after a failure
+                  if (f) handleCoverUpload(f)
+                }}
+                className="text-xs text-fg-muted file:mr-2 file:rounded-md file:border-0 file:bg-surface-2 file:px-2 file:py-1 file:text-xs file:text-foreground hover:file:bg-surface-3 disabled:opacity-50"
               />
+              {coverUploading && (
+                <p className="flex items-center gap-1.5 text-xs text-fg-muted" aria-live="polite">
+                  <Spinner size="sm" /> Uploading cover…
+                </p>
+              )}
             </div>
           </div>
         </div>
