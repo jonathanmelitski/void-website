@@ -7,6 +7,10 @@ import type { NewsletterItem } from "@/lib/aws/newsletters"
 import { Spinner } from "@/components/ui/spinner"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
+import { apiFetch, errorMessage, NetworkError } from "@/lib/api-fetch"
+import { canResume, isActiveState, sendCounts, sendState, type DeliveryStatus, type SendLike } from "@/lib/bulk-send"
+import type { SendSummary } from "@/lib/aws/sends"
+import { SendMonitor, type LiveState } from "./SendMonitor"
 
 type ContactList = { name: string; description?: string }
 type Contact = { email: string; unsubscribed: boolean }
@@ -71,51 +75,43 @@ export function MarketingPanel() {
   const [totpInput, setTotpInput] = useState("")
   const [totpError, setTotpError] = useState("")
 
-  // Send progress
-  type RecipientStatus = "sent" | "failed"
-  const [sendProgress, setSendProgress] = useState<{
-    listName: string
-    newsletterTitle: string
-    recipients: { email: string; status: RecipientStatus }[]
-    sent: number
-    failed: number
-    total: number
-    done: boolean
+  // Send progress monitor (reads the stored record, so it survives reloads; ?send=<id> deep-links it)
+  const [monitor, setMonitor] = useState<{
     sendId: string | null
-    trackingEnabled: boolean
-    error?: string
+    title: string
+    listName: string
+    live: LiveState
   } | null>(null)
-  // Delivery modal
-  type DeliveryRecipient = { email: string; status: "sent" | "failed" }
+  const [workerEnabled, setWorkerEnabled] = useState(false)
+
+  // Delivery modal: per-recipient status as recorded, never inferred from the current list
+  type DeliveryRecipient = { email: string; status: DeliveryStatus }
   const [deliveryModal, setDeliveryModal] = useState<{
     send: SendRecord
     recipients: DeliveryRecipient[] | null
+    source: "worker" | "record" | "none" | null
     loading: boolean
+    error?: string
     resending: boolean
     resendProgress: { recipients: Map<string, "pending" | "sent" | "failed">; sent: number; failed: number; total: number; done: boolean } | null
   } | null>(null)
 
   async function openDelivery(s: SendRecord) {
-    setDeliveryModal({ send: s, recipients: null, loading: true, resending: false, resendProgress: null })
+    setDeliveryModal({ send: s, recipients: null, source: null, loading: true, resending: false, resendProgress: null })
+    const order: Record<DeliveryStatus, number> = { failed: 0, unknown: 1, pending: 2, sent: 3, dryrun: 4 }
     try {
-      const res = await fetch(`/api/marketing/lists/${encodeURIComponent(s.listName)}/contacts`)
-      const data = await res.json()
-      if (Array.isArray(data)) {
-        const failedSet = new Set(s.failedRecipients ?? [])
-        const recipients: DeliveryRecipient[] = data
-          .filter((c: { unsubscribed: boolean }) => !c.unsubscribed)
-          .map((c: { email: string }) => ({
-            email: c.email,
-            status: (failedSet.has(c.email) ? "failed" : "sent") as "sent" | "failed",
-          }))
-          .sort((a: DeliveryRecipient, b: DeliveryRecipient) => {
-            if (a.status === b.status) return a.email.localeCompare(b.email)
-            return a.status === "failed" ? -1 : 1
-          })
-        setDeliveryModal(prev => prev ? { ...prev, recipients, loading: false } : null)
+      const res = await apiFetch(`/api/marketing/sends/${encodeURIComponent(s.id)}/recipients`)
+      if (!res.ok) {
+        const message = await errorMessage(res, "Couldn't load delivery details.")
+        setDeliveryModal(prev => prev ? { ...prev, loading: false, error: message } : null)
+        return
       }
+      const data = await res.json() as { source: "worker" | "record" | "none"; recipients: DeliveryRecipient[] }
+      const recipients = [...data.recipients].sort((a, b) =>
+        a.status === b.status ? a.email.localeCompare(b.email) : order[a.status] - order[b.status])
+      setDeliveryModal(prev => prev ? { ...prev, recipients, source: data.source, loading: false } : null)
     } catch {
-      setDeliveryModal(prev => prev ? { ...prev, loading: false } : null)
+      setDeliveryModal(prev => prev ? { ...prev, loading: false, error: "Can't reach the server. Check your connection." } : null)
     }
   }
 
@@ -134,13 +130,22 @@ export function MarketingPanel() {
       },
     } : null)
 
-    const response = await fetch(`/api/marketing/sends/${send.id}/resend`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ totpCode }),
-    })
+    let response: Response
+    try {
+      response = await apiFetch(`/api/marketing/sends/${send.id}/resend`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ totpCode }),
+        waitForSession: true,
+      })
+    } catch (err) {
+      toast.error(err instanceof NetworkError ? err.message : "Couldn't start the resend.")
+      setDeliveryModal(prev => prev ? { ...prev, resending: false, resendProgress: null } : null)
+      return
+    }
     if (!response.ok || !response.body) {
-      setDeliveryModal(prev => prev ? { ...prev, resending: false } : null)
+      toast.error(await errorMessage(response, "Couldn't start the resend."))
+      setDeliveryModal(prev => prev ? { ...prev, resending: false, resendProgress: null } : null)
       return
     }
 
@@ -235,6 +240,45 @@ export function MarketingPanel() {
       .catch(() => setError("Failed to load data"))
       .finally(() => setLoading(false))
   }, [])
+
+  // Re-attach the progress monitor after a reload: a ?send=<id> link wins, else the newest active send.
+  useEffect(() => {
+    let cancelled = false
+    const linked = new URLSearchParams(window.location.search).get("send")
+    if (linked) setMonitor({ sendId: linked, title: "", listName: "", live: { phase: "ended" } })
+    apiFetch("/api/marketing/sends/active", { cache: "no-store" })
+      .then(r => (r.ok ? r.json() : null))
+      .then((data: { workerEnabled: boolean; active: SendSummary[] } | null) => {
+        if (cancelled || !data) return
+        setWorkerEnabled(data.workerEnabled)
+        const newest = data.active[0]
+        if (!linked && newest) {
+          setMonitor(prev => prev ?? { sendId: newest.id, title: newest.newsletterTitle, listName: newest.listName, live: { phase: "ended" } })
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  // Keep ?send=<id> in the URL while the monitor is open, so a reload or a shared link reopens it.
+  const monitorSendId = monitor?.sendId ?? null
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (monitorSendId) url.searchParams.set("send", monitorSendId)
+    else url.searchParams.delete("send")
+    if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url.href)
+  }, [monitorSendId])
+
+  function updateSendInHistory(s: SendSummary) {
+    setSends(prev => {
+      const i = prev.findIndex(x => x.id === s.id)
+      if (i === -1) return [s as SendRecord, ...prev]
+      const next = [...prev]
+      // Keep the recipient lists from the full record; take counts and status from the summary.
+      next[i] = { ...prev[i], ...s } as SendRecord
+      return next
+    })
+  }
 
   async function createList() {
     if (!newListName.trim()) return

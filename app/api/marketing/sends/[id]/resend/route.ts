@@ -6,6 +6,7 @@ import { getSend, logSend } from "@/lib/aws/sends"
 import { getNewsletter } from "@/lib/aws/newsletters"
 import { sendToEmails } from "@/lib/aws/ses"
 import { logAudit } from "@/lib/aws/audit"
+import { emailBaseUrlProblem } from "@/lib/bulk-send"
 
 export const maxDuration = 60
 
@@ -34,6 +35,9 @@ export async function POST(
 
   const newsletter = await getNewsletter(send.newsletterId)
   if (!newsletter) return NextResponse.json({ error: "Newsletter not found" }, { status: 404 })
+
+  const baseUrlProblem = emailBaseUrlProblem() // EMAIL-10
+  if (baseUrlProblem) return NextResponse.json({ error: baseUrlProblem }, { status: 409 })
 
   const sendId = randomUUID()
   const encoder = new TextEncoder()
@@ -70,9 +74,14 @@ export async function POST(
           failedRecipients: result.failedRecipients.length > 0 ? result.failedRecipients : undefined,
           trackingEnabled: send.trackingEnabled,
           trackedLinks: send.trackingEnabled ? result.trackedLinks : undefined,
+          status: "complete",
+          updatedAt: new Date().toISOString(),
+          totalRecipients: failed.length,
+          sentRecipients: failed.filter(e => !result.failedRecipients.includes(e)),
         }, sendId)
 
-        void logAudit({
+        // Awaited: fire-and-forget writes are lost when the serverless runtime freezes.
+        await logAudit({
           actorUsername: caller.username,
           action: "SEND",
           entityType: "SEND",
@@ -88,7 +97,7 @@ export async function POST(
             trackingEnabled: send.trackingEnabled,
           },
           reversible: false,
-        })
+        }).catch(err => console.error("[resend] audit write failed:", err instanceof Error ? err.name : err))
 
         emit({ type: "done", sendId, sent: result.sent, failed: result.failed })
       } catch (err) {
