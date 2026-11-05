@@ -1,7 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
+/* Theme follows the OS. `dark:` utilities track prefers-color-scheme, no class toggle. */
+@custom-variant dark (@media (prefers-color-scheme: dark));
 
 @property --border-angle {
   syntax: "<angle>";
@@ -15,90 +16,110 @@
   }
 }
 
-@font-face {
-  font-family: 'Bebas Neue';
-  src: url('/public/jersey/BebasNeue-Regular.ttf') format('truetype');
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap; /* Controls display behavior while loading */
-}
-
+/*
+ * Semantic tokens. Light is the base, dark overrides under the media query.
+ * Use the semantic utilities (text-foreground, text-fg-secondary, text-fg-muted, text-fg-faint,
+ * bg-surface / -2 / -3, bg-card, border-border / border-border-strong, text-brand-text, …)
+ * rather than literal white/black. Literal white is only for content on imagery, video or scrims.
+ */
 :root {
-  --max-width: 1100px;
-  --border-radius: 12px;
-  --font-mono: ui-monospace, Menlo, Monaco, 'Cascadia Mono', 'Segoe UI Mono',
-    'Roboto Mono', 'Oxygen Mono', 'Ubuntu Monospace', 'Source Code Pro',
-    'Fira Mono', 'Droid Sans Mono', 'Courier New', 'Bebas Neue', monospace;
-
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: #CBBEFF;
-  --background-end-rgb: 255, 255, 255;
-
-  --callout-rgb: 238, 240, 241;
-  --callout-border-rgb: 172, 175, 176;
-  --card-rgb: #6649AE;
-  --card-border-rgb: 131, 134, 135;
   --radius: 0.625rem;
+  --font-display: var(--font-bebas), Impact, "Arial Narrow", sans-serif;
+
+  /* light: paper page, white cards with hairline borders */
+  --background: oklch(0.985 0 0);
+  --foreground: oklch(0.145 0 0);
+  --fg-secondary: oklch(0.145 0 0 / 0.75);
+  --fg-muted: oklch(0.145 0 0 / 0.6);
+  --fg-faint: oklch(0.145 0 0 / 0.38);
+
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.145 0 0 / 0.05);
+  --surface-3: oklch(0.145 0 0 / 0.1);
+
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
+  --secondary: oklch(0.955 0 0);
   --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
+  --muted: oklch(0.955 0 0);
+  --muted-foreground: oklch(0.5 0 0);
+  --accent: oklch(0.955 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
+  --destructive: oklch(0.55 0.22 27);
+  --border: oklch(0.145 0 0 / 0.1);
+  --border-strong: oklch(0.145 0 0 / 0.2);
+  --input: oklch(0.145 0 0 / 0.18);
+  --ring: oklch(0.5 0.22 266);
+
+  --brand: oklch(0.488 0.243 264.376);
+  --brand-foreground: oklch(0.985 0 0);
+  --brand-text: oklch(0.5 0.22 266);
+  --success: oklch(0.5 0.13 152);
+  --warning: oklch(0.55 0.13 65);
+
+  --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+  --chart-3: oklch(0.646 0.222 41.116);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent: oklch(0.955 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --sidebar-border: oklch(0.145 0 0 / 0.1);
+  --sidebar-ring: oklch(0.5 0.22 266);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-start-rgb: 0, 0, 0;
-    --background-end-rgb: 0, 0, 0;
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --fg-secondary: oklch(0.985 0 0 / 0.7);
+    --fg-muted: oklch(0.985 0 0 / 0.55);
+    --fg-faint: oklch(0.985 0 0 / 0.3);
 
-    --callout-rgb: 20, 20, 20;
-    --callout-border-rgb: 108, 108, 108;
-    --card-rgb: 100, 100, 100;
-    --card-border-rgb: 200, 200, 200;
-  }
-}
+    --surface: oklch(1 0 0 / 0.05);
+    --surface-2: oklch(1 0 0 / 0.1);
+    --surface-3: oklch(1 0 0 / 0.2);
 
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
-}
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 0.1);
+    --border-strong: oklch(1 0 0 / 0.2);
+    --input: oklch(1 0 0 / 0.15);
+    --ring: oklch(0.65 0.2 266);
 
-a {
-  color: inherit;
-  text-decoration: none;
-}
+    --brand-text: oklch(0.75 0.14 268);
+    --success: oklch(0.79 0.17 152);
+    --warning: oklch(0.86 0.15 85);
 
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
+    --chart-2: oklch(0.696 0.17 162.48);
+    --chart-3: oklch(0.769 0.188 70.08);
+
+    --sidebar: oklch(0.205 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(1 0 0 / 0.1);
+    --sidebar-ring: oklch(0.65 0.2 266);
   }
 }
 
@@ -107,8 +128,15 @@ a {
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-fg-secondary: var(--fg-secondary);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-faint: var(--fg-faint);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -123,8 +151,14 @@ a {
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-text: var(--brand-text);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -140,45 +174,58 @@ a {
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-}
-
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
+  html {
+    color-scheme: light dark;
   }
+
+  html,
+  body {
+    max-width: 100vw;
+    overflow-x: clip;
+  }
+
+  * {
+    @apply border-border;
+  }
+
   body {
     @apply bg-background text-foreground;
   }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  /*
+   * Native <select> option lists are drawn by the OS (notably on Windows) and inherit
+   * the <select>'s text colour. Pin them to the popover tokens so the list is never
+   * white-on-white or black-on-black.
+   */
+  option,
+  optgroup {
+    background-color: var(--popover);
+    color: var(--popover-foreground);
+  }
+
+  /* One strong, brand-tinted keyboard focus indicator everywhere. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklch, var(--brand) 35%, transparent);
+  }
+}
+
+/*
+ * Bebas Neue: a single-weight, caps-only display face. Never faux-bold it.
+ * Pair with `tracking-wide leading-none` (PageHeader does this for you).
+ */
+@utility font-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-synthesis: none;
 }
