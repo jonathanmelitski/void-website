@@ -11,6 +11,8 @@ import type { FilmClipItem } from "@/lib/aws/film-clips"
 import {
   buildAngleCoverage, locateMain, mainMsOf, mainToAngle, type FilmSyncPoint, type MainTimeline,
 } from "@/lib/film-tracks"
+import { apiFetch } from "@/lib/api-fetch"
+import { toast } from "@/components/ui/sonner"
 
 interface SyncEditorProps {
   trackName: string
@@ -100,10 +102,11 @@ export function SyncEditor({
       setSaveStatus("saving")
       try {
         for (const id of dirty) {
-          const res = await fetch(`/api/film/clips/${id}`, {
+          const res = await apiFetch(`/api/film/clips/${id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ syncPoints: points[id] }),
+            waitForSession: true,
           })
           if (!res.ok) throw new Error("Save failed")
           savedRef.current = { ...savedRef.current, [id]: points[id] }
@@ -111,6 +114,8 @@ export function SyncEditor({
         setSaveStatus("saved")
       } catch {
         setSaveStatus("error")
+        // Edits stay on screen; the next change retries the save
+        toast.error("Couldn't save the angle sync. Your changes are kept here; make another edit to retry.", { id: "film-sync-save" })
       }
     }, SAVE_DEBOUNCE_MS)
     return () => clearTimeout(timer)
@@ -398,7 +403,7 @@ export function SyncEditor({
   }
 
   return (
-    <div ref={rootRef} className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-3 select-none">
+    <div ref={rootRef} data-film-esc-layer className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-3 select-none">
       {/* Header */}
       <div className="flex items-center gap-2 text-xs">
         <Link2 size={14} className="text-warning" />
