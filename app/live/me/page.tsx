@@ -7,8 +7,9 @@ import dynamic from "next/dynamic"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { FilmClipItem } from "@/lib/aws/film-clips"
 import type { FilmAnnotationItem } from "@/lib/aws/film-annotations"
-import type { GameStats, PlayerStats } from "@/lib/stats/derive"
+import type { PlayerStats } from "@/lib/stats/derive"
 import { Spinner } from "@/components/ui/spinner"
+import { apiFetch } from "@/lib/api-fetch"
 
 const FilmViewer = dynamic(
   () => import("@/components/film/FilmViewer").then(m => m.FilmViewer),
@@ -46,50 +47,29 @@ export default function MePage() {
     if (!user) return
     async function load() {
       setDataLoading(true)
-      const res = await fetch("/api/me/player")
+      // One request: player link, games with READY film, this player's points and derived stats
+      // per game (server skips deleted games and private events the caller can't see).
+      let res: Response
+      try {
+        res = await apiFetch("/api/me/footage")
+      } catch {
+        setDataLoading(false)
+        return
+      }
       if (!res.ok) { setDataLoading(false); return }
 
-      const { player: p, link, cognitoSub: sub } = await res.json()
+      const { player: p, link, cognitoSub: sub, games } = await res.json() as {
+        player: PlayerItem | null
+        link: unknown
+        cognitoSub?: string
+        games: GameClips[]
+      }
       setCognitoSub(sub ?? null)
       if (!link) { setLinked(false); setDataLoading(false); return }
 
       setLinked(true)
       setPlayer(p)
-
-      // Get all points for this player — scan VoidPoints with contains filter
-      const pointsRes = await fetch(`/api/points?playerId=${p.id}`)
-      const allPoints: PointSummary[] = pointsRes.ok ? await pointsRes.json() : []
-
-      // Group by game
-      const byGame = new Map<string, PointSummary[]>()
-      for (const pt of allPoints) {
-        if (!byGame.has(pt.gameId)) byGame.set(pt.gameId, [])
-        byGame.get(pt.gameId)!.push(pt)
-      }
-
-      // Fetch games and clips in parallel
-      const gameIds = [...byGame.keys()]
-      const results = await Promise.all(
-        gameIds.map(async gameId => {
-          const [gameRes, clipsRes, statsRes] = await Promise.all([
-            fetch(`/api/games/${gameId}`),
-            fetch(`/api/film/clips?gameId=${gameId}`),
-            fetch(`/api/games/${gameId}/stats`),
-          ])
-          const gameStats: GameStats | null = statsRes.ok ? await statsRes.json() : null
-          const game = gameRes.ok ? await gameRes.json() : null
-          const clips: FilmClipItem[] = clipsRes.ok ? await clipsRes.json() : []
-          return {
-            gameId,
-            gameLabel: game ? `vs ${game.opponent}${game.round ? ` · ${game.round}` : ""}` : gameId,
-            clips: clips.filter((c: FilmClipItem) => c.status === "READY"),
-            points: byGame.get(gameId) ?? [],
-            stats: gameStats?.players.find(s => s.playerId === p.id) ?? null,
-          }
-        })
-      )
-
-      setGameClips(results.filter(g => g.clips.length > 0))
+      setGameClips(games.filter(g => g.clips.length > 0))
       setDataLoading(false)
     }
 
