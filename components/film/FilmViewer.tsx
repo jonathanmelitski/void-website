@@ -300,6 +300,15 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
   const [showShortcuts, setShowShortcuts] = useState(false)
   const openShortcuts = useCallback(() => setShowShortcuts(true), [])
   const [canFullscreen] = useState(() => document.fullscreenEnabled !== false)
+  // Phones/tablets get a compact fullscreen (scrubber + play bar only, pinned to the bottom).
+  // Detected by touch input rather than width: a landscape phone is wider than mobile breakpoints.
+  const [isTouch, setIsTouch] = useState(() => window.matchMedia("(pointer: coarse)").matches)
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse)")
+    const onChange = () => setIsTouch(mq.matches)
+    mq.addEventListener("change", onChange)
+    return () => mq.removeEventListener("change", onChange)
+  }, [])
   const [layout, setLayout] = useState<LayoutPrefs>(readLayoutPrefs)
   useEffect(() => {
     try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)) } catch { /* storage unavailable */ }
@@ -1225,8 +1234,8 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
       : "flex flex-col gap-2"
     }>
       {/* Timeline lanes — live events and angle coverage, collapsible as one group above the scrubber.
-          Hidden in fullscreen so the overlay doesn't cover the video. */}
-      {hasLanes && !isFullscreen && (
+          Hidden in mobile fullscreen so the overlay doesn't cover the video. */}
+      {hasLanes && !(isFullscreen && isTouch) && (
         <div className="hidden md:flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <SectionToggle
@@ -1589,20 +1598,22 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           </div>
           {isFullscreen && !overlayVisible && (
             // Invisible hover strip above YouTube's own control bar (kept clear for its quality menu)
-            <div className="absolute inset-x-0 bottom-0 h-24 z-20" onMouseEnter={() => setOverlayHovered(true)} />
+            <div className={`absolute inset-x-0 ${isTouch ? "bottom-0" : "bottom-14"} h-24 z-20`} onMouseEnter={() => setOverlayHovered(true)} />
           )}
           <div
             ref={chromeRef}
             className={isFullscreen
-              ? `absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col gap-2 overflow-y-auto px-4 pt-8 pb-[max(0.75rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-black via-black/70 to-transparent transition-opacity duration-300 ${overlayVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`
+              ? `absolute inset-x-0 z-20 flex flex-col gap-2 px-4 transition-opacity duration-300 ${isTouch
+                  ? "bottom-0 max-h-full overflow-y-auto pt-8 pb-[max(0.75rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-black via-black/70 to-transparent"
+                  : "bottom-14 pt-12 pb-3 bg-gradient-to-t from-black/90 via-black/70 to-transparent"} ${overlayVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`
               : "flex flex-col gap-2"}
             onMouseEnter={isFullscreen ? () => setOverlayHovered(true) : undefined}
             onMouseLeave={isFullscreen ? () => setOverlayHovered(false) : undefined}
           >
             {controlsArea}
-            {/* In fullscreen only the scrubber and play bar float over the video; the point editor
+            {/* In mobile fullscreen only the scrubber and play bar float over the video; the point editor
                 stays out of the way unless a coach is actively editing */}
-            {(!isFullscreen || (canAnnotate && editMode)) && (editorPoint || globalMetaSegments.length > 0 || canAnnotate) && (
+            {(!(isFullscreen && isTouch) || (canAnnotate && editMode)) && (editorPoint || globalMetaSegments.length > 0 || canAnnotate) && (
               <div>
                 {!layout.editor ? (
                   <div className="rounded-xl border border-border px-3 py-1.5">
