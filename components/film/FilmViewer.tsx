@@ -1589,12 +1589,12 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           </div>
           {isFullscreen && !overlayVisible && (
             // Invisible hover strip above YouTube's own control bar (kept clear for its quality menu)
-            <div className="absolute inset-x-0 bottom-14 h-24 z-20" onMouseEnter={() => setOverlayHovered(true)} />
+            <div className="absolute inset-x-0 bottom-0 h-24 z-20" onMouseEnter={() => setOverlayHovered(true)} />
           )}
           <div
             ref={chromeRef}
             className={isFullscreen
-              ? `absolute inset-x-0 bottom-14 z-20 flex max-h-[calc(100%-3.5rem)] flex-col gap-2 overflow-y-auto px-4 pt-8 pb-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent transition-opacity duration-300 ${overlayVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`
+              ? `absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col gap-2 overflow-y-auto px-4 pt-8 pb-[max(0.75rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-black via-black/70 to-transparent transition-opacity duration-300 ${overlayVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`
               : "flex flex-col gap-2"}
             onMouseEnter={isFullscreen ? () => setOverlayHovered(true) : undefined}
             onMouseLeave={isFullscreen ? () => setOverlayHovered(false) : undefined}
