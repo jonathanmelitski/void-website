@@ -1,7 +1,5 @@
 import Image from "next/image"
-import Link from "next/link"
 import { EventCard } from "@/components/gallery/EventCard"
-import { Button } from "@/components/ui/button"
 import { PageContainer } from "@/components/ui/page"
 import teamPhoto from "@/public/void-team.png"
 import { listEvents, type EventItem } from "@/lib/aws/dynamo"
@@ -35,16 +33,13 @@ export default async function App() {
             <span className="block">Void</span>
             <span className="block">Ultimate</span>
           </h1>
-          <p className="max-w-[34rem] text-lg leading-relaxed text-fg-secondary md:text-xl">
-            Penn&apos;s men&apos;s ultimate frisbee team. Founded in 1976, Void is the longest continuously run ultimate program in Philadelphia.
-          </p>
-          <div className="flex flex-wrap gap-3">
-            <Button asChild size="lg">
-              <Link href="/roster">Meet the roster</Link>
-            </Button>
-            <Button asChild size="lg" variant="outline" className="bg-background/60">
-              <Link href="/donate">Support the team</Link>
-            </Button>
+          <div className="flex max-w-[65ch] flex-col gap-4 text-lg leading-relaxed text-fg-secondary">
+            <p>
+              Men&apos;s Club Ultimate Frisbee (Void) is a student group open to all students at the University of Pennsylvania. Void was founded in 1976 and is the longest continuously-run Ultimate program in Philadelphia. We compete as a D1 Men&apos;s College Ultimate program. Our program has won one national championship (1985) and has alumni playing at the highest levels of club and professionally in the UFA.
+            </p>
+            <p>
+              We offer an A team and a B team, called Null. While Void is competitive in nature, we do not cut from the program. Anyone who wants to play on Null can. Our goals as a club are to introduce the sport and grow love for Ultimate on Null, and to compete at the highest levels on Void.
+            </p>
           </div>
         </div>
         <figure className="overflow-hidden rounded-xl border border-border bg-surface">
@@ -59,37 +54,11 @@ export default async function App() {
         </figure>
       </section>
 
-      <section aria-labelledby="program-title" className="grid gap-6 border-t border-border pt-10 md:grid-cols-[minmax(0,14rem)_minmax(0,1fr)] md:gap-12">
-        <h2 id="program-title" className="font-display text-4xl leading-none tracking-wide text-foreground">
-          The program
-        </h2>
-        <div className="flex max-w-[65ch] flex-col gap-4 text-base leading-relaxed text-fg-secondary">
-          <p>
-            We compete as a D1 men&apos;s college ultimate program. Void won a national championship in 1985, and our alumni play at the highest levels of club ultimate and professionally in the UFA.
-          </p>
-          <p>
-            There are two teams: Void, our A team, and Null, our B team. Void is competitive, but we don&apos;t cut from the program &ndash; anyone at Penn who wants to play on Null can. Null is where people learn the sport and fall for it; Void is where we compete at the highest level.
-          </p>
-          <p>
-            New to ultimate? You&apos;re welcome. Reach us at{" "}
-            <a href="mailto:void.ultimate@gmail.com" className="text-foreground underline underline-offset-4 hover:text-brand-text">
-              void.ultimate@gmail.com
-            </a>
-            .
-          </p>
-        </div>
-      </section>
-
       {recentEvents.length > 0 && (
         <section aria-labelledby="events-title" className="flex flex-col gap-6">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <h2 id="events-title" className="font-display text-4xl leading-none tracking-wide text-foreground">
-              Recent events
-            </h2>
-            <Link href="/news" className="text-sm font-medium text-fg-secondary underline-offset-4 hover:text-foreground hover:underline">
-              Read the news
-            </Link>
-          </div>
+          <h2 id="events-title" className="font-display text-4xl leading-none tracking-wide text-foreground">
+            Recent Events
+          </h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {recentEvents.map(event => (
               <EventCard key={event.id} event={{
