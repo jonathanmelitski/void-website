@@ -227,7 +227,7 @@ export default function GameDetailPage() {
                   <tr key={player.id} className="border-b border-border hover:bg-surface-2 transition-colors">
                     <td className="py-2 pr-4">
                       <span className="text-foreground">{player.first_name} {player.last_name}</span>
-                      {!!player.number && <span className="text-fg-muted text-xs ml-2">#{player.number}</span>}
+                      {player.number != null && <span className="text-fg-muted text-xs ml-2">#{player.number}</span>}
                     </td>
                     {[goals, assists, turnovers, blocks, pulls].map((n, i) => (
                       <td key={i} className={`text-right py-2 px-2 sm:px-3 font-mono tabular-nums ${n ? "text-foreground" : "text-fg-faint"}`}>{n || "—"}</td>

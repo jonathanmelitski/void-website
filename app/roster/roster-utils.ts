@@ -3,8 +3,9 @@ import type { Player } from "@/models/RosterModels"
 export type RosterSort = "number" | "name"
 export type RosterFilter = "all" | "captains"
 
-/** A jersey number of 0 means the player hasn't been given one yet. */
-export const hasNumber = (p: Player) => Number(p.number) > 0
+/** 0 is a real jersey number; only a missing/non-numeric value means no number. */
+export const hasNumber = (p: Player) =>
+  p.number !== undefined && p.number !== null && String(p.number) !== "" && Number.isFinite(Number(p.number))
 
 export const fullName = (p: Player) => `${p.first_name} ${p.last_name}`.trim()
 

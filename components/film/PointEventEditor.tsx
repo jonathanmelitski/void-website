@@ -215,14 +215,18 @@ export function PointEventEditor({
     return `${meta.short} ${p ? `#${p.number}` : "?"}`
   }, [playerById])
 
-  // Jersey numbers first, then first names for players without a number (#0 means "no number")
+  // Jersey numbers in order (0 is a real number); a first name is added where a number is shared on the line
   const lineLabel = useMemo(() => {
     const onLine = point.playerIds.map(id => playerById.get(id)).filter((p): p is PlayerItem => !!p)
-    const numbered = onLine.filter(p => p.number > 0).sort((a, b) => a.number - b.number).map(p => `#${p.number}`)
-    const named = onLine.filter(p => !(p.number > 0)).map(p => p.first_name).sort()
+    const hasNum = (p: PlayerItem) => p.number != null && Number.isFinite(Number(p.number))
+    const counts = new Map<number, number>()
+    for (const p of onLine) if (hasNum(p)) counts.set(p.number, (counts.get(p.number) ?? 0) + 1)
+    const sorted = [...onLine].sort((a, b) =>
+      hasNum(a) && hasNum(b) ? a.number - b.number || a.first_name.localeCompare(b.first_name) : hasNum(a) ? -1 : hasNum(b) ? 1 : a.first_name.localeCompare(b.first_name))
+    const short = sorted.map(p => !hasNum(p) ? p.first_name : (counts.get(p.number) ?? 0) > 1 ? `#${p.number} ${p.first_name}` : `#${p.number}`)
     return {
-      short: [...numbered, ...named].join(" "),
-      full: onLine.map(p => `${p.number > 0 ? `#${p.number} ` : ""}${p.first_name} ${p.last_name}`).join(", "),
+      short: short.join(" "),
+      full: onLine.map(p => `${hasNum(p) ? `#${p.number} ` : ""}${p.first_name} ${p.last_name}`).join(", "),
     }
   }, [point.playerIds, playerById])
 
