@@ -23,11 +23,12 @@ const RESULT_BADGE: Record<GameResult, { label: string; variant: "success" | "de
   TIE: { label: "Tie", variant: "warning" },
 }
 
-// Point outcome from Void's side: who scored, and whether it was a hold or a break.
+// Point outcome: Hold or Break, green when Void scored and red when the opponent did.
 function pointLabel(p: DerivedPoint): { text: string; tone: string } {
   if (!p.scorer) return { text: "No result", tone: "bg-surface-2 text-fg-muted" }
   if (p.scorer === "US") return { text: p.lineType === "O" ? "Hold" : "Break", tone: "bg-success/15 text-success" }
-  return { text: p.lineType === "O" ? "Broken" : "Conceded", tone: "bg-destructive/15 text-destructive" }
+  // Opponent scored: on our O-line they broke us; on our D-line they held
+  return { text: p.lineType === "O" ? "Break" : "Hold", tone: "bg-destructive/15 text-destructive" }
 }
 
 const EVENT_TYPE_LABELS: Record<PointEventType, string> = {
