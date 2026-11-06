@@ -17,7 +17,15 @@ export type WorkerEvent = {
   dryRun?: boolean
   /** Dry run without a send record (setup check): job state lives in memory. sendId must start with "dryrun-". */
   ephemeral?: { listName: string }
+  /**
+   * Test-only: hand off after this many ms of one invocation instead of near the 15-minute limit, so
+   * the hand-off path can be exercised with a small list. Ignored unless the job's list is SIM_TOPIC.
+   */
+  maxRunMs?: number
 }
+
+/** SES mailbox-simulator list (scripts/ses-sim-list.ts). The only list test knobs apply to. */
+export const SIM_TOPIC = "ses-simulator"
 
 export type Job = {
   id: string
@@ -88,6 +96,7 @@ function errorText(err: unknown): string {
 export async function runWorker(event: WorkerEvent, deps: WorkerDeps): Promise<{ outcome: WorkerOutcome; sent: number; failed: number }> {
   const { sendId, runId } = event
   const dryRun = event.dryRun === true
+  const invokedAt = deps.now()
   let runSent = 0
   let runFailed = 0
   const result = (outcome: WorkerOutcome) => ({ outcome, sent: runSent, failed: runFailed })
@@ -102,10 +111,22 @@ export async function runWorker(event: WorkerEvent, deps: WorkerDeps): Promise<{
   if (dryRun && deps.sendEmail) throw new Error("dry run must not be given an email sender")
   if (!dryRun && !deps.sendEmail) throw new Error("no email sender configured")
 
+  // Test hand-off knob: only ever honoured on the simulator list.
+  const maxRunMs = job.listName === SIM_TOPIC && event.maxRunMs && event.maxRunMs > 0 ? event.maxRunMs : undefined
+  if (event.maxRunMs && !maxRunMs) deps.log("max_run_ignored", { sendId, listName: job.listName })
+  const shouldHandOff = () =>
+    deps.remainingMs() < HANDOFF_MARGIN_MS || (maxRunMs !== undefined && deps.now() - invokedAt >= maxRunMs)
+
   const finish = async (status: "complete" | "cancelled" | "failed", extra: Record<string, unknown> = {}) => {
-    const unknownCount = await deps.countRecipients(sendId, "SENDING")
+    // Final counts come from the rows: a run that was taken over mid-batch may have sent emails whose
+    // counter ADD then failed its runId condition, so the running totals can be short.
+    const [unknownCount, recipientCount, failedCount] = await Promise.all([
+      deps.countRecipients(sendId, "SENDING"),
+      deps.countRecipients(sendId, dryRun ? "DRYRUN" : "SENT"),
+      deps.countRecipients(sendId, "FAILED"),
+    ])
     await deps.updateJob(sendId, runId, {
-      set: { status, updatedAt: iso(deps.now()), finishedAt: iso(deps.now()), unknownCount, ...extra },
+      set: { status, updatedAt: iso(deps.now()), finishedAt: iso(deps.now()), unknownCount, recipientCount, failedCount, ...extra },
     })
     const fresh = await deps.getJob(sendId)
     await deps.audit({
@@ -151,9 +172,9 @@ export async function runWorker(event: WorkerEvent, deps: WorkerDeps): Promise<{
     const rate = Math.max(1, Math.min(MAX_RATE, Math.floor(await deps.maxSendRate())))
 
     for (;;) {
-      if (deps.remainingMs() < HANDOFF_MARGIN_MS) {
+      if (shouldHandOff()) {
         await deps.updateJob(sendId, runId, { set: { updatedAt: iso(deps.now()) } })
-        await deps.reinvoke({ sendId, runId, dryRun: dryRun || undefined, ephemeral: event.ephemeral })
+        await deps.reinvoke({ sendId, runId, dryRun: dryRun || undefined, ephemeral: event.ephemeral, maxRunMs })
         deps.log("handoff", { sendId, runSent, runFailed })
         return result("handoff")
       }

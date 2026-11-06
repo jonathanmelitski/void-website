@@ -13,6 +13,8 @@ on:
       - "lib/newsletter-html.ts"
       - "lib/newsletter-prose-css.ts"
       - "lib/newsletter-text-compat.ts"
+      - "scripts/bulk-send.check.ts"
+      - "scripts/email-worker.smoke.ts"
       - ".github/workflows/deploy-email-worker.yml"
 
 jobs:
@@ -59,3 +61,11 @@ jobs:
             --function-name void-email-worker \
             --zip-file fileb://email-worker/dist/function.zip
           aws lambda wait function-updated --function-name void-email-worker
+
+      # Ephemeral dry run over the SES simulator list (no SendEmail; cleans up its rows). Fails the
+      # deploy if the new bundle can't load, read contacts, write the recipients table or finish.
+      - name: Smoke test deployed worker
+        timeout-minutes: 10
+        env:
+          AWS_REGION: us-east-2
+        run: npx tsx scripts/email-worker.smoke.ts

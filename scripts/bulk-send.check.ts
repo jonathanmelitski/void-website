@@ -2,7 +2,7 @@
 // Run: npx tsx scripts/bulk-send.check.ts
 import assert from "node:assert/strict"
 import { runBatchedSend, selectResumeRecipients, withThrottleRetry } from "../lib/bulk-send"
-import { runWorker, type Job, type RecipientStatus, type WorkerDeps } from "../email-worker/core"
+import { runWorker, SIM_TOPIC, type Job, type RecipientStatus, type WorkerDeps } from "../email-worker/core"
 
 const list = Array.from({ length: 627 }, (_, i) => `person${i}@example.com`)
 const noSleep = async () => {}
@@ -66,17 +66,18 @@ await check("throttling: ListContacts retries with backoff, then gives up", asyn
 
 // ── Worker with an in-memory "DynamoDB" ─────────────────────────────────────────
 
-function makeWorld(opts: { dryRun?: boolean } = {}) {
+function makeWorld(opts: { dryRun?: boolean; listName?: string } = {}) {
   const job: Job & Record<string, unknown> = {
-    id: "s1", runId: "run1", status: "queued", listName: "void-alumni", newsletterTitle: "N", sentBy: "admin",
+    id: "s1", runId: "run1", status: "queued", listName: opts.listName ?? "void-alumni", newsletterTitle: "N", sentBy: "admin",
     recipientCount: 0, failedCount: 0, dryRun: opts.dryRun,
   }
   const rows = new Map<string, RecipientStatus>()
   const sesCalls: string[] = []
   let remaining = 15 * 60_000
+  let clock = 0
   const deps: WorkerDeps = {
-    now: () => 0,
-    sleep: noSleep,
+    now: () => clock,
+    sleep: async ms => { clock += ms },
     remainingMs: () => remaining,
     getJob: async () => ({ ...job }),
     updateJob: async (_id, runId, patch) => {
@@ -107,7 +108,7 @@ await check("worker: hands off before the time limit, resumes with the same run,
   w.deps.queryRecipients = async (...a) => { if (++batches > 5) w.setRemaining(30_000); return realQuery(...a) }
   const first = await runWorker({ sendId: "s1", runId: "run1" }, w.deps)
   assert.equal(first.outcome, "handoff")
-  assert.deepEqual(reinvoked, [{ sendId: "s1", runId: "run1", dryRun: undefined, ephemeral: undefined }])
+  assert.deepEqual(reinvoked, [{ sendId: "s1", runId: "run1", dryRun: undefined, ephemeral: undefined, maxRunMs: undefined }])
   assert.equal(w.job.totalRecipients, 627, "duplicates are dropped")
   assert.equal(w.sesCalls.length, 60) // 6 batches of 10 before the handoff check trips
 
@@ -163,6 +164,47 @@ await check("worker dry run: never calls SES and refuses a sender", async () => 
   await assert.rejects(runWorker({ sendId: "s1", runId: "run1", dryRun: true }, bad.deps), /must not be given an email sender/)
   const mismatch = makeWorld()
   await assert.rejects(runWorker({ sendId: "s1", runId: "run1", dryRun: true }, mismatch.deps), /doesn't match/)
+})
+
+await check("worker: test hand-off knob (maxRunMs) works on the simulator list and carries over", async () => {
+  const w = makeWorld({ listName: SIM_TOPIC })
+  const reinvoked: Record<string, unknown>[] = []
+  w.deps.reinvoke = async e => { reinvoked.push(e) }
+  // Each batch waits out its second on the fake clock, so 5 s ≈ 5 batches.
+  const first = await runWorker({ sendId: "s1", runId: "run1", maxRunMs: 5_000 }, w.deps)
+  assert.equal(first.outcome, "handoff")
+  assert.equal(reinvoked[0].maxRunMs, 5_000, "the next invocation keeps the knob")
+  assert.ok(w.sesCalls.length > 0 && w.sesCalls.length < 627)
+
+  let runs = 1
+  for (let out = first; out.outcome === "handoff"; runs++) out = await runWorker(reinvoked.at(-1) as never, w.deps)
+  assert.ok(runs > 3, "several hand-offs")
+  assert.equal(w.job.status, "complete")
+  assert.equal(new Set(w.sesCalls).size, 627)
+  assert.equal(w.sesCalls.length, 627, "no address sent twice across hand-offs")
+})
+
+await check("worker: maxRunMs is ignored on a real list", async () => {
+  const w = makeWorld()
+  const logs: string[] = []
+  w.deps.log = e => { logs.push(e) }
+  const out = await runWorker({ sendId: "s1", runId: "run1", maxRunMs: 1 }, w.deps)
+  assert.equal(out.outcome, "complete")
+  assert.ok(logs.includes("max_run_ignored"))
+})
+
+await check("worker: final counts come from the rows when a taken-over run's counter write was lost", async () => {
+  const w = makeWorld()
+  const realUpdate = w.deps.updateJob
+  let dropped = false
+  // Lose one batch's counter ADD (as when a run is superseded right after sending a batch).
+  w.deps.updateJob = async (id, runId, patch) => {
+    if (!dropped && patch.add?.recipientCount) { dropped = true; return }
+    return realUpdate(id, runId, patch)
+  }
+  await runWorker({ sendId: "s1", runId: "run1" }, w.deps)
+  assert.equal(w.job.status, "complete")
+  assert.equal(w.job.recipientCount, 627)
 })
 
 console.log("all bulk-send checks passed")
