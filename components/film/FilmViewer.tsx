@@ -299,7 +299,8 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
   const [editMode, setEditMode] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const openShortcuts = useCallback(() => setShowShortcuts(true), [])
-  const [canFullscreen] = useState(() => document.fullscreenEnabled !== false)
+  // Always offered: native fullscreen where the browser has it, an in-page fullscreen otherwise (iPhone)
+  const canFullscreen = true
   // Phones/tablets get a compact fullscreen (scrubber + play bar only, pinned to the bottom).
   // Detected by touch input rather than width: a landscape phone is wider than mobile breakpoints.
   const [isTouch, setIsTouch] = useState(() => window.matchMedia("(pointer: coarse)").matches)
@@ -785,19 +786,55 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // empty — everything is read from refs kept in sync by useLayoutEffect
 
+  // Fullscreen: the standard API, the webkit-prefixed one (iPad Safari), or — where neither exists on
+  // ordinary elements (iPhone Safari) — an in-page fullscreen: the viewer becomes a fixed full-screen layer.
+  const [pseudoFullscreen, setPseudoFullscreen] = useState(false)
   useEffect(() => {
-    const onChange = () => setIsFullscreen(!!document.fullscreenElement)
+    const doc = document as Document & { webkitFullscreenElement?: Element | null }
+    const onChange = () => setIsFullscreen(!!(doc.fullscreenElement ?? doc.webkitFullscreenElement))
     document.addEventListener("fullscreenchange", onChange)
-    return () => document.removeEventListener("fullscreenchange", onChange)
-  }, [])
-
-  const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen()
-    } else {
-      document.exitFullscreen()
+    document.addEventListener("webkitfullscreenchange", onChange)
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange)
+      document.removeEventListener("webkitfullscreenchange", onChange)
     }
   }, [])
+
+  // In-page fullscreen: lock page scroll and let Escape leave it, like the real thing
+  useEffect(() => {
+    if (!pseudoFullscreen) return
+    setIsFullscreen(true)
+    const prevOverflow = document.documentElement.style.overflow
+    document.documentElement.style.overflow = "hidden"
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPseudoFullscreen(false) }
+    window.addEventListener("keydown", onKey)
+    return () => {
+      document.documentElement.style.overflow = prevOverflow
+      window.removeEventListener("keydown", onKey)
+      setIsFullscreen(false)
+    }
+  }, [pseudoFullscreen])
+
+  const toggleFullscreen = useCallback(() => {
+    type WebkitEl = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void }
+    type WebkitDoc = Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => Promise<void> | void }
+    const doc = document as WebkitDoc
+    if (pseudoFullscreen) { setPseudoFullscreen(false); return }
+    if (doc.fullscreenElement ?? doc.webkitFullscreenElement) {
+      if (doc.exitFullscreen) doc.exitFullscreen().catch(() => {})
+      else doc.webkitExitFullscreen?.()
+      return
+    }
+    const el = containerRef.current as WebkitEl | null
+    if (!el) return
+    if (typeof el.requestFullscreen === "function") {
+      el.requestFullscreen().catch(() => setPseudoFullscreen(true))
+    } else if (typeof el.webkitRequestFullscreen === "function") {
+      el.webkitRequestFullscreen()
+    } else {
+      setPseudoFullscreen(true)
+    }
+  }, [pseudoFullscreen])
 
   const handleTimelineMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -1501,7 +1538,9 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
       <div className="flex-1 min-w-0 flex flex-col gap-2 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
         <div
           ref={containerRef}
-          className={isFullscreen ? "theme-dark relative bg-black h-full" : "relative flex flex-col gap-2"}
+          className={pseudoFullscreen
+            ? "theme-dark fixed inset-0 z-50 bg-black"
+            : isFullscreen ? "theme-dark relative bg-black h-full" : "relative flex flex-col gap-2"}
         >
           {/* Video area — clicks inside the iframe are handled by YouTube's own controls */}
           <div
