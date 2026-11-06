@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { listEventsByPoint, listEventsByGame, createPointEvent, POINT_EVENT_TYPES } from "@/lib/aws/point-events"
-import { eventNeedsPlayer, TURNOVER_TYPES } from "@/lib/point-event-meta"
+import { eventNeedsPlayer, FIELD_ZONES, HUCKABLE_TYPES, TURNOVER_TYPES, ZONABLE_TYPES } from "@/lib/point-event-meta"
 import { pushGameUpdate } from "@/lib/ws-push"
 import { getPoint } from "@/lib/aws/points"
 import { denyIfGameHidden } from "@/lib/event-access"
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
 
-  const { pointId, gameId, eventType, playerId, playerInId, team, sortOrder, occurredAt, pullResult, hangTimeMs, turnoverType } = await request.json()
+  const { pointId, gameId, eventType, playerId, playerInId, team, sortOrder, occurredAt, pullResult, hangTimeMs, turnoverType, huck, zone } = await request.json()
 
   if (!pointId || !gameId || !eventType || sortOrder === undefined) {
     return NextResponse.json(
@@ -58,6 +58,12 @@ export async function POST(request: NextRequest) {
   if (turnoverType !== undefined && ((eventType !== "TURNOVER" && eventType !== "OPP_TURNOVER") || !TURNOVER_TYPES.includes(turnoverType))) {
     return NextResponse.json({ error: `turnoverType must be one of ${TURNOVER_TYPES.join(", ")} on a TURNOVER` }, { status: 400 })
   }
+  if (huck !== undefined && (typeof huck !== "boolean" || !HUCKABLE_TYPES.includes(eventType))) {
+    return NextResponse.json({ error: "huck is a true/false flag on goals, assists and turnovers" }, { status: 400 })
+  }
+  if (zone !== undefined && (!FIELD_ZONES.includes(zone) || !ZONABLE_TYPES.includes(eventType))) {
+    return NextResponse.json({ error: "zone must be OWN, MID or RED on a goal, assist, turnover or block" }, { status: 400 })
+  }
   if (hangTimeMs !== undefined && (eventType !== "PULL" || !Number.isFinite(hangTimeMs) || hangTimeMs < 0 || hangTimeMs > 60_000)) {
     return NextResponse.json({ error: "hangTimeMs must be 0–60000 on a PULL" }, { status: 400 })
   }
@@ -75,6 +81,8 @@ export async function POST(request: NextRequest) {
     ...(pullResult ? { pullResult } : {}),
     ...(hangTimeMs !== undefined ? { hangTimeMs: Math.round(hangTimeMs) } : {}),
     ...(turnoverType ? { turnoverType } : {}),
+    ...(huck === true ? { huck: true } : {}),
+    ...(zone ? { zone } : {}),
     createdAt: new Date().toISOString(),
   }
 

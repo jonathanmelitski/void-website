@@ -88,4 +88,43 @@ check("deriveGameStats carries possession, break chances and turnover types (no 
   assert.deepEqual(s.players.find(p => p.playerId === "x")?.turnoverTypes, { THROWAWAY: 1, UNSPECIFIED: 1 })
 })
 
+check("player +/- and O/D efficiency (final line, scored points only)", () => {
+  const game = { id: "g", status: "IN_PROGRESS" as const, scoreVoid: 1, scoreOpponent: 1 }
+  const points = [
+    { id: "o1", pointNumber: 1, lineType: "O" as const, outcome: "HOLD" as const, status: "COMPLETE" as const, voidScoreBefore: 0, opponentScoreBefore: 0, playerIds: ["x", "y"] },
+    { id: "d1", pointNumber: 2, lineType: "D" as const, outcome: "HOLD" as const, status: "COMPLETE" as const, voidScoreBefore: 1, opponentScoreBefore: 0, playerIds: ["x"] },
+    { id: "live", pointNumber: 3, lineType: "O" as const, outcome: "IN_PROGRESS" as const, status: "IN_PROGRESS" as const, voidScoreBefore: 1, opponentScoreBefore: 1, playerIds: ["x"] },
+  ]
+  const events = [
+    { id: "1", pointId: "o1", eventType: "GOAL" as const, playerId: "x" },
+    { id: "2", pointId: "o1", eventType: "ASSIST" as const, playerId: "y" },
+    { id: "3", pointId: "d1", eventType: "BLOCK" as const, playerId: "x" },
+    { id: "4", pointId: "d1", eventType: "TURNOVER" as const, playerId: "x" },
+    { id: "5", pointId: "live", eventType: "TURNOVER" as const, playerId: "x" },
+  ]
+  const x = deriveGameStats(game, points, events).players.find(p => p.playerId === "x")!
+  assert.equal(x.pointsPlayed, 3)
+  assert.equal(x.plusMinus, 1 + 1 - 2) // G + B − T
+  assert.deepEqual([x.oPoints, x.oHolds, x.oEfficiency], [1, 1, 100]) // live point not counted
+  assert.deepEqual([x.dPoints, x.dBreaks, x.dEfficiency], [1, 0, 0])
+})
+
+check("hucks and field zones", () => {
+  const game = { id: "g", status: "FINAL" as const, scoreVoid: 1, scoreOpponent: 0 }
+  const points = [{ id: "p", pointNumber: 1, lineType: "O" as const, outcome: "HOLD" as const, status: "COMPLETE" as const, voidScoreBefore: 0, opponentScoreBefore: 0 }]
+  const events = [
+    { id: "1", pointId: "p", eventType: "TURNOVER" as const, playerId: "t", huck: true, zone: "OWN" as const },
+    { id: "2", pointId: "p", eventType: "BLOCK" as const, playerId: "b", zone: "MID" as const },
+    { id: "3", pointId: "p", eventType: "ASSIST" as const, playerId: "a", huck: true, zone: "MID" as const },
+    { id: "4", pointId: "p", eventType: "GOAL" as const, playerId: "g", huck: true, zone: "MID" as const },
+  ]
+  const s = deriveGameStats(game, points, events)
+  assert.deepEqual(s.hucks, { goals: 1, turnovers: 1, attempts: 2, pct: 50 })
+  assert.deepEqual(s.zones, { goalsFrom: { MID: 1 }, turnovers: { OWN: 1 }, gains: { MID: 1 }, tagged: 3 })
+  const by = (id: string) => s.players.find(p => p.playerId === id)!
+  assert.equal(by("a").huckAssists, 1)
+  assert.equal(by("g").huckGoals, 1)
+  assert.equal(by("t").huckTurnovers, 1)
+})
+
 console.log("all possession checks passed")

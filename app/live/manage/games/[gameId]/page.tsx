@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react"
 import Link from "next/link"
 import { useRouter, useParams } from "next/navigation"
-import { ChevronDown, ChevronLeft, FlaskConical, Pencil, Settings2, Undo2 } from "lucide-react"
+import { BarChart3, ChevronDown, ChevronLeft, FlaskConical, Pencil, Settings2, Undo2 } from "lucide-react"
 import { useRequireAuth } from "@/hooks/use-require-auth"
 import { apiFetch, errorMessage } from "@/lib/api-fetch"
 import { cn } from "@/lib/utils"
@@ -30,6 +30,9 @@ import { ScoreBar } from "@/components/scoring/score-bar"
 import { PullButton, type PullLog } from "@/components/scoring/pull-button"
 import { EventWhoEditor, type EventWhoChange } from "@/components/scoring/event-who-editor"
 import { pointPossessions } from "@/lib/stats/possession"
+import type { FieldZone } from "@/lib/point-event-meta"
+import { deriveGameStats } from "@/lib/stats/derive"
+import { GameStatsView } from "@/components/stats/game-stats-view"
 import {
   EVENT_TYPE_LABELS, LIVE_GRID_TYPES, SCORING_TOAST, SCORING_WRITE, eventDetail, makePlayerName, nextSortOrder, sortEvents,
   writeErrorText, type LogEventOpts, type LogStep,
@@ -47,7 +50,7 @@ const STATUS_LABEL: Record<GameStatus, string> = {
   FINAL: "Final",
 }
 
-type Tab = "game" | "broadcast" | "server"
+type Tab = "game" | "stats" | "broadcast" | "server"
 
 type ResourceStatus = {
   broadcast: { state: string; channelId: string | null } | null
@@ -125,6 +128,14 @@ export default function GameManagePage() {
   const [opponentDraft, setOpponentDraft] = useState("")
   const [savingOpponent, setSavingOpponent] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
+  // Per-device: show the optional field-zone chips while logging (off = no zone UI anywhere)
+  const [trackZones, setTrackZones] = useState(() => {
+    try { return typeof window !== "undefined" && localStorage.getItem("scoring.fieldZones") === "1" } catch { return false }
+  })
+  const toggleZones = () => setTrackZones(v => {
+    try { localStorage.setItem("scoring.fieldZones", v ? "0" : "1") } catch {}
+    return !v
+  })
   const [settingsOpen, setShowSettings] = useState<boolean | null>(null)
   const [discarding, setDiscarding] = useState(false)
   const statusIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -343,6 +354,16 @@ export default function GameManagePage() {
             <Badge variant={STATUS_VARIANT[game.status]}>{STATUS_LABEL[game.status]}</Badge>
           </div>
           <Button
+            variant={activeTab === "stats" ? "secondary" : "ghost"}
+            size="icon-lg"
+            className="shrink-0"
+            aria-label={activeTab === "stats" ? "Back to scoring" : "Game stats"}
+            aria-pressed={activeTab === "stats"}
+            onClick={() => setActiveTab(t => (t === "stats" ? "game" : "stats"))}
+          >
+            <BarChart3 />
+          </Button>
+          <Button
             variant={showSettings ? "secondary" : "ghost"}
             size="icon-lg"
             className="-mr-2 shrink-0"
@@ -403,8 +424,13 @@ export default function GameManagePage() {
               onUpdate={updated => setGame(updated)}
             />
 
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm text-fg-secondary">
+              <input type="checkbox" checked={trackZones} onChange={toggleZones} className="size-4 accent-foreground" />
+              Track field zones <span className="text-fg-muted">(own third · middle · red zone, optional per event)</span>
+            </label>
+
             <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-              {tabs.filter(t => t !== "game").map(t => (
+              {tabs.filter(t => t === "broadcast" || t === "server").map(t => (
                 <Button key={t} variant="outline" size="sm" className="h-10" onClick={() => { setActiveTab(t); setShowSettings(false) }}>
                   {t === "broadcast" ? "Broadcast" : "Live server"}
                   {t === "broadcast" && broadcastPill && <Badge variant={broadcastPill.variant} className="ml-1">{broadcastPill.label}</Badge>}
@@ -438,6 +464,7 @@ export default function GameManagePage() {
               events={pointEvents.filter(e => e.pointId === activePoint.id)}
               lastPullerId={lastVoidPuller(pointEvents, activePoint.playerIds)}
               onReopenPoint={reopenPoint}
+              trackZones={trackZones}
               onEventUpdated={e => setPointEvents(prev => prev.map(x => (x.id === e.id ? e : x)))}
               onEventAdded={e => setPointEvents(prev => [...prev, e])}
               onEventDeleted={id => setPointEvents(prev => prev.filter(e => e.id !== id))}
@@ -499,6 +526,11 @@ export default function GameManagePage() {
             </section>
           )}
         </>
+      )}
+
+      {/* Tab: Stats — derived from the same points/events as everything else, so it moves as you score */}
+      {activeTab === "stats" && (
+        <GameStatsView stats={deriveGameStats(game, points, pointEvents, players)} opponent={game.opponent} />
       )}
 
       {/* Tab: Broadcast */}
@@ -608,6 +640,7 @@ function ActivePointSection({
   events,
   lastPullerId,
   onReopenPoint,
+  trackZones,
   onEventUpdated,
   onEventAdded,
   onEventDeleted,
@@ -622,6 +655,7 @@ function ActivePointSection({
   events: PointEventItem[]
   lastPullerId?: string
   onReopenPoint: (pointId: string) => Promise<boolean>
+  trackZones: boolean
   onEventUpdated: (e: PointEventItem) => void
   onEventAdded: (e: PointEventItem) => void
   onEventDeleted: (id: string) => void
@@ -687,6 +721,8 @@ function ActivePointSection({
           ...(opts.playerInId ? { playerInId: opts.playerInId } : {}),
           ...(opts.team ? { team: opts.team } : {}),
           ...(opts.turnoverType ? { turnoverType: opts.turnoverType } : {}),
+          ...(opts.huck ? { huck: true } : {}),
+          ...(opts.zone ? { zone: opts.zone } : {}),
           ...(opts.occurredAt ? { occurredAt: opts.occurredAt } : {}),
           sortOrder: nextSortOrder(eventsRef.current),
         }),
@@ -787,7 +823,12 @@ function ActivePointSection({
   }
 
   // Goal, assist (and hockey assist) are one sequence, and a goal ends the point.
-  async function handleGoal(scorerId: string, assisterId: string | null, hockeyId: string | null, tappedAt: Date): Promise<boolean> {
+  async function handleGoal(
+    scorerId: string, assisterId: string | null, hockeyId: string | null, tappedAt: Date,
+    tags: { huck?: boolean; zone?: FieldZone } = {},
+  ): Promise<boolean> {
+    // The huck flag and zone describe the scoring throw: kept on the assist and the goal
+    const throwTags = { ...(tags.huck ? { huck: true } : {}), ...(tags.zone ? { zone: tags.zone } : {}) }
     setAddingEvent(true)
     setEventError("")
     const at = tappedAt.toISOString()
@@ -799,11 +840,11 @@ function ActivePointSection({
         saved.push(ev)
       }
       if (assisterId) {
-        const ev = await createEvent({ eventType: "ASSIST", playerId: assisterId, occurredAt: at }, "Couldn't save the assist. Try again.")
+        const ev = await createEvent({ eventType: "ASSIST", playerId: assisterId, occurredAt: at, ...throwTags }, "Couldn't save the assist. Try again.")
         if (!ev) { await removeEvents(saved); return false }
         saved.push(ev)
       }
-      const goal = await createEvent({ eventType: "GOAL", playerId: scorerId, occurredAt: at }, "Couldn't save the goal. Try again.")
+      const goal = await createEvent({ eventType: "GOAL", playerId: scorerId, occurredAt: at, ...throwTags }, "Couldn't save the goal. Try again.")
       if (!goal) { await removeEvents(saved); return false }
     } finally {
       setAddingEvent(false)
@@ -1082,6 +1123,7 @@ function ActivePointSection({
               onEditLine={openLineEditor}
               types={LIVE_GRID_TYPES}
               possession={pointPossessions(point, events).current}
+              trackZones={trackZones}
               step={loggerStep}
               onStepChange={setLoggerStep}
             />
@@ -1439,6 +1481,8 @@ function CompletedPointRow({
           ...(opts.playerInId ? { playerInId: opts.playerInId } : {}),
           ...(opts.team ? { team: opts.team } : {}),
           ...(opts.turnoverType ? { turnoverType: opts.turnoverType } : {}),
+          ...(opts.huck ? { huck: true } : {}),
+          ...(opts.zone ? { zone: opts.zone } : {}),
           sortOrder: nextSortOrder(events),
         }),
       })

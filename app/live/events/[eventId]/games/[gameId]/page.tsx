@@ -15,7 +15,8 @@ import type { GameItem, GameResult } from "@/lib/aws/games"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
-import { deriveGameStats, type DerivedPoint, type GameStats } from "@/lib/stats/derive"
+import { deriveGameStats, type DerivedPoint } from "@/lib/stats/derive"
+import { PlayerStatsTable, toPlayerRows } from "@/components/stats/player-stats-table"
 
 const RESULT_BADGE: Record<GameResult, { label: string; variant: "success" | "destructive" | "warning" }> = {
   WIN: { label: "Win", variant: "success" },
@@ -57,27 +58,6 @@ const EVENT_TYPE_COLORS: Record<PointEventType, string> = {
   TIMEOUT: "text-warning",
   TAP_IN: "text-brand-text",
   OPP_TURNOVER: "text-success",
-}
-
-type PlayerStat = {
-  player: PlayerItem
-  goals: number
-  assists: number
-  turnovers: number
-  blocks: number
-  pulls: number
-  hockeyAssists: number
-}
-
-// Roster players with at least one counted event, from the derived stats
-function toPlayerStats(stats: GameStats, players: PlayerItem[]): PlayerStat[] {
-  const byId = new Map(players.map(p => [p.id, p]))
-  return stats.players
-    .flatMap(s => {
-      const player = byId.get(s.playerId)
-      return player ? [{ player, goals: s.goals, assists: s.assists, hockeyAssists: s.hockeyAssists, turnovers: s.turnovers, blocks: s.blocks, pulls: s.pulls }] : []
-    })
-    .filter(s => s.goals + s.assists + s.hockeyAssists + s.turnovers + s.blocks + s.pulls > 0)
 }
 
 export default function GameDetailPage() {
@@ -160,7 +140,7 @@ export default function GameDetailPage() {
   const notStarted = game.status === "SCHEDULED" && stats.points.length === 0
   const startTime = formatGameTime(game.scheduledTime)
 
-  const playerStats = toPlayerStats(stats, players)
+  const playerRows = toPlayerRows(stats.players)
   const breakChances = stats.possession
 
   return (
@@ -216,39 +196,11 @@ export default function GameDetailPage() {
         </div>
       )}
 
-      {/* Player stat table */}
-      {playerStats.length > 0 && (
+      {/* Player stats (same table as the scoring console's Stats tab) */}
+      {playerRows.length > 0 && (
         <section>
           <h2 className="text-lg font-semibold mb-3">Player stats</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-fg-muted text-xs border-b border-border">
-                  <th className="text-left py-2 pr-4 font-medium">Player</th>
-                  {STAT_COLUMNS.map(([short, long]) => (
-                    <th key={short} className="text-right py-2 px-2 sm:px-3 font-medium">
-                      <abbr title={long} className="no-underline sm:hidden">{short}</abbr>
-                      <span className="hidden sm:inline">{long}</span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {playerStats.map(({ player, goals, assists, hockeyAssists, turnovers, blocks, pulls }) => (
-                  <tr key={player.id} className="border-b border-border hover:bg-surface-2 transition-colors">
-                    <td className="py-2 pr-4">
-                      <span className="text-foreground">{player.first_name} {player.last_name}</span>
-                      {player.number != null && <span className="text-fg-muted text-xs ml-2">#{player.number}</span>}
-                    </td>
-                    {[goals, assists, hockeyAssists, turnovers, blocks, pulls].map((n, i) => (
-                      <td key={i} className={`text-right py-2 px-2 sm:px-3 font-mono tabular-nums ${n ? "text-foreground" : "text-fg-faint"}`}>{n || "—"}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="text-fg-muted text-xs mt-2 sm:hidden">G goals · A assists · HA hockey assists · T turnovers · B blocks · Pl pulls</p>
-          </div>
+          <PlayerStatsTable rows={playerRows} />
         </section>
       )}
 
@@ -305,7 +257,6 @@ export default function GameDetailPage() {
   )
 }
 
-const STAT_COLUMNS: [string, string][] = [["G", "Goals"], ["A", "Assists"], ["HA", "Hockey assists"], ["T", "Turnovers"], ["B", "Blocks"], ["Pl", "Pulls"]]
 
 function GameSkeleton() {
   return (

@@ -1,6 +1,6 @@
 import type { PlayerItem } from "@/lib/aws/players"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
-import { TURNOVER_TYPE_LABELS, type TurnoverType } from "@/lib/point-event-meta"
+import { FIELD_ZONE_LABELS, TURNOVER_TYPE_LABELS, type FieldZone, type TurnoverType } from "@/lib/point-event-meta"
 
 // Scoring writes go through apiFetch: an expired session opens the in-place sign-in sheet and the
 // write continues after sign-in (waitForSession). Failures surface inline instead of being dropped.
@@ -68,7 +68,7 @@ export type LogStep =
   ) & { at?: number })
 
 /** occurredAt: ISO time of the first tap of the sequence (see LogStep.at). */
-export type LogEventOpts = { playerId?: string; playerInId?: string; team?: "VOID" | "OPP"; occurredAt?: string; turnoverType?: TurnoverType }
+export type LogEventOpts = { playerId?: string; playerInId?: string; team?: "VOID" | "OPP"; occurredAt?: string; turnoverType?: TurnoverType; huck?: boolean; zone?: FieldZone }
 
 export function fullName(p: PlayerItem) {
   return `${p.first_name} ${p.last_name}`.trim()
@@ -85,6 +85,12 @@ export function makePlayerName(players: PlayerItem[]) {
 }
 
 export function eventDetail(ev: PointEventItem, name: (id: string | undefined) => string, opponent = "Opponent"): string {
+  const base = eventDetailBase(ev, name, opponent)
+  const tags = [ev.huck ? "Huck" : null, ev.zone ? FIELD_ZONE_LABELS[ev.zone] : null].filter(Boolean)
+  return [base, ...tags].filter(Boolean).join(" · ")
+}
+
+function eventDetailBase(ev: PointEventItem, name: (id: string | undefined) => string, opponent: string): string {
   if (ev.eventType === "TIMEOUT") return ev.team === "VOID" ? "VOID" : opponent
   if (ev.eventType === "PULL") {
     const who = ev.team === "OPP" ? opponent : name(ev.playerId) || "VOID"

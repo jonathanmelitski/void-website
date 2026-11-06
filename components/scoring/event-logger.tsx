@@ -7,7 +7,10 @@ import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { PointEventType } from "@/lib/aws/point-events"
-import { OPP_TURNOVER_TYPES, TURNOVER_TYPES, TURNOVER_TYPE_LABELS, TURNOVER_WHO } from "@/lib/point-event-meta"
+import {
+  FIELD_ZONES, FIELD_ZONE_LABELS, HUCKABLE_TYPES, OPP_TURNOVER_TYPES, TURNOVER_TYPES, TURNOVER_TYPE_LABELS, TURNOVER_WHO,
+  ZONABLE_TYPES, type FieldZone,
+} from "@/lib/point-event-meta"
 import { PlayerTile } from "./player-tile"
 import { EVENT_BUTTON, FALLBACK_BUTTON } from "./event-style"
 import type { DiscTeam } from "@/lib/stats/possession"
@@ -36,6 +39,7 @@ export function EventLogger({
   step: controlledStep,
   onStepChange,
   possession,
+  trackZones = false,
   title = "Log event",
 }: {
   /** Players on the line: who can score, turn it over, go out on a sub. */
@@ -47,7 +51,7 @@ export function EventLogger({
   /** Resolves true when the event was saved (the logger then returns to the type grid). */
   onLog: (type: PointEventType, opts: LogEventOpts) => Promise<boolean>
   /** Goal + assist + finish the point in one go. Resolves true when saved. */
-  onGoal?: (scorerId: string, assisterId: string | null, hockeyAssisterId: string | null, at: Date) => Promise<boolean>
+  onGoal?: (scorerId: string, assisterId: string | null, hockeyAssisterId: string | null, at: Date, tags: { huck?: boolean; zone?: FieldZone }) => Promise<boolean>
   onEditLine?: () => void
   /** Buttons in the type grid. */
   types?: readonly PointEventType[]
@@ -55,12 +59,18 @@ export function EventLogger({
   onStepChange?: (step: LogStep) => void
   /** Who has the disc: their two likely moves become the big buttons, the rest go below. */
   possession?: DiscTeam
+  /** Offer the optional field-zone chips (a per-device setting; off = no zone UI at all). */
+  trackZones?: boolean
   title?: string
 }) {
   const [ownStep, setOwnStep] = useState<LogStep>(null)
   const step = controlledStep !== undefined ? controlledStep : ownStep
   // The first tap of a sequence stamps the time; later steps keep it.
+  // Optional tags for the event being logged; cleared when a sequence ends
+  const [huck, setHuck] = useState(false)
+  const [zone, setZone] = useState<FieldZone | undefined>()
   const setStep = (next: LogStep) => {
+    if (!next) { setHuck(false); setZone(undefined) }
     const stamped = next && next.at === undefined ? { ...next, at: step?.at ?? nowMs() } : next
     setOwnStep(stamped)
     onStepChange?.(stamped)
@@ -76,8 +86,36 @@ export function EventLogger({
     return !v
   })
 
+  const tagsFor = (type: PointEventType) => ({
+    ...(huck && HUCKABLE_TYPES.includes(type) ? { huck: true } : {}),
+    ...(zone && ZONABLE_TYPES.includes(type) ? { zone } : {}),
+  })
+
   async function log(type: PointEventType, opts: LogEventOpts) {
-    if (await onLog(type, { ...opts, occurredAt: stepAt().toISOString() })) setStep(null)
+    if (await onLog(type, { ...opts, ...tagsFor(type), occurredAt: stepAt().toISOString() })) setStep(null)
+  }
+
+  /** Optional chips: Huck, and (when field zones are on) where. Skipping them is always fine. */
+  const tagRow = (opts: { huck?: boolean; zone?: boolean }) => {
+    const showZone = opts.zone && trackZones
+    if (!opts.huck && !showZone) return null
+    const chip = (on: boolean) => cn(
+      "h-9 rounded-full border px-3 text-sm transition-colors touch-manipulation",
+      on ? "border-foreground bg-foreground text-background" : "border-border text-fg-secondary hover:bg-surface-2",
+    )
+    return (
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        {opts.huck && (
+          <button type="button" aria-pressed={huck} onClick={() => setHuck(h => !h)} className={chip(huck)}>Huck</button>
+        )}
+        {opts.huck && showZone && <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />}
+        {showZone && FIELD_ZONES.map(z => (
+          <button key={z} type="button" aria-pressed={zone === z} onClick={() => setZone(cur => (cur === z ? undefined : z))} className={chip(zone === z)}>
+            {FIELD_ZONE_LABELS[z]}
+          </button>
+        ))}
+      </div>
+    )
   }
 
   if (step === null) {
@@ -156,10 +194,11 @@ export function EventLogger({
     headingColor = EVENT_TYPE_COLORS.ASSIST
     back = () => setStep({ type: "GOAL_FLOW", phase: "scorer" })
     const finish = async (assisterId: string | null) => {
-      if (onGoal && await onGoal(scorerId, assisterId, null, stepAt())) setStep(null)
+      if (onGoal && await onGoal(scorerId, assisterId, null, stepAt(), { huck, zone })) setStep(null)
     }
     body = (
       <>
+        {tagRow({ huck: true, zone: true })}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {sortedLine.filter(p => p.id !== scorerId).map(p => (
             <PlayerTile
@@ -186,7 +225,7 @@ export function EventLogger({
     headingColor = EVENT_TYPE_COLORS.HOCKEY_ASSIST
     back = () => setStep({ type: "GOAL_FLOW", phase: "assist", scorerId })
     const finish = async (hockeyId: string | null) => {
-      if (onGoal && await onGoal(scorerId, assisterId, hockeyId, stepAt())) setStep(null)
+      if (onGoal && await onGoal(scorerId, assisterId, hockeyId, stepAt(), { huck, zone })) setStep(null)
     }
     body = (
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -216,16 +255,21 @@ export function EventLogger({
     headingColor = EVENT_TYPE_COLORS.TURNOVER
     back = () => setStep({ type: "TURNOVER" })
     body = sortedLine.length === 0 ? emptyLine : (
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {sortedLine.map(p => (
-          <PlayerTile key={p.id} player={p} disabled={busy} onClick={() => log("TURNOVER", { playerId: p.id, turnoverType })} />
-        ))}
-      </div>
+      <>
+        {tagRow({ huck: true, zone: true })}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {sortedLine.map(p => (
+            <PlayerTile key={p.id} player={p} disabled={busy} onClick={() => log("TURNOVER", { playerId: p.id, turnoverType })} />
+          ))}
+        </div>
+      </>
     )
   } else if (step.type === "OPP_TURNOVER") {
     heading = `${opponent} turned it: how?`
     headingColor = EVENT_TYPE_COLORS.OPP_TURNOVER
     body = (
+      <>
+      {tagRow({ zone: true })}
       <div className="grid grid-cols-2 gap-2">
         {OPP_TURNOVER_TYPES.map(t => (
           <Button key={t} variant="outline" size="touch" disabled={busy} onClick={() => log("OPP_TURNOVER", { turnoverType: t })}>
@@ -233,6 +277,7 @@ export function EventLogger({
           </Button>
         ))}
       </div>
+      </>
     )
   } else if (step.type === "TIMEOUT") {
     heading = "Timeout: which team?"
@@ -277,11 +322,14 @@ export function EventLogger({
     heading = `${EVENT_TYPE_LABELS[type]}: who?`
     headingColor = EVENT_TYPE_COLORS[type]
     body = sortedLine.length === 0 ? emptyLine : (
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {sortedLine.map(p => (
-          <PlayerTile key={p.id} player={p} disabled={busy} onClick={() => log(type, { playerId: p.id })} />
-        ))}
-      </div>
+      <>
+        {tagRow({ huck: HUCKABLE_TYPES.includes(type), zone: ZONABLE_TYPES.includes(type) })}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {sortedLine.map(p => (
+            <PlayerTile key={p.id} player={p} disabled={busy} onClick={() => log(type, { playerId: p.id })} />
+          ))}
+        </div>
+      </>
     )
   }
 

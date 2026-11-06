@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { deletePointEvent, getPointEvent, updatePointEventWho } from "@/lib/aws/point-events"
-import { eventNeedsPlayer, TURNOVER_TYPES, type TurnoverType } from "@/lib/point-event-meta"
+import { eventNeedsPlayer, FIELD_ZONES, HUCKABLE_TYPES, TURNOVER_TYPES, ZONABLE_TYPES, type FieldZone, type TurnoverType } from "@/lib/point-event-meta"
 import { pushGameUpdate } from "@/lib/ws-push"
 
 interface Props {
@@ -17,7 +17,7 @@ export async function PATCH(request: NextRequest, { params }: Props) {
   if (!auth.ok) return auth.response
 
   const { id } = await params
-  const body = await request.json() as { playerId?: string; playerInId?: string; team?: "VOID" | "OPP"; pullResult?: "IN" | "OUT"; turnoverType?: TurnoverType }
+  const body = await request.json() as { playerId?: string; playerInId?: string; team?: "VOID" | "OPP"; pullResult?: "IN" | "OUT"; turnoverType?: TurnoverType; huck?: boolean; zone?: FieldZone | null }
   try {
     const ev = await getPointEvent(id)
     if (!ev) return NextResponse.json({ error: "That event no longer exists." }, { status: 404 })
@@ -34,6 +34,12 @@ export async function PATCH(request: NextRequest, { params }: Props) {
     }
     if (body.turnoverType !== undefined && ((ev.eventType !== "TURNOVER" && ev.eventType !== "OPP_TURNOVER") || !TURNOVER_TYPES.includes(body.turnoverType))) {
       return NextResponse.json({ error: "Not a valid turnover type." }, { status: 400 })
+    }
+    if (body.huck !== undefined && (typeof body.huck !== "boolean" || !HUCKABLE_TYPES.includes(ev.eventType))) {
+      return NextResponse.json({ error: "Only goals, assists and turnovers can be hucks." }, { status: 400 })
+    }
+    if (body.zone !== undefined && body.zone !== null && (!FIELD_ZONES.includes(body.zone) || !ZONABLE_TYPES.includes(ev.eventType))) {
+      return NextResponse.json({ error: "Not a valid field zone for this event." }, { status: 400 })
     }
     if (body.playerInId !== undefined && ev.eventType !== "SUBSTITUTION") {
       return NextResponse.json({ error: "Only subs have a player coming in." }, { status: 400 })
@@ -54,6 +60,8 @@ export async function PATCH(request: NextRequest, { params }: Props) {
       team: body.team,
       pullResult: body.pullResult,
       turnoverType: body.turnoverType,
+      huck: body.huck === undefined ? undefined : body.huck ? true : null,
+      zone: body.zone,
     })
     pushGameUpdate(ev.gameId).catch(() => {})
     return NextResponse.json(await getPointEvent(id))

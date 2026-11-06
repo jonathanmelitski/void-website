@@ -77,6 +77,8 @@ export async function POST(request: NextRequest) {
       ...(prev?.occurredAt ? { occurredAt: prev.occurredAt } : {}),
       ...(prev?.eventType === "PULL" && u.eventType === "PULL" && prev.pullResult ? { pullResult: prev.pullResult } : {}),
       ...(prev?.eventType === "PULL" && u.eventType === "PULL" && prev.hangTimeMs !== undefined ? { hangTimeMs: prev.hangTimeMs } : {}),
+      ...(prev?.huck && prev.eventType === u.eventType ? { huck: true } : {}),
+      ...(prev?.zone && prev.eventType === u.eventType ? { zone: prev.zone } : {}),
       ...(prev?.turnoverType && prev.eventType === u.eventType && (u.eventType === "TURNOVER" || u.eventType === "OPP_TURNOVER") ? { turnoverType: prev.turnoverType } : {}),
       createdAt: prev?.createdAt ?? now,
     }

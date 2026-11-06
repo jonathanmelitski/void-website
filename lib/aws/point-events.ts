@@ -8,8 +8,8 @@ import {
 import { dynamo } from "./dynamo"
 import { queryAll } from "./paginate"
 import type { PointEventType } from "../point-event-meta"
-export type { PointEventType, PullResult, TurnoverType } from "../point-event-meta"
-import type { PullResult, TurnoverType } from "../point-event-meta"
+export type { PointEventType, PullResult, TurnoverType, FieldZone } from "../point-event-meta"
+import type { FieldZone, PullResult, TurnoverType } from "../point-event-meta"
 export { POINT_EVENT_TYPES, PLAYERLESS_EVENT_TYPES } from "../point-event-meta"
 
 // DynamoDB table: VoidPointEvents
@@ -34,7 +34,9 @@ export type PointEventItem = {
   occurredAt?: string
   pullResult?: PullResult // PULL only: landed in or out of bounds
   hangTimeMs?: number     // PULL only: release to landing/catch, from the scorer's hold
-  turnoverType?: TurnoverType // TURNOVER only
+  turnoverType?: TurnoverType // TURNOVER / OPP_TURNOVER
+  huck?: boolean              // GOAL, ASSIST, TURNOVER: the throw went deep
+  zone?: FieldZone            // optional field zone (see FieldZone)
   createdAt: string
 }
 
@@ -70,7 +72,7 @@ export async function getPointEvent(id: string): Promise<PointEventItem | null> 
 /** Who did it (and pull in/out) only: time, order and type never change here. Null removes a field. */
 export async function updatePointEventWho(
   id: string,
-  fields: { playerId?: string; playerInId?: string | null; team?: "VOID" | "OPP" | null; pullResult?: PullResult | null; turnoverType?: TurnoverType | null },
+  fields: { playerId?: string; playerInId?: string | null; team?: "VOID" | "OPP" | null; pullResult?: PullResult | null; turnoverType?: TurnoverType | null; huck?: boolean | null; zone?: FieldZone | null },
 ): Promise<void> {
   const entries = Object.entries(fields).filter(([, v]) => v !== undefined)
   if (entries.length === 0) return

@@ -5,11 +5,17 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { PointEventItem } from "@/lib/aws/point-events"
-import { OPP_TURNOVER_TYPES, TURNOVER_TYPES, TURNOVER_TYPE_LABELS, type PullResult, type TurnoverType } from "@/lib/point-event-meta"
+import {
+  FIELD_ZONES, FIELD_ZONE_LABELS, HUCKABLE_TYPES, OPP_TURNOVER_TYPES, TURNOVER_TYPES, TURNOVER_TYPE_LABELS, ZONABLE_TYPES,
+  type FieldZone, type PullResult, type TurnoverType,
+} from "@/lib/point-event-meta"
 import { PlayerTile } from "./player-tile"
 import { byDisplayName } from "./shared"
 
-export type EventWhoChange = { playerId?: string; playerInId?: string; team?: "VOID" | "OPP"; pullResult?: PullResult; turnoverType?: TurnoverType }
+export type EventWhoChange = {
+  playerId?: string; playerInId?: string; team?: "VOID" | "OPP"; pullResult?: PullResult; turnoverType?: TurnoverType
+  huck?: boolean; zone?: FieldZone | null
+}
 
 /** Events that only mark a moment have nobody to change. */
 export function canEditWho(ev: PointEventItem) {
@@ -57,6 +63,28 @@ export function EventWhoEditor({
   const [playerInId, setPlayerInId] = useState(event.playerInId)
   const [pullResult, setPullResult] = useState<PullResult | undefined>(event.pullResult)
   const [turnoverType, setTurnoverType] = useState<TurnoverType | undefined>(event.turnoverType)
+  const [huck, setHuck] = useState(!!event.huck)
+  const [zone, setZone] = useState<FieldZone | undefined>(event.zone)
+  const canHuck = HUCKABLE_TYPES.includes(event.eventType)
+  const canZone = ZONABLE_TYPES.includes(event.eventType)
+  // Sent with every save from this editor (only when changed)
+  const tagChange = (): EventWhoChange => ({
+    ...(canHuck && huck !== !!event.huck ? { huck } : {}),
+    ...(canZone && zone !== event.zone ? { zone: zone ?? null } : {}),
+  })
+  const tagsRow = (canHuck || canZone) && (
+    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Huck and field zone">
+      {canHuck && (
+        <button type="button" aria-pressed={huck} className={chip(huck)} onClick={() => setHuck(h => !h)} disabled={busy}>Huck</button>
+      )}
+      {canHuck && canZone && <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />}
+      {canZone && FIELD_ZONES.map(z => (
+        <button key={z} type="button" aria-pressed={zone === z} className={chip(zone === z)} onClick={() => setZone(c => (c === z ? undefined : z))} disabled={busy}>
+          {FIELD_ZONE_LABELS[z]}
+        </button>
+      ))}
+    </div>
+  )
 
   const footer = (save?: () => void, canSave = true) => (
     <div className="flex gap-2">
@@ -114,10 +142,11 @@ export function EventWhoEditor({
   } else if (event.eventType === "OPP_TURNOVER") {
     body = (
       <>
+        {tagsRow}
         <p className="text-xs text-fg-muted">How did {opponent} turn it?</p>
         <div className="grid grid-cols-2 gap-2">
           {OPP_TURNOVER_TYPES.map(t => (
-            <Button key={t} variant={event.turnoverType === t ? "default" : "outline"} className="h-12" disabled={busy} onClick={() => onSave({ turnoverType: t })}>
+            <Button key={t} variant={event.turnoverType === t ? "default" : "outline"} className="h-12" disabled={busy} onClick={() => onSave({ turnoverType: t, ...tagChange() })}>
               {TURNOVER_TYPE_LABELS[t]}
             </Button>
           ))}
@@ -142,7 +171,8 @@ export function EventWhoEditor({
             </button>
           ))}
         </div>
-        {footer(() => onSave({ playerId, ...(turnoverType ? { turnoverType } : {}) }), !!playerId)}
+        {tagsRow}
+        {footer(() => onSave({ playerId, ...(turnoverType ? { turnoverType } : {}), ...tagChange() }), !!playerId)}
       </>
     )
   } else if (event.eventType === "SUBSTITUTION") {
@@ -172,12 +202,14 @@ export function EventWhoEditor({
   } else {
     body = (
       <>
+        {tagsRow}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {withCurrent(linePool, event.playerId).map(p => (
-            <PlayerTile key={p.id} player={p} disabled={busy} selected={p.id === event.playerId} onClick={() => onSave({ playerId: p.id })} />
+            <PlayerTile key={p.id} player={p} disabled={busy} selected={p.id === event.playerId} onClick={() => onSave({ playerId: p.id, ...tagChange() })} />
           ))}
         </div>
-        {footer()}
+        {/* Tags alone (same player): save without re-picking */}
+        {footer(Object.keys(tagChange()).length > 0 ? () => onSave({ playerId: event.playerId, ...tagChange() }) : undefined)}
       </>
     )
   }

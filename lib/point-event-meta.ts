@@ -44,6 +44,19 @@ export function eventNeedsPlayer(type: PointEventType, team?: "VOID" | "OPP") {
 
 export type PullResult = "IN" | "OUT"
 
+/** Thrown deep. Goals (and their assist) and turnovers. */
+export const HUCKABLE_TYPES: readonly PointEventType[] = ["GOAL", "ASSIST", "TURNOVER"]
+
+/**
+ * Field zone, always from VOID's attacking direction: OWN = the third VOID defends, RED = the third
+ * VOID attacks (the red zone). Goals/assists: where the scoring throw came from. Turnovers: where VOID
+ * lost it. Blocks / their turnovers: where VOID got it back.
+ */
+export type FieldZone = "OWN" | "MID" | "RED"
+export const FIELD_ZONES: readonly FieldZone[] = ["OWN", "MID", "RED"]
+export const FIELD_ZONE_LABELS: Record<FieldZone, string> = { OWN: "Own third", MID: "Middle", RED: "Red zone" }
+export const ZONABLE_TYPES: readonly PointEventType[] = ["GOAL", "ASSIST", "TURNOVER", "OPP_TURNOVER", "BLOCK"]
+
 /** How possession was lost. BLOCKED = the other team got a D on our throw. */
 export type TurnoverType = "THROWAWAY" | "DROP" | "STALL" | "BLOCKED" | "OTHER"
 export const TURNOVER_TYPES: readonly TurnoverType[] = ["THROWAWAY", "DROP", "STALL", "BLOCKED", "OTHER"]

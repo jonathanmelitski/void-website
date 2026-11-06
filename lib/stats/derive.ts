@@ -15,7 +15,7 @@ import type { GameItem, GameResult, GameStatus } from "../aws/games"
 import type { PointItem, PointLineType, PointOutcome } from "../aws/points"
 import type { PointEventItem } from "../aws/point-events"
 import type { PlayerItem } from "../aws/players"
-import type { TurnoverType } from "../point-event-meta"
+import type { FieldZone, TurnoverType } from "../point-event-meta"
 import { breakStats, pointPossessions, type BreakStats } from "./possession"
 
 export type Side = "US" | "THEM"
@@ -25,7 +25,7 @@ export type ScorerSource = "goal-event" | "point-outcome" | "inferred-next-score
 export type StatsGame = Pick<GameItem, "id" | "status" | "scoreVoid" | "scoreOpponent"> & Partial<Pick<GameItem, "result" | "cap">>
 export type StatsPoint = Pick<PointItem, "id" | "pointNumber" | "lineType" | "outcome" | "status" | "voidScoreBefore" | "opponentScoreBefore"> & Partial<Pick<PointItem, "playerIds">>
 export type StatsEvent = Pick<PointEventItem, "id" | "pointId" | "eventType" | "playerId"> &
-  Partial<Pick<PointEventItem, "sortOrder" | "turnoverType">>
+  Partial<Pick<PointEventItem, "sortOrder" | "turnoverType" | "huck" | "zone">>
 export type StatsPlayer = Pick<PlayerItem, "id" | "first_name" | "last_name"> & Partial<Pick<PlayerItem, "number">>
 
 export type DerivedPoint = {
@@ -48,6 +48,11 @@ export type DerivedPoint = {
 /** Turnover counts by type; UNSPECIFIED = logged before types existed (or without one). */
 export type TurnoverCounts = { total: number; byType: Partial<Record<TurnoverType | "UNSPECIFIED", number>> }
 
+export type ZoneCounts = Partial<Record<FieldZone, number>>
+
+/** Hucks we can see: deep goals and deep turnovers (a caught huck that didn't score isn't logged). */
+export type HuckStats = { goals: number; turnovers: number; attempts: number; pct: number | null }
+
 // Counted from one team's perspective. For THEM, "oPoints" are the points they received (our D points).
 export type TeamLine = {
   oPoints: number   // scored points this team started on offense
@@ -67,6 +72,20 @@ export type PlayerStats = {
   turnoverTypes: Partial<Record<TurnoverType | "UNSPECIFIED", number>>
   pulls: number
   pointsPlayed: number
+  /** Goals + assists + blocks − turnovers. */
+  plusMinus: number
+  huckGoals: number      // caught a huck for a goal
+  huckAssists: number    // threw a huck for a goal
+  huckTurnovers: number  // turnover on a huck
+  /** Scored O points on the (final) line, and how many of those VOID held. */
+  oPoints: number
+  oHolds: number
+  /** Scored D points on the (final) line, and how many of those VOID broke. */
+  dPoints: number
+  dBreaks: number
+  /** oHolds / oPoints and dBreaks / dPoints, 0–100 rounded; null with none played. */
+  oEfficiency: number | null
+  dEfficiency: number | null
 }
 
 export type StatsWarningCode =
@@ -88,6 +107,9 @@ export type GameStats = {
   possession: BreakStats      // break chances both ways (per possession), from event order
   // Ours: TURNOVER events. Theirs: OPP_TURNOVER events plus our BLOCKs (counted as BLOCKED).
   turnovers: { us: TurnoverCounts; them: TurnoverCounts }
+  hucks: HuckStats
+  /** Only events logged with a zone: where goals were thrown from, where we turned it, where we won it. */
+  zones: { goalsFrom: ZoneCounts; turnovers: ZoneCounts; gains: ZoneCounts; tagged: number }
   players: PlayerStats[]      // sorted by goals+assists desc; includes players with only points played
   warnings: StatsWarning[]
 }
@@ -215,28 +237,40 @@ export function deriveGameStats(
   const statFor = (playerId: string) => {
     let s = byPlayer.get(playerId)
     if (!s) {
-      s = { playerId, player: rosterById.get(playerId) ?? null, goals: 0, assists: 0, hockeyAssists: 0, blocks: 0, turnovers: 0, turnoverTypes: {}, pulls: 0, pointsPlayed: 0 }
+      s = { playerId, player: rosterById.get(playerId) ?? null, goals: 0, assists: 0, hockeyAssists: 0, blocks: 0, turnovers: 0, turnoverTypes: {}, pulls: 0, pointsPlayed: 0,
+        plusMinus: 0, huckGoals: 0, huckAssists: 0, huckTurnovers: 0, oPoints: 0, oHolds: 0, dPoints: 0, dBreaks: 0, oEfficiency: null, dEfficiency: null }
       byPlayer.set(playerId, s)
     }
     return s
   }
   const turnovers = { us: { total: 0, byType: {} } as TurnoverCounts, them: { total: 0, byType: {} } as TurnoverCounts }
   const bump = (c: TurnoverCounts, t: TurnoverType | "UNSPECIFIED") => { c.total++; c.byType[t] = (c.byType[t] ?? 0) + 1 }
+  const hucks: HuckStats = { goals: 0, turnovers: 0, attempts: 0, pct: null }
+  const zones = { goalsFrom: {} as ZoneCounts, turnovers: {} as ZoneCounts, gains: {} as ZoneCounts, tagged: 0 }
+  const zoneBump = (c: ZoneCounts, z: FieldZone) => { c[z] = (c[z] ?? 0) + 1; zones.tagged++ }
   let orphans = 0
   for (const e of events) {
     if (!pointIds.has(e.pointId)) { orphans++; continue }
+    if (e.huck && e.eventType === "GOAL") hucks.goals++
+    if (e.huck && e.eventType === "TURNOVER") hucks.turnovers++
+    if (e.zone) {
+      if (e.eventType === "GOAL") zoneBump(zones.goalsFrom, e.zone)
+      else if (e.eventType === "TURNOVER") zoneBump(zones.turnovers, e.zone)
+      else if (e.eventType === "BLOCK" || e.eventType === "OPP_TURNOVER") zoneBump(zones.gains, e.zone)
+    }
     if (e.eventType === "TURNOVER") bump(turnovers.us, e.turnoverType ?? "UNSPECIFIED")
     else if (e.eventType === "OPP_TURNOVER") bump(turnovers.them, e.turnoverType ?? "UNSPECIFIED")
     else if (e.eventType === "BLOCK") bump(turnovers.them, "BLOCKED")
     if (!e.playerId) continue
     switch (e.eventType) {
-      case "GOAL": statFor(e.playerId).goals++; break
-      case "ASSIST": statFor(e.playerId).assists++; break
+      case "GOAL": { const s = statFor(e.playerId); s.goals++; if (e.huck) s.huckGoals++; break }
+      case "ASSIST": { const s = statFor(e.playerId); s.assists++; if (e.huck) s.huckAssists++; break }
       case "HOCKEY_ASSIST": statFor(e.playerId).hockeyAssists++; break
       case "BLOCK": statFor(e.playerId).blocks++; break
       case "TURNOVER": {
         const s = statFor(e.playerId)
         s.turnovers++
+        if (e.huck) s.huckTurnovers++
         const t = e.turnoverType ?? "UNSPECIFIED"
         s.turnoverTypes[t] = (s.turnoverTypes[t] ?? 0) + 1
         break
@@ -247,8 +281,21 @@ export function deriveGameStats(
   if (orphans > 0) {
     warnings.push({ code: "orphan-events", message: `${orphans} event${orphans === 1 ? "" : "s"} belong to deleted points and are not counted` })
   }
+  const derivedById = new Map(derived.map(d => [d.id, d]))
   for (const p of pts) {
-    for (const id of new Set(p.playerIds ?? [])) statFor(id).pointsPlayed++
+    const d = derivedById.get(p.id)
+    for (const id of new Set(p.playerIds ?? [])) {
+      const s = statFor(id)
+      s.pointsPlayed++
+      if (!d?.scorer) continue // the live / unscored point counts as played, not toward efficiency
+      if (p.lineType === "O") { s.oPoints++; if (d.scorer === "US") s.oHolds++ }
+      else { s.dPoints++; if (d.scorer === "US") s.dBreaks++ }
+    }
+  }
+  for (const s of byPlayer.values()) {
+    s.plusMinus = s.goals + s.assists + s.blocks - s.turnovers
+    s.oEfficiency = pct(s.oHolds, s.oPoints)
+    s.dEfficiency = pct(s.dBreaks, s.dPoints)
   }
   const players = [...byPlayer.values()].sort(
     (a, b) => (b.goals + b.assists) - (a.goals + a.assists) || b.pointsPlayed - a.pointsPlayed,
@@ -278,8 +325,10 @@ export function deriveGameStats(
     team: { us, them },
     oEfficiency: pct(us.holds, us.oPoints),
     dConversion: pct(us.breaks, us.dPoints),
-    possession: breakStats(pts, events, id => derived.find(d => d.id === id)?.scorer ?? null),
+    possession: breakStats(pts, events, id => derivedById.get(id)?.scorer ?? null),
     turnovers,
+    hucks: { ...hucks, attempts: hucks.goals + hucks.turnovers, pct: pct(hucks.goals, hucks.goals + hucks.turnovers) },
+    zones,
     players,
     warnings,
   }
