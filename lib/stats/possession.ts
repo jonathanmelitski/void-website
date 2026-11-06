@@ -17,7 +17,8 @@ import type { PointEventType } from "../point-event-meta"
 
 export type DiscTeam = "VOID" | "OPP"
 
-export type PossessionEvent = { id: string; pointId: string; eventType: PointEventType; sortOrder: number }
+/** sortOrder orders a point's events; without it, the order given is used. */
+export type PossessionEvent = { id: string; pointId: string; eventType: PointEventType; sortOrder?: number }
 export type PossessionPoint = { id: string; lineType: PointLineType }
 
 export type Possession = {
@@ -45,7 +46,11 @@ const changesTo: Partial<Record<PointEventType, DiscTeam>> = {
 }
 
 export function pointPossessions(point: PossessionPoint, events: readonly PossessionEvent[]): PointPossessions {
-  const sorted = events.filter(e => e.pointId === point.id).sort((a, b) => a.sortOrder - b.sortOrder)
+  const sorted = events
+    .map((e, i) => ({ e, i }))
+    .filter(({ e }) => e.pointId === point.id)
+    .sort((a, b) => (a.e.sortOrder ?? a.i) - (b.e.sortOrder ?? b.i) || a.i - b.i)
+    .map(({ e }) => e)
   let current: DiscTeam = point.lineType === "O" ? "VOID" : "OPP"
   const possessions: Possession[] = [{ team: current, startEventId: null, endEventId: null }]
   let inconsistent = false

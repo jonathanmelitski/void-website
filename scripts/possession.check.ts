@@ -1,6 +1,7 @@
 // Possession and break-chance derivation (lib/stats/possession.ts). Run: npx tsx scripts/possession.check.ts
 import assert from "node:assert/strict"
 import { breakStats, pointPossessions, type PossessionEvent } from "../lib/stats/possession"
+import { deriveGameStats } from "../lib/stats/derive"
 import type { PointEventType } from "../lib/point-event-meta"
 
 let n = 0
@@ -60,6 +61,31 @@ check("break stats: chances per possession on D points, conversions per scored D
   assert.equal(s.oppBreakChances, 1)
   assert.equal(s.oppBreaks, 1)
   assert.equal(s.oppBreakConversion, 100)
+})
+
+check("deriveGameStats carries possession, break chances and turnover types (no sortOrder: input order)", () => {
+  const game = { id: "g", status: "FINAL" as const, scoreVoid: 1, scoreOpponent: 1 }
+  const points = [
+    { id: "p1", pointNumber: 1, lineType: "D" as const, outcome: "BREAK" as const, status: "COMPLETE" as const, voidScoreBefore: 0, opponentScoreBefore: 0 },
+    { id: "p2", pointNumber: 2, lineType: "D" as const, outcome: "HOLD" as const, status: "COMPLETE" as const, voidScoreBefore: 1, opponentScoreBefore: 0 },
+  ]
+  const events = [
+    { id: "a", pointId: "p1", eventType: "OPP_TURNOVER" as const, playerId: "", turnoverType: "DROP" as const },
+    { id: "b", pointId: "p1", eventType: "TURNOVER" as const, playerId: "x", turnoverType: "THROWAWAY" as const },
+    { id: "c", pointId: "p1", eventType: "BLOCK" as const, playerId: "y" },
+    { id: "d", pointId: "p1", eventType: "GOAL" as const, playerId: "z" },
+    { id: "e", pointId: "p2", eventType: "BLOCK" as const, playerId: "y" },
+    { id: "f", pointId: "p2", eventType: "TURNOVER" as const, playerId: "x" },
+  ]
+  const s = deriveGameStats(game, points, events)
+  assert.deepEqual(s.points[0].possessions, { us: 2, them: 2 })
+  assert.equal(s.points[0].turns, 3)
+  assert.equal(s.possession.breakChances, 3)
+  assert.equal(s.possession.breaks, 1)
+  assert.equal(s.turnovers.us.total, 2)
+  assert.deepEqual(s.turnovers.us.byType, { THROWAWAY: 1, UNSPECIFIED: 1 })
+  assert.deepEqual(s.turnovers.them.byType, { DROP: 1, BLOCKED: 2 })
+  assert.deepEqual(s.players.find(p => p.playerId === "x")?.turnoverTypes, { THROWAWAY: 1, UNSPECIFIED: 1 })
 })
 
 console.log("all possession checks passed")

@@ -16,7 +16,6 @@ import type { PlayerItem } from "@/lib/aws/players"
 import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
 import { deriveGameStats, type DerivedPoint, type GameStats } from "@/lib/stats/derive"
-import { breakStats } from "@/lib/stats/possession"
 
 const RESULT_BADGE: Record<GameResult, { label: string; variant: "success" | "destructive" | "warning" }> = {
   WIN: { label: "Win", variant: "success" },
@@ -162,8 +161,7 @@ export default function GameDetailPage() {
   const startTime = formatGameTime(game.scheduledTime)
 
   const playerStats = toPlayerStats(stats, players)
-  const derivedScorer = new Map(stats.points.map(p => [p.id, p.scorer]))
-  const breakChances = breakStats(points, pointEvents, id => derivedScorer.get(id) ?? null)
+  const breakChances = stats.possession
 
   return (
     <PageContainer width="prose" className="flex flex-col gap-8 text-left">

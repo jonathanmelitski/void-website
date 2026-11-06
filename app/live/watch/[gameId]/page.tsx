@@ -8,7 +8,7 @@ import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { LiveGameMessage } from "@/lib/live-types"
 import { deriveGameStats, displayScore } from "@/lib/stats/derive"
-import { breakStats, pointPossessions } from "@/lib/stats/possession"
+import { pointPossessions } from "@/lib/stats/possession"
 import { formatGameTime } from "@/lib/format-date"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/ui/empty-state"
@@ -290,7 +290,7 @@ export default function LiveWatchPage() {
     .filter(g => g.events.length > 0)
     .slice(0, 8)
   const possession = livePossession(activePoint, pointEvents)
-  const breaks = stats ? breakStats(points, pointEvents, id => derivedById.get(id)?.scorer ?? null) : null
+  const breaks = stats?.possession ?? null
   const activePossessions = activePoint ? pointPossessions(activePoint, pointEvents).possessions.length : 0
   const activeLinePlayers = activePoint
     ? activePoint.playerIds

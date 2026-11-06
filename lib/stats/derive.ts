@@ -8,12 +8,15 @@
 //      and our score unchanged (stored scoreBefore)  → THEM        ("inferred-next-score")
 //   4. else                                          → unscored    ("unscored")
 // The score is a running count of scored points; per-point scoreBefore is recomputed, never read.
+// Possession (who had the disc, break chances) is derived from event order too: lib/stats/possession.ts.
 // Stored caches (game.scoreVoid/scoreOpponent/result, point.voidScoreBefore) are left untouched.
 
 import type { GameItem, GameResult, GameStatus } from "../aws/games"
 import type { PointItem, PointLineType, PointOutcome } from "../aws/points"
 import type { PointEventItem } from "../aws/point-events"
 import type { PlayerItem } from "../aws/players"
+import type { TurnoverType } from "../point-event-meta"
+import { breakStats, pointPossessions, type BreakStats } from "./possession"
 
 export type Side = "US" | "THEM"
 export type Score = { us: number; them: number }
@@ -21,7 +24,8 @@ export type ScorerSource = "goal-event" | "point-outcome" | "inferred-next-score
 
 export type StatsGame = Pick<GameItem, "id" | "status" | "scoreVoid" | "scoreOpponent"> & Partial<Pick<GameItem, "result" | "cap">>
 export type StatsPoint = Pick<PointItem, "id" | "pointNumber" | "lineType" | "outcome" | "status" | "voidScoreBefore" | "opponentScoreBefore"> & Partial<Pick<PointItem, "playerIds">>
-export type StatsEvent = Pick<PointEventItem, "id" | "pointId" | "eventType" | "playerId">
+export type StatsEvent = Pick<PointEventItem, "id" | "pointId" | "eventType" | "playerId"> &
+  Partial<Pick<PointEventItem, "sortOrder" | "turnoverType">>
 export type StatsPlayer = Pick<PlayerItem, "id" | "first_name" | "last_name"> & Partial<Pick<PlayerItem, "number">>
 
 export type DerivedPoint = {
@@ -37,7 +41,12 @@ export type DerivedPoint = {
   goalCount: number
   conflict: boolean     // a GOAL event exists but the stored COMPLETE outcome says the opponent scored
   storedStatus: PointItem["status"]
+  possessions: { us: number; them: number }  // from turnovers / blocks / their turnovers
+  turns: number                               // possession changes in the point
 }
+
+/** Turnover counts by type; UNSPECIFIED = logged before types existed (or without one). */
+export type TurnoverCounts = { total: number; byType: Partial<Record<TurnoverType | "UNSPECIFIED", number>> }
 
 // Counted from one team's perspective. For THEM, "oPoints" are the points they received (our D points).
 export type TeamLine = {
@@ -55,6 +64,7 @@ export type PlayerStats = {
   hockeyAssists: number
   blocks: number
   turnovers: number
+  turnoverTypes: Partial<Record<TurnoverType | "UNSPECIFIED", number>>
   pulls: number
   pointsPlayed: number
 }
@@ -75,6 +85,9 @@ export type GameStats = {
   team: { us: TeamLine; them: TeamLine }
   oEfficiency: number | null  // our holds / our O-points, 0–100 rounded; null with no O-points
   dConversion: number | null  // our breaks / our D-points, 0–100 rounded; null with no D-points
+  possession: BreakStats      // break chances both ways (per possession), from event order
+  // Ours: TURNOVER events. Theirs: OPP_TURNOVER events plus our BLOCKs (counted as BLOCKED).
+  turnovers: { us: TurnoverCounts; them: TurnoverCounts }
   players: PlayerStats[]      // sorted by goals+assists desc; includes players with only points played
   warnings: StatsWarning[]
 }
@@ -150,7 +163,13 @@ export function deriveGameStats(
     if (scorer === "US") running.us++
     else if (scorer === "THEM") running.them++
 
+    const poss = pointPossessions(p, events)
     return {
+      possessions: {
+        us: poss.possessions.filter(x => x.team === "VOID").length,
+        them: poss.possessions.filter(x => x.team === "OPP").length,
+      },
+      turns: poss.possessions.length - 1,
       id: p.id,
       pointNumber: p.pointNumber,
       lineType: p.lineType,
@@ -196,21 +215,32 @@ export function deriveGameStats(
   const statFor = (playerId: string) => {
     let s = byPlayer.get(playerId)
     if (!s) {
-      s = { playerId, player: rosterById.get(playerId) ?? null, goals: 0, assists: 0, hockeyAssists: 0, blocks: 0, turnovers: 0, pulls: 0, pointsPlayed: 0 }
+      s = { playerId, player: rosterById.get(playerId) ?? null, goals: 0, assists: 0, hockeyAssists: 0, blocks: 0, turnovers: 0, turnoverTypes: {}, pulls: 0, pointsPlayed: 0 }
       byPlayer.set(playerId, s)
     }
     return s
   }
+  const turnovers = { us: { total: 0, byType: {} } as TurnoverCounts, them: { total: 0, byType: {} } as TurnoverCounts }
+  const bump = (c: TurnoverCounts, t: TurnoverType | "UNSPECIFIED") => { c.total++; c.byType[t] = (c.byType[t] ?? 0) + 1 }
   let orphans = 0
   for (const e of events) {
     if (!pointIds.has(e.pointId)) { orphans++; continue }
+    if (e.eventType === "TURNOVER") bump(turnovers.us, e.turnoverType ?? "UNSPECIFIED")
+    else if (e.eventType === "OPP_TURNOVER") bump(turnovers.them, e.turnoverType ?? "UNSPECIFIED")
+    else if (e.eventType === "BLOCK") bump(turnovers.them, "BLOCKED")
     if (!e.playerId) continue
     switch (e.eventType) {
       case "GOAL": statFor(e.playerId).goals++; break
       case "ASSIST": statFor(e.playerId).assists++; break
       case "HOCKEY_ASSIST": statFor(e.playerId).hockeyAssists++; break
       case "BLOCK": statFor(e.playerId).blocks++; break
-      case "TURNOVER": statFor(e.playerId).turnovers++; break
+      case "TURNOVER": {
+        const s = statFor(e.playerId)
+        s.turnovers++
+        const t = e.turnoverType ?? "UNSPECIFIED"
+        s.turnoverTypes[t] = (s.turnoverTypes[t] ?? 0) + 1
+        break
+      }
       case "PULL": statFor(e.playerId).pulls++; break
     }
   }
@@ -248,6 +278,8 @@ export function deriveGameStats(
     team: { us, them },
     oEfficiency: pct(us.holds, us.oPoints),
     dConversion: pct(us.breaks, us.dPoints),
+    possession: breakStats(pts, events, id => derived.find(d => d.id === id)?.scorer ?? null),
+    turnovers,
     players,
     warnings,
   }
