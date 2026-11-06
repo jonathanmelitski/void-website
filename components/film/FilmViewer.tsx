@@ -1224,8 +1224,9 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
       ? "flex flex-col gap-2"
       : "flex flex-col gap-2"
     }>
-      {/* Timeline lanes — live events and angle coverage, collapsible as one group above the scrubber */}
-      {hasLanes && (
+      {/* Timeline lanes — live events and angle coverage, collapsible as one group above the scrubber.
+          Hidden in fullscreen so the overlay doesn't cover the video. */}
+      {hasLanes && !isFullscreen && (
         <div className="hidden md:flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <SectionToggle
@@ -1593,13 +1594,15 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
           <div
             ref={chromeRef}
             className={isFullscreen
-              ? `absolute inset-x-0 bottom-14 z-20 flex flex-col gap-2 px-4 pt-12 pb-3 bg-gradient-to-t from-black/90 via-black/70 to-transparent transition-opacity duration-300 ${overlayVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`
+              ? `absolute inset-x-0 bottom-14 z-20 flex max-h-[calc(100%-3.5rem)] flex-col gap-2 overflow-y-auto px-4 pt-8 pb-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent transition-opacity duration-300 ${overlayVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`
               : "flex flex-col gap-2"}
             onMouseEnter={isFullscreen ? () => setOverlayHovered(true) : undefined}
             onMouseLeave={isFullscreen ? () => setOverlayHovered(false) : undefined}
           >
             {controlsArea}
-            {(editorPoint || globalMetaSegments.length > 0 || canAnnotate) && (
+            {/* In fullscreen only the scrubber and play bar float over the video; the point editor
+                stays out of the way unless a coach is actively editing */}
+            {(!isFullscreen || (canAnnotate && editMode)) && (editorPoint || globalMetaSegments.length > 0 || canAnnotate) && (
               <div>
                 {!layout.editor ? (
                   <div className="rounded-xl border border-border px-3 py-1.5">
