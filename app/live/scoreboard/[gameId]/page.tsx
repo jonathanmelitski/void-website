@@ -157,6 +157,7 @@ export default function ScoreboardOverlay() {
       ws.onclose   = e => {
         wsRef.current = null
         if (e.code === 1000 || unmountedRef.current) return
+        if (e.code === 4403) { startPolling(); return } // test game: the socket won't serve it
         setConnStatus("reconnecting")
         reconnectRef.current = setTimeout(connect, Math.min(1_000 * Math.pow(2, attemptsRef.current++), 30_000))
       }

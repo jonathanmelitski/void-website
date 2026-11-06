@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { loadGameStats } from "@/lib/stats/load"
 import { canViewEvent, getCaller, isCoach } from "@/lib/event-access"
+import { isTestGame } from "@/lib/test-games"
 
 interface Props {
   params: Promise<{ id: string }>
@@ -14,7 +15,7 @@ export async function GET(request: NextRequest, { params }: Props) {
   try {
     const [loaded, caller] = await Promise.all([loadGameStats(id), getCaller(request)])
     // A game whose event no longer exists has no privacy flag to enforce
-    if (!loaded || (loaded.event && !canViewEvent(loaded.event, caller))) {
+    if (!loaded || (loaded.event && !canViewEvent(loaded.event, caller)) || (isTestGame(loaded.game) && !isCoach(caller))) {
       return NextResponse.json({ error: "Not found" }, { status: 404 })
     }
     const { stats } = loaded

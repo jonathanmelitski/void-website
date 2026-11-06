@@ -8,6 +8,7 @@ import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { LiveGameMessage } from "@/lib/live-types"
 import { deriveGameStats, displayScore } from "@/lib/stats/derive"
+import { breakStats, pointPossessions } from "@/lib/stats/possession"
 import { formatGameTime } from "@/lib/format-date"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/ui/empty-state"
@@ -22,31 +23,36 @@ type Possession = "VOID" | "OPP"
 const EVENT_LABELS: Record<PointEventType, string> = {
   GOAL: "Goal",
   ASSIST: "Assist",
+  HOCKEY_ASSIST: "Hockey assist",
   TURNOVER: "Turnover",
   BLOCK: "Block",
   PULL: "Pull",
   PULL_FINISHED: "Pull landed",
   SUBSTITUTION: "Sub",
   TIMEOUT: "Timeout",
+  TAP_IN: "Tapped in",
+  OPP_TURNOVER: "They turned it",
 }
 
 const EVENT_COLORS: Record<PointEventType, string> = {
   GOAL: "text-success",
   ASSIST: "text-brand-text",
+  HOCKEY_ASSIST: "text-brand-text",
   TURNOVER: "text-destructive",
   BLOCK: "text-warning",
   PULL: "text-fg-muted",
   PULL_FINISHED: "text-brand-text",
   SUBSTITUTION: "text-brand-text",
   TIMEOUT: "text-warning",
+  TAP_IN: "text-brand-text",
+  OPP_TURNOVER: "text-success",
 }
 
-// Possession is determined by line type at the start of the point
-// O-line = VOID received the pull = VOID on offense
-// D-line = VOID pulled = VOID on defense
-function inferPossession(point: PointItem | null): Possession {
+// Who has the disc: starts from the line type (O-line = VOID received the pull), then follows
+// turnovers, blocks and their turnovers (lib/stats/possession.ts)
+function livePossession(point: PointItem | null, events: PointEventItem[]): Possession {
   if (!point) return "VOID"
-  return point.lineType === "O" ? "VOID" : "OPP"
+  return pointPossessions(point, events).current
 }
 
 export default function LiveWatchPage() {
@@ -205,6 +211,8 @@ export default function LiveWatchPage() {
           return
         }
         if (unmountedRef.current) return
+        // 4403: the socket won't serve this game (test game); the API polling (with the login) does
+        if (e.code === 4403) { setConnStatus("polling"); startPolling(); return }
         setConnStatus("reconnecting")
         // Keep the score moving over HTTP while the socket is down
         startPolling()
@@ -281,7 +289,9 @@ export default function LiveWatchPage() {
     }))
     .filter(g => g.events.length > 0)
     .slice(0, 8)
-  const possession = inferPossession(activePoint)
+  const possession = livePossession(activePoint, pointEvents)
+  const breaks = stats ? breakStats(points, pointEvents, id => derivedById.get(id)?.scorer ?? null) : null
+  const activePossessions = activePoint ? pointPossessions(activePoint, pointEvents).possessions.length : 0
   const activeLinePlayers = activePoint
     ? activePoint.playerIds
         .map(id => players.find(p => p.id === id))
@@ -378,6 +388,10 @@ export default function LiveWatchPage() {
           <span className={`whitespace-nowrap shrink-0 ${activePoint.lineType === "O" ? "text-brand-text" : "text-warning"}`}>
             {activePoint.lineType}-line
           </span>
+          <span>·</span>
+          <span className="whitespace-nowrap shrink-0 text-foreground">
+            {possession === "VOID" ? "Void" : game.opponent} disc{activePossessions > 1 ? ` · ${activePossessions - 1} turn${activePossessions === 2 ? "" : "s"}` : ""}
+          </span>
           {activeLinePlayers.length > 0 && (
             <>
               <span>·</span>
@@ -427,6 +441,18 @@ export default function LiveWatchPage() {
         </section>
       )}
 
+      {/* Break chances: VOID possessions on D points vs breaks, and the same for the opponent on our O points */}
+      {breaks && (breaks.breakChances > 0 || breaks.oppBreakChances > 0) && (
+        <section className="mt-6" aria-labelledby="breaks-heading">
+          <h2 id="breaks-heading" className="text-lg font-semibold mb-3">Breaks</h2>
+          <div className="grid grid-cols-2 gap-3">
+            <BreakCard label="Void" breaks={breaks.breaks} chances={breaks.breakChances} pct={breaks.breakConversion} />
+            <BreakCard label={game.opponent} breaks={breaks.oppBreaks} chances={breaks.oppBreakChances} pct={breaks.oppBreakConversion} />
+          </div>
+          <p className="mt-2 text-xs text-fg-muted">A break chance is each possession on a point the team didn&apos;t receive.</p>
+        </section>
+      )}
+
       {/* Completed points summary */}
       {pointChips.length > 0 && (
         <section className="mt-6">
@@ -452,6 +478,18 @@ export default function LiveWatchPage() {
         </section>
       )}
 
+    </div>
+  )
+}
+
+function BreakCard({ label, breaks, chances, pct }: { label: string; breaks: number; chances: number; pct: number | null }) {
+  return (
+    <div className="rounded-xl border border-border px-4 py-3">
+      <p className="truncate text-xs text-fg-muted">{label}</p>
+      <p className="font-mono text-2xl font-semibold tabular-nums">
+        {breaks}<span className="text-fg-muted">/{chances}</span>
+      </p>
+      <p className="text-xs text-fg-muted">breaks / chances{pct !== null ? ` · ${pct}%` : ""}</p>
     </div>
   )
 }

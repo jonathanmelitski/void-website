@@ -5,6 +5,7 @@ import { canViewEvent, denyIfGameHidden, getCaller } from "@/lib/event-access"
 import { getGames } from "@/lib/aws/games"
 import { getEvent } from "@/lib/aws/dynamo"
 import { NO_STORE_HEADERS } from "@/lib/http-cache"
+import { isTestGame } from "@/lib/test-games"
 import { randomUUID } from "crypto"
 
 export async function GET(request: NextRequest) {
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
       const eventIds = [...new Set(games.map(g => g.eventId))]
       const events = await Promise.all(eventIds.map(id => getEvent(id)))
       const hiddenEvents = new Set(events.filter(e => e && !canViewEvent(e, caller)).map(e => e!.id))
-      const hiddenGames = new Set(games.filter(g => hiddenEvents.has(g.eventId)).map(g => g.id))
+      const hiddenGames = new Set(games.filter(g => hiddenEvents.has(g.eventId) || isTestGame(g)).map(g => g.id))
       return NextResponse.json(points.filter(p => !hiddenGames.has(p.gameId)), { headers: NO_STORE_HEADERS })
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to fetch points"

@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react"
 import Link from "next/link"
 import { useRouter, useParams } from "next/navigation"
-import { ChevronDown, ChevronLeft, Pencil, Undo2 } from "lucide-react"
+import { ChevronDown, ChevronLeft, FlaskConical, Pencil, Settings2, Undo2 } from "lucide-react"
 import { useRequireAuth } from "@/hooks/use-require-auth"
 import { apiFetch, errorMessage } from "@/lib/api-fetch"
 import { cn } from "@/lib/utils"
@@ -14,6 +14,7 @@ import { toast } from "@/components/ui/sonner"
 import { StepProgress } from "@/components/ui/step-progress"
 import { LiveServerPanel } from "@/app/live/manage/LiveServerPanel"
 import type { StepDef } from "@/lib/step-types"
+import { isTestGame } from "@/lib/test-games"
 import type { GameItem, GameStatus } from "@/lib/aws/games"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { GamePlayerItem } from "@/lib/aws/game-players"
@@ -26,9 +27,12 @@ import { EventLogger } from "@/components/scoring/event-logger"
 import { LinePicker, type LinePreset } from "@/components/scoring/line-picker"
 import { RosterSection } from "@/components/scoring/roster-section"
 import { ScoreBar } from "@/components/scoring/score-bar"
+import { PullButton, type PullLog } from "@/components/scoring/pull-button"
+import { EventWhoEditor, type EventWhoChange } from "@/components/scoring/event-who-editor"
+import { pointPossessions } from "@/lib/stats/possession"
 import {
-  EVENT_TYPE_LABELS, SCORING_TOAST, SCORING_WRITE, eventDetail, makePlayerName, nextSortOrder, sortEvents,
-  writeErrorText, type LogEventOpts,
+  EVENT_TYPE_LABELS, LIVE_GRID_TYPES, SCORING_TOAST, SCORING_WRITE, eventDetail, makePlayerName, nextSortOrder, sortEvents,
+  writeErrorText, type LogEventOpts, type LogStep,
 } from "@/components/scoring/shared"
 
 const STATUS_VARIANT: Record<GameStatus, "default" | "secondary" | "outline"> = {
@@ -77,6 +81,31 @@ function linePresets(completedPoints: PointItem[]): LinePreset[] {
   ]
 }
 
+/** Change who did an event (time and order stay). Returns the saved event, or null after a toast. */
+async function saveEventWho(ev: PointEventItem, change: EventWhoChange): Promise<PointEventItem | null> {
+  try {
+    const res = await apiFetch(`/api/point-events/${ev.id}`, {
+      ...SCORING_WRITE,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(change),
+    })
+    if (!res.ok) { toast.error(await errorMessage(res, "Couldn't save the change. Try again."), SCORING_TOAST); return null }
+    return await res.json()
+  } catch (err) {
+    toast.error(writeErrorText(err, "Couldn't save the change. Try again."), SCORING_TOAST)
+    return null
+  }
+}
+
+/** Most recent Void puller who is on this line, to pre-pick on the next pull. */
+function lastVoidPuller(events: PointEventItem[], lineIds: string[]): string | undefined {
+  const at = (e: PointEventItem) => e.occurredAt ?? e.createdAt
+  return events
+    .filter(e => e.eventType === "PULL" && e.team !== "OPP" && e.playerId && lineIds.includes(e.playerId))
+    .sort((a, b) => at(b).localeCompare(at(a)))[0]?.playerId
+}
+
 export default function GameManagePage() {
   const { user, isLoading } = useRequireAuth()
   const router = useRouter()
@@ -95,6 +124,9 @@ export default function GameManagePage() {
   const [editingOpponent, setEditingOpponent] = useState(false)
   const [opponentDraft, setOpponentDraft] = useState("")
   const [savingOpponent, setSavingOpponent] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const [settingsOpen, setShowSettings] = useState<boolean | null>(null)
+  const [discarding, setDiscarding] = useState(false)
   const statusIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const loadData = useCallback(async () => {
@@ -184,6 +216,39 @@ export default function GameManagePage() {
     setSavingOpponent(false)
   }
 
+  async function handleDiscard() {
+    if (!game) return
+    setDiscarding(true)
+    try {
+      const res = await apiFetch(`/api/games/${game.id}/discard`, { ...SCORING_WRITE, method: "POST" })
+      if (!res.ok) { toast.error(await errorMessage(res, "Couldn't discard the test game. Try again."), SCORING_TOAST); return }
+      toast.success("Test game discarded", SCORING_TOAST)
+      router.replace("/live/manage?tab=games")
+    } catch (err) {
+      toast.error(writeErrorText(err, "Couldn't discard the test game. Try again."), SCORING_TOAST)
+    } finally {
+      setDiscarding(false)
+    }
+  }
+
+  /** Undo a finished point: back to live with the same line; the score goes back. */
+  async function reopenPoint(pointId: string): Promise<boolean> {
+    try {
+      const res = await apiFetch(`/api/points/${pointId}/reopen`, { ...SCORING_WRITE, method: "POST" })
+      if (!res.ok) { toast.error(await errorMessage(res, "Couldn't undo the point. Try again."), SCORING_TOAST); return false }
+      const { point, game: g, removedEventIds } = await res.json() as { point: PointItem; game: GameItem; removedEventIds: string[] }
+      const gone = new Set(removedEventIds)
+      setPoints(prev => prev.map(p => (p.id === point.id ? point : p)))
+      setPointEvents(prev => prev.filter(e => !gone.has(e.id)))
+      setGame(g)
+      toast(`Point ${point.pointNumber} is live again`, SCORING_TOAST)
+      return true
+    } catch (err) {
+      toast.error(writeErrorText(err, "Couldn't undo the point. Try again."), SCORING_TOAST)
+      return false
+    }
+  }
+
   async function handleToggleReceiving() {
     if (!game || savingReceiving) return
     setSavingReceiving(true)
@@ -208,11 +273,16 @@ export default function GameManagePage() {
     )
   }
 
+  const isTest = isTestGame(game)
+  // Open by default before the game starts (who receives first matters then); collapsed after.
+  const showSettings = settingsOpen ?? (game.status === "SCHEDULED" && points.length === 0)
+  const tabs: Tab[] = isTest ? ["game", "server"] : ["game", "broadcast", "server"]
   const attendingPlayerIds = new Set(gamePlayers.map(gp => gp.playerId))
   const attendingPlayers = players.filter(p => attendingPlayerIds.has(p.id))
   const activePoint = points.find(p => p.status === "IN_PROGRESS") ?? null
   const completedPoints = points.filter(p => p.status === "COMPLETE").sort((a, b) => a.pointNumber - b.pointNumber)
   const upcomingLineType = nextLineType(game, completedPoints)
+  const livePossession = activePoint ? pointPossessions(activePoint, pointEvents).current : undefined
   const nextPointNumber = points.length + 1
   const showActionBar = activeTab === "game" && (!!activePoint || game.status !== "FINAL")
 
@@ -238,101 +308,121 @@ export default function GameManagePage() {
       : { label: `Next: point ${nextPointNumber} · ${upcomingLineType}-line`, tone: "next" as const }
 
   return (
-    <div className={cn("w-full max-w-3xl mx-auto px-4 sm:px-8 pt-3 sm:pt-6 flex flex-col gap-5", showActionBar ? ACTION_BAR_SPACE : "pb-10")}>
-      {/* Header: rare, setup-type controls live up here, away from the thumb zone */}
+    <div className={cn("w-full max-w-3xl mx-auto px-4 sm:px-8 pt-2 sm:pt-6 flex flex-col gap-4", showActionBar ? ACTION_BAR_SPACE : "pb-10")}>
+      {/* Header: one row. Setup controls (rare) live in the collapsible settings panel. */}
       <header className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
-          <Button asChild variant="ghost" size="sm" className="-ml-3 h-10 text-fg-muted">
-            <Link href="/live/manage?tab=games"><ChevronLeft /> Games</Link>
-          </Button>
-          <div className="flex flex-wrap items-center justify-end gap-1.5">
-            {broadcastPill && <Badge variant={broadcastPill.variant}>{broadcastPill.label}</Badge>}
-            {serverPill && <Badge variant={serverPill.variant}>{serverPill.label}</Badge>}
-            <Badge variant={STATUS_VARIANT[game.status]}>{STATUS_LABEL[game.status]}</Badge>
-          </div>
-        </div>
-
-        {editingOpponent ? (
-          <form
-            onSubmit={e => { e.preventDefault(); handleSaveOpponent() }}
-            className="flex flex-wrap items-center gap-2"
-          >
-            <label htmlFor="opponent-name" className="text-3xl font-display leading-none tracking-wide text-fg-muted">vs</label>
-            <input
-              id="opponent-name"
-              autoFocus
-              value={opponentDraft}
-              onChange={e => setOpponentDraft(e.target.value)}
-              onKeyDown={e => { if (e.key === "Escape") setEditingOpponent(false) }}
-              className="h-11 min-w-0 flex-1 rounded-md border border-input bg-surface px-3 text-xl text-foreground"
-            />
-            <Button type="submit" size="sm" className="h-10" loading={savingOpponent}>Save</Button>
-            <Button type="button" variant="ghost" size="sm" className="h-10" onClick={() => setEditingOpponent(false)}>Cancel</Button>
-          </form>
-        ) : (
-          <div className="flex items-center gap-1">
-            <h1 className="min-w-0 truncate text-3xl sm:text-4xl font-display leading-none tracking-wide">vs {game.opponent}</h1>
-            <Button
-              variant="ghost"
-              size="icon-lg"
-              aria-label="Rename opponent"
-              onClick={() => { setOpponentDraft(game.opponent); setEditingOpponent(true) }}
-              className="text-fg-muted"
-            >
-              <Pencil />
+        {isTest && (
+          <div role="note" className="flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/10 py-1 pl-3 pr-1">
+            <FlaskConical aria-hidden className="size-4 shrink-0 text-warning" />
+            <p className="min-w-0 flex-1 truncate text-sm">
+              <span className="font-semibold text-warning">Test game</span>
+              <span className="text-fg-secondary"> · hidden, nothing goes live</span>
+            </p>
+            <Button variant="ghost" size="sm" className="h-10 shrink-0 text-destructive hover:text-destructive" onClick={() => setConfirmDiscard(true)}>
+              Discard
             </Button>
           </div>
         )}
+        <ConfirmDialog
+          open={confirmDiscard}
+          onOpenChange={o => { if (!discarding) setConfirmDiscard(o) }}
+          title="Discard this test game?"
+          description="The game and every point, event and roster entry in it are deleted for good."
+          confirmLabel="Discard"
+          isLoading={discarding}
+          onConfirm={handleDiscard}
+        />
 
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-fg-muted">
-          {game.round && <span>{game.round}</span>}
-          <span>Cap {game.cap}</span>
-          {game.status !== "FINAL" ? (
-            <span className="inline-flex items-center gap-1">
-              VOID {game.voidReceivingFirst ? "received" : "pulled"} first
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-10 px-2 text-fg-secondary"
-                onClick={handleToggleReceiving}
-                loading={savingReceiving}
-                aria-label={`Change to: VOID ${game.voidReceivingFirst ? "pulled" : "received"} first`}
-              >
-                Change
-              </Button>
-            </span>
-          ) : (
-            <span>VOID {game.voidReceivingFirst ? "received" : "pulled"} first</span>
-          )}
+        <div className="flex items-center gap-1">
+          <Button asChild variant="ghost" size="icon-lg" className="-ml-3 shrink-0 text-fg-muted">
+            <Link href="/live/manage?tab=games" aria-label="Back to games"><ChevronLeft /></Link>
+          </Button>
+          <h1 className="min-w-0 flex-1 truncate font-display text-2xl leading-none tracking-wide sm:text-3xl">vs {game.opponent}</h1>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {broadcastPill?.label === "Live" && <Badge variant="destructive">Live</Badge>}
+            <Badge variant={STATUS_VARIANT[game.status]}>{STATUS_LABEL[game.status]}</Badge>
+          </div>
+          <Button
+            variant={showSettings ? "secondary" : "ghost"}
+            size="icon-lg"
+            className="-mr-2 shrink-0"
+            aria-label="Game settings"
+            aria-expanded={showSettings}
+            aria-controls="game-settings"
+            onClick={() => setShowSettings(v => !v)}
+          >
+            <Settings2 />
+          </Button>
         </div>
 
-        <GameStatusControl
-          game={game}
-          completedCount={completedPoints.length}
-          onUpdate={updated => setGame(updated)}
-        />
+        {showSettings && (
+          <div id="game-settings" className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-3">
+            {editingOpponent ? (
+              <form onSubmit={e => { e.preventDefault(); handleSaveOpponent() }} className="flex flex-wrap items-center gap-2">
+                <label htmlFor="opponent-name" className="text-sm text-fg-muted">Opponent</label>
+                <input
+                  id="opponent-name"
+                  autoFocus
+                  value={opponentDraft}
+                  onChange={e => setOpponentDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Escape") setEditingOpponent(false) }}
+                  className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-base text-foreground"
+                />
+                <Button type="submit" size="sm" className="h-10" loading={savingOpponent}>Save</Button>
+                <Button type="button" variant="ghost" size="sm" className="h-10" onClick={() => setEditingOpponent(false)}>Cancel</Button>
+              </form>
+            ) : (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-fg-muted">
+                {game.round && <span>{game.round}</span>}
+                <span>Cap {game.cap}</span>
+                <Button variant="ghost" size="sm" className="h-10 px-2 text-fg-secondary" onClick={() => { setOpponentDraft(game.opponent); setEditingOpponent(true) }}>
+                  <Pencil /> Rename
+                </Button>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-1 text-sm text-fg-muted">
+              VOID {game.voidReceivingFirst ? "received" : "pulled"} first
+              {game.status !== "FINAL" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-10 px-2 text-fg-secondary"
+                  onClick={handleToggleReceiving}
+                  loading={savingReceiving}
+                  aria-label={`Change to: VOID ${game.voidReceivingFirst ? "pulled" : "received"} first`}
+                >
+                  Change
+                </Button>
+              )}
+            </div>
+
+            <GameStatusControl
+              game={game}
+              completedCount={completedPoints.length}
+              onUpdate={updated => setGame(updated)}
+            />
+
+            <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+              {tabs.filter(t => t !== "game").map(t => (
+                <Button key={t} variant="outline" size="sm" className="h-10" onClick={() => { setActiveTab(t); setShowSettings(false) }}>
+                  {t === "broadcast" ? "Broadcast" : "Live server"}
+                  {t === "broadcast" && broadcastPill && <Badge variant={broadcastPill.variant} className="ml-1">{broadcastPill.label}</Badge>}
+                  {t === "server" && serverPill && <Badge variant={serverPill.variant} className="ml-1">{serverPill.label}</Badge>}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
       </header>
 
-      <ScoreBar scoreVoid={game.scoreVoid} scoreOpponent={game.scoreOpponent} opponent={game.opponent} status={scoreStatus} />
+      <ScoreBar scoreVoid={game.scoreVoid} scoreOpponent={game.scoreOpponent} opponent={game.opponent} status={scoreStatus} possession={livePossession} />
 
-      {/* Tabs */}
-      <div role="tablist" aria-label="Console sections" className="flex gap-1 bg-surface rounded-xl p-1">
-        {(["game", "broadcast", "server"] as Tab[]).map(tab => (
-          <button
-            key={tab}
-            role="tab"
-            aria-selected={activeTab === tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 min-h-10 py-2 text-sm font-medium rounded-md transition-colors ${
-              activeTab === tab
-                ? "bg-surface-2 text-foreground"
-                : "text-fg-muted hover:text-foreground"
-            }`}
-          >
-            {tab === "broadcast" ? "Broadcast" : tab === "server" ? "Live server" : "Game"}
-          </button>
-        ))}
-      </div>
+      {activeTab !== "game" && (
+        <Button variant="ghost" size="sm" className="-ml-3 h-10 w-fit text-fg-muted" onClick={() => setActiveTab("game")}>
+          <ChevronLeft /> Back to scoring
+        </Button>
+      )}
 
       {/* Tab: Game — the live point (or the next line) first, then roster, then the log */}
       {activeTab === "game" && (
@@ -346,6 +436,9 @@ export default function GameManagePage() {
               completedPoints={completedPoints}
               opponent={game.opponent}
               events={pointEvents.filter(e => e.pointId === activePoint.id)}
+              lastPullerId={lastVoidPuller(pointEvents, activePoint.playerIds)}
+              onReopenPoint={reopenPoint}
+              onEventUpdated={e => setPointEvents(prev => prev.map(x => (x.id === e.id ? e : x)))}
               onEventAdded={e => setPointEvents(prev => [...prev, e])}
               onEventDeleted={id => setPointEvents(prev => prev.filter(e => e.id !== id))}
               onPointCompleted={updated => {
@@ -365,6 +458,7 @@ export default function GameManagePage() {
               completedPoints={completedPoints}
               currentScoreVoid={game.scoreVoid}
               currentScoreOpponent={game.scoreOpponent}
+              onUndoLastPoint={completedPoints.length > 0 ? () => reopenPoint(completedPoints[completedPoints.length - 1].id) : undefined}
               onPointCreated={point => {
                 setPoints(prev => [...prev, point])
                 setGame(g => g ? { ...g, status: "IN_PROGRESS" } : g)
@@ -398,6 +492,7 @@ export default function GameManagePage() {
                     }}
                     onEventAdded={e => setPointEvents(prev => [...prev, e])}
                     onEventDeleted={id => setPointEvents(prev => prev.filter(e => e.id !== id))}
+                    onEventUpdated={e => setPointEvents(prev => prev.map(x => (x.id === e.id ? e : x)))}
                   />
                 ))}
               </div>
@@ -407,7 +502,7 @@ export default function GameManagePage() {
       )}
 
       {/* Tab: Broadcast */}
-      {activeTab === "broadcast" && <BroadcastSection game={game} />}
+      {activeTab === "broadcast" && !isTest && <BroadcastSection game={game} />}
 
       {/* Tab: Live Server */}
       {activeTab === "server" && <LiveServerPanel />}
@@ -431,6 +526,7 @@ function GameStatusControl({
   const [confirming, setConfirming] = useState<GameStatus | null>(null)
 
   const result = game.scoreVoid > game.scoreOpponent ? "WIN" : game.scoreVoid < game.scoreOpponent ? "LOSS" : "TIE"
+  const isTest = isTestGame(game)
 
   async function setStatus(status: GameStatus) {
     setSaving(true)
@@ -458,10 +554,11 @@ function GameStatusControl({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-2">
-        {game.status === "IN_PROGRESS" && game.secondHalfStartCompletedCount === undefined && (
+        {game.status === "IN_PROGRESS" && (
           <MarkHalfButton
             gameId={game.id}
             completedCount={completedCount}
+            markedAt={game.secondHalfStartCompletedCount}
             onMarked={onUpdate}
           />
         )}
@@ -482,14 +579,18 @@ function GameStatusControl({
         title={confirming === "FINAL" ? `End the game at ${game.scoreVoid}–${game.scoreOpponent}?` : "Start the game?"}
         description={
           <>
-            {confirming === "FINAL"
-              ? `This records a ${result === "WIN" ? "win" : result === "LOSS" ? "loss" : "tie"} against ${game.opponent} and stops the live scoreboard and broadcast.`
-              : `This turns on the live scoreboard and broadcast for the game against ${game.opponent}.`}
+            {isTest
+              ? confirming === "FINAL"
+                ? "This only ends the test game. Nothing is recorded and the broadcast and live server stay as they are."
+                : "This only starts the test game. The broadcast and live server stay as they are."
+              : confirming === "FINAL"
+                ? `This records a ${result === "WIN" ? "win" : result === "LOSS" ? "loss" : "tie"} against ${game.opponent} and stops the live scoreboard and broadcast.`
+                : `This turns on the live scoreboard and broadcast for the game against ${game.opponent}.`}
             {statusError && <span role="alert" className="mt-2 block text-destructive">{statusError}</span>}
           </>
         }
         confirmLabel={confirming === "FINAL" ? "End game" : "Start game"}
-        destructive={confirming === "FINAL"}
+        destructive={confirming === "FINAL" && !isTest}
         isLoading={saving}
         onConfirm={() => { if (confirming) setStatus(confirming) }}
       />
@@ -505,6 +606,9 @@ function ActivePointSection({
   completedPoints,
   opponent,
   events,
+  lastPullerId,
+  onReopenPoint,
+  onEventUpdated,
   onEventAdded,
   onEventDeleted,
   onPointCompleted,
@@ -516,6 +620,9 @@ function ActivePointSection({
   completedPoints: PointItem[]
   opponent: string
   events: PointEventItem[]
+  lastPullerId?: string
+  onReopenPoint: (pointId: string) => Promise<boolean>
+  onEventUpdated: (e: PointEventItem) => void
   onEventAdded: (e: PointEventItem) => void
   onEventDeleted: (id: string) => void
   onPointCompleted: (updated: PointItem) => void
@@ -526,6 +633,10 @@ function ActivePointSection({
   const [eventError, setEventError] = useState("")
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
   const [confirmOpp, setConfirmOpp] = useState(false)
+  const [loggerStep, setLoggerStep] = useState<LogStep>(null)
+  const [editingEventId, setEditingEventId] = useState<string | null>(null)
+  const [savingWho, setSavingWho] = useState(false)
+  const loggerRef = useRef<HTMLDivElement>(null)
 
   const [editingLine, setEditingLine] = useState(false)
   const [editPlayerIds, setEditPlayerIds] = useState<string[]>([])
@@ -541,7 +652,10 @@ function ActivePointSection({
   const describe = (ev: PointEventItem) => eventDetail(ev, name, opponent)
   const sortedEvents = sortEvents(events)
   const hasGoal = sortedEvents.some(e => e.eventType === "GOAL")
+  const hasPull = sortedEvents.some(e => e.eventType === "PULL")
   const lastEvent = sortedEvents[sortedEvents.length - 1]
+  // After a stoppage, one tap marks the moment play restarts (a film-sync anchor)
+  const showTapIn = !!lastEvent && (lastEvent.eventType === "TIMEOUT" || lastEvent.eventType === "SUBSTITUTION")
 
   const byId = new Map(players.map(p => [p.id, p]))
   const onLine = point.playerIds.map(id => byId.get(id)).filter((p): p is PlayerItem => !!p)
@@ -572,6 +686,8 @@ function ActivePointSection({
           playerId: opts.playerId ?? "",
           ...(opts.playerInId ? { playerInId: opts.playerInId } : {}),
           ...(opts.team ? { team: opts.team } : {}),
+          ...(opts.turnoverType ? { turnoverType: opts.turnoverType } : {}),
+          ...(opts.occurredAt ? { occurredAt: opts.occurredAt } : {}),
           sortOrder: nextSortOrder(eventsRef.current),
         }),
       })
@@ -614,6 +730,141 @@ function ActivePointSection({
     } finally {
       setAddingEvent(false)
     }
+  }
+
+  /** Saves one event. Returns it, or null after showing the error. */
+  async function createEvent(body: Record<string, unknown>, failMsg: string): Promise<PointEventItem | null> {
+    try {
+      const res = await apiFetch("/api/point-events", {
+        ...SCORING_WRITE,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pointId: point.id, gameId: point.gameId, playerId: "", sortOrder: nextSortOrder(eventsRef.current), ...body }),
+      })
+      if (!res.ok) {
+        const msg = await errorMessage(res, failMsg)
+        setEventError(msg)
+        toast.error(msg, SCORING_TOAST)
+        return null
+      }
+      const created: PointEventItem = await res.json()
+      onEventAdded(created)
+      eventsRef.current = [...eventsRef.current, created]
+      return created
+    } catch (err) {
+      const msg = writeErrorText(err, failMsg)
+      setEventError(msg)
+      toast.error(msg, SCORING_TOAST)
+      return null
+    }
+  }
+
+  async function removeEvents(evs: PointEventItem[]) {
+    for (const ev of [...evs].reverse()) await removeEvent(ev)
+  }
+
+  // Release → PULL (with in/out, hang time, puller), landing → PULL_FINISHED, both at the phone's times
+  async function handleLogPull(pull: PullLog): Promise<boolean> {
+    setAddingEvent(true)
+    setEventError("")
+    try {
+      const pullEv = await createEvent({
+        eventType: "PULL",
+        team: pull.team,
+        playerId: pull.playerId ?? "",
+        pullResult: pull.result,
+        hangTimeMs: pull.landedAt.getTime() - pull.pulledAt.getTime(),
+        occurredAt: pull.pulledAt.toISOString(),
+      }, "Couldn't save the pull. Try again.")
+      if (!pullEv) return false
+      const landed = await createEvent({ eventType: "PULL_FINISHED", occurredAt: pull.landedAt.toISOString() }, "Pull saved, but not its landing. Try Undo and redo the pull.")
+      const saved = landed ? [pullEv, landed] : [pullEv]
+      toast(`Pull · ${describe(pullEv)}`, { ...SCORING_TOAST, duration: 5000, action: { label: "Undo", onClick: () => { removeEvents(saved) } } })
+      return true
+    } finally {
+      setAddingEvent(false)
+    }
+  }
+
+  // Goal, assist (and hockey assist) are one sequence, and a goal ends the point.
+  async function handleGoal(scorerId: string, assisterId: string | null, hockeyId: string | null, tappedAt: Date): Promise<boolean> {
+    setAddingEvent(true)
+    setEventError("")
+    const at = tappedAt.toISOString()
+    const saved: PointEventItem[] = []
+    try {
+      if (hockeyId) {
+        const ev = await createEvent({ eventType: "HOCKEY_ASSIST", playerId: hockeyId, occurredAt: at }, "Couldn't save the hockey assist. Try again.")
+        if (!ev) return false
+        saved.push(ev)
+      }
+      if (assisterId) {
+        const ev = await createEvent({ eventType: "ASSIST", playerId: assisterId, occurredAt: at }, "Couldn't save the assist. Try again.")
+        if (!ev) { await removeEvents(saved); return false }
+        saved.push(ev)
+      }
+      const goal = await createEvent({ eventType: "GOAL", playerId: scorerId, occurredAt: at }, "Couldn't save the goal. Try again.")
+      if (!goal) { await removeEvents(saved); return false }
+    } finally {
+      setAddingEvent(false)
+    }
+    // The events are saved; if finishing fails, the action bar offers "Finish point".
+    await handleCompletePoint(true)
+    return true
+  }
+
+  async function handleTapIn() {
+    const at = new Date().toISOString() // the tap itself, before any network wait
+    setAddingEvent(true)
+    setEventError("")
+    try {
+      const ev = await createEvent({ eventType: "TAP_IN", occurredAt: at }, "Couldn't mark the tap-in. Try again.")
+      if (ev) toast("Tapped in", { ...SCORING_TOAST, duration: 4000, action: { label: "Undo", onClick: () => { removeEvent(ev) } } })
+    } finally {
+      setAddingEvent(false)
+    }
+  }
+
+  async function handleEditWho(ev: PointEventItem, change: EventWhoChange): Promise<boolean> {
+    setSavingWho(true)
+    try {
+      const updated = await saveEventWho(ev, change)
+      if (!updated) return false
+      onEventUpdated(updated)
+      eventsRef.current = eventsRef.current.map(e => (e.id === updated.id ? updated : e))
+      setEditingEventId(null)
+      // A changed sub changes who's on the field: swap the old names for the new ones
+      if (ev.eventType === "SUBSTITUTION" && updated.playerInId && (ev.playerId !== updated.playerId || ev.playerInId !== updated.playerInId)) {
+        let line = pointRef.current.playerIds.map(id => (id === ev.playerInId ? updated.playerInId! : id))
+        if (ev.playerId !== updated.playerId) line = line.map(id => (id === updated.playerId ? ev.playerId : id))
+        try {
+          const pr = await apiFetch(`/api/points/${point.id}`, {
+            ...SCORING_WRITE, method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ playerIds: line }),
+          })
+          if (pr.ok) onLineUpdated(await pr.json())
+          else toast.error("Sub changed, but the line didn't update. Use Edit line to fix it.", SCORING_TOAST)
+        } catch {
+          toast.error("Sub changed, but the line didn't update. Use Edit line to fix it.", SCORING_TOAST)
+        }
+      }
+      toast(`${EVENT_TYPE_LABELS[updated.eventType]} · ${describe(updated)}`, { ...SCORING_TOAST, duration: 2500 })
+      return true
+    } finally {
+      setSavingWho(false)
+    }
+  }
+
+  /** Bottom-bar Undo: the last event, or the whole pull (PULL + its landing) as one. */
+  function undoLast() {
+    if (!lastEvent) return
+    const prev = sortedEvents[sortedEvents.length - 2]
+    if (lastEvent.eventType === "PULL_FINISHED" && prev?.eventType === "PULL") removeEvents([prev, lastEvent])
+    else removeEvent(lastEvent)
+  }
+
+  function openGoalFlow() {
+    setLoggerStep({ type: "GOAL_FLOW", phase: "scorer", at: Date.now() })
+    loggerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" })
   }
 
   // Removes an event once the server confirms. Removing a sub also swaps the line back.
@@ -676,7 +927,15 @@ function ActivePointSection({
       if (res.ok) {
         setConfirmOpp(false)
         onPointCompleted(await res.json())
-        toast.success(`Point ${point.pointNumber}: ${voidScoredPoint ? "VOID" : opponent} scored`, SCORING_TOAST)
+        const goal = voidScoredPoint ? [...eventsRef.current].reverse().find(e => e.eventType === "GOAL") : undefined
+        const assist = voidScoredPoint ? [...eventsRef.current].reverse().find(e => e.eventType === "ASSIST") : undefined
+        const how = goal ? ` · ${name(goal.playerId)}${assist ? ` from ${name(assist.playerId)}` : ""}` : ""
+        const pointId = point.id
+        toast.success(`Point ${point.pointNumber}: ${voidScoredPoint ? "VOID" : opponent} scored${how}`, {
+          ...SCORING_TOAST,
+          duration: 8000,
+          action: { label: "Undo", onClick: () => { onReopenPoint(pointId) } },
+        })
       } else {
         const msg = await errorMessage(res, "Couldn't finish the point. Try again.")
         setEventError(msg)
@@ -718,25 +977,11 @@ function ActivePointSection({
   }
 
   return (
-    <section aria-labelledby="active-point-heading" className="flex flex-col gap-4 rounded-xl border border-border-strong bg-surface p-4 sm:p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 id="active-point-heading" className="text-lg font-semibold">Point {point.pointNumber}</h2>
-          <p className="text-sm text-fg-muted">
-            {point.lineType === "O" ? "O-line · VOID on offense" : "D-line · VOID on defense"}
-          </p>
-        </div>
-        {/* Rare and final: kept up here, away from the thumb zone, and confirmed */}
-        <Button
-          variant="destructive"
-          size="sm"
-          className="h-10 max-w-[50%] shrink-0"
-          onClick={() => setConfirmOpp(true)}
-          disabled={completing || editingLine}
-        >
-          <span className="truncate">{opponent} scored</span>
-        </Button>
-      </div>
+    <section aria-labelledby="active-point-heading" className="flex flex-col gap-3 sm:gap-4 sm:rounded-xl sm:border sm:border-border-strong sm:bg-surface sm:p-5">
+      {/* The score bar already shows "Point N · O-line" */}
+      <h2 id="active-point-heading" className="sr-only">
+        Point {point.pointNumber}, {point.lineType === "O" ? "O-line, VOID on offense" : "D-line, VOID on defense"}
+      </h2>
 
       {editingLine ? (
         <div className="flex flex-col gap-3">
@@ -746,7 +991,7 @@ function ActivePointSection({
             selected={editPlayerIds}
             onChange={setEditPlayerIds}
             presets={linePresets(completedPoints)}
-            stickyClassName="top-[7.5rem] bg-card"
+            stickyClassName="top-14 bg-card"
             autoFocus
             disabled={savingLine}
           />
@@ -760,14 +1005,27 @@ function ActivePointSection({
         </div>
       ) : (
         <>
-          <div className="flex items-start gap-2">
-            <p className="min-w-0 flex-1 py-2 text-sm">
-              <span className="text-fg-muted">On the line ({point.playerIds.length}): </span>
-              <span className="text-fg-secondary">
-                {onLine.length > 0 ? onLine.map(p => p.first_name).join(", ") : "nobody yet"}
-              </span>
-            </p>
-            <Button variant="outline" size="sm" className="h-10 shrink-0" onClick={openLineEditor}>Edit line</Button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={openLineEditor}
+              className="min-h-10 min-w-0 flex-1 truncate text-left text-sm"
+              aria-label={`Edit line: ${onLine.map(p => p.first_name).join(", ") || "nobody yet"}`}
+            >
+              <span className="font-mono tabular-nums text-fg-muted">{point.playerIds.length}/7 </span>
+              <span className="text-fg-secondary">{onLine.length > 0 ? onLine.map(p => p.first_name).join(", ") : "Nobody on the line yet"}</span>
+              <Pencil aria-hidden className="ml-1 inline size-3.5 text-fg-muted" />
+            </button>
+            {/* Rare and final: kept up here, away from the thumb zone, and confirmed */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-10 max-w-[45%] shrink-0 border-destructive/30 text-destructive hover:text-destructive"
+              onClick={() => setConfirmOpp(true)}
+              disabled={completing}
+            >
+              <span className="truncate">{opponent} scored</span>
+            </Button>
           </div>
 
           {sortedEvents.length > 0 ? (
@@ -776,20 +1034,58 @@ function ActivePointSection({
               describe={describe}
               onRemove={removeEvent}
               pendingIds={removingIds}
+              onEdit={ev => setEditingEventId(id => (id === ev.id ? null : ev.id))}
+              editingId={editingEventId}
+              renderEditor={ev => (
+                <EventWhoEditor
+                  event={ev}
+                  linePool={linePlayerPool}
+                  benchPool={benchPool}
+                  allPlayers={players}
+                  opponent={opponent}
+                  busy={savingWho}
+                  onSave={change => handleEditWho(ev, change)}
+                  onCancel={() => setEditingEventId(null)}
+                />
+              )}
               className="-my-1"
             />
           ) : (
             <p className="text-sm text-fg-muted">No events yet.</p>
           )}
 
-          <EventLogger
-            linePool={linePlayerPool}
-            benchPool={benchPool}
-            opponent={opponent}
-            busy={addingEvent}
-            onLog={handleAddEvent}
-            onEditLine={openLineEditor}
-          />
+          {!hasPull && sortedEvents.length === 0 && (
+            <PullButton
+              lineType={point.lineType}
+              opponent={opponent}
+              linePlayers={linePlayerPool}
+              defaultPullerId={lastPullerId}
+              busy={addingEvent}
+              onLog={handleLogPull}
+            />
+          )}
+
+          {showTapIn && (
+            <Button variant="outline" size="touch" className="w-full border-brand/40" onClick={handleTapIn} disabled={addingEvent} haptic="impact-medium">
+              Tapped in · play restarted
+            </Button>
+          )}
+
+          <div ref={loggerRef} className="scroll-mb-28">
+            <EventLogger
+              linePool={linePlayerPool}
+              benchPool={benchPool}
+              opponent={opponent}
+              busy={addingEvent || completing}
+              onLog={handleAddEvent}
+              onGoal={handleGoal}
+              onEditLine={openLineEditor}
+              types={LIVE_GRID_TYPES}
+              possession={pointPossessions(point, events).current}
+              step={loggerStep}
+              onStepChange={setLoggerStep}
+            />
+          </div>
 
           {eventError && <p role="alert" className="text-destructive text-sm">{eventError}</p>}
         </>
@@ -810,32 +1106,32 @@ function ActivePointSection({
       <ActionBar label="Point actions">
         {editingLine ? (
           <>
-            <Button variant="outline" size="touch" onClick={() => { setEditingLine(false); setLineError("") }} disabled={savingLine}>
+            <Button data-haptic="impact-light" variant="outline" size="touch" onClick={() => { setEditingLine(false); setLineError("") }} disabled={savingLine}>
               Cancel
             </Button>
-            <Button size="touch" className="flex-1" onClick={handleSaveLine} loading={savingLine}>
+            <Button data-haptic="impact-light" size="touch" className="flex-1" onClick={handleSaveLine} loading={savingLine}>
               Save line · <span className="font-mono tabular-nums">{editPlayerIds.length}/7</span>
             </Button>
           </>
         ) : (
           <>
-            <Button
+            <Button data-haptic="impact-light"
               variant="outline"
               size="touch"
-              onClick={() => lastEvent && removeEvent(lastEvent)}
+              onClick={undoLast}
               disabled={!lastEvent || removingIds.size > 0 || addingEvent}
-              aria-label={lastEvent ? `Undo last event: ${EVENT_TYPE_LABELS[lastEvent.eventType]} ${describe(lastEvent)}` : "Undo last event"}
+              aria-label={lastEvent ? `Undo last event: ${EVENT_TYPE_LABELS[lastEvent.eventType === "PULL_FINISHED" ? "PULL" : lastEvent.eventType]}` : "Undo last event"}
             >
               <Undo2 /> Undo
             </Button>
-            <Button
+            <Button data-haptic="impact-light"
               size="touch"
               className="min-w-0 flex-1"
-              onClick={() => handleCompletePoint(true)}
-              disabled={!hasGoal || addingEvent}
+              onClick={() => (hasGoal ? handleCompletePoint(true) : openGoalFlow())}
+              disabled={addingEvent || completing}
               loading={completing && !confirmOpp}
             >
-              <span className="truncate">{hasGoal ? `VOID scored · ${scoredOutcome}` : "Log the goal to finish"}</span>
+              <span className="truncate">{hasGoal ? `Finish point · ${scoredOutcome}` : `VOID scored · ${scoredOutcome}`}</span>
             </Button>
           </>
         )}
@@ -845,37 +1141,51 @@ function ActivePointSection({
 }
 
 // --- Mark Half Button ---
+// Marking half flips who receives next, so a mis-tap has to be easy to take back.
 function MarkHalfButton({
   gameId,
   completedCount,
+  markedAt,
   onMarked,
 }: {
   gameId: string
   completedCount: number
+  /** Completed points when half was marked; undefined = first half. */
+  markedAt?: number
   onMarked: (updated: GameItem) => void
 }) {
   const [saving, setSaving] = useState(false)
+  const marked = markedAt !== undefined
 
-  async function handleMark() {
+  async function save(value: number | null, failMsg: string) {
     setSaving(true)
     try {
       const res = await apiFetch(`/api/games/${gameId}`, {
         ...SCORING_WRITE,
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secondHalfStartCompletedCount: completedCount }),
+        body: JSON.stringify({ secondHalfStartCompletedCount: value }),
       })
-      if (res.ok) onMarked(await res.json())
-      else toast.error(await errorMessage(res, "Couldn't mark half. Try again."), SCORING_TOAST)
+      if (!res.ok) { toast.error(await errorMessage(res, failMsg), SCORING_TOAST); return }
+      onMarked(await res.json())
+      if (value !== null) {
+        toast("Half marked", { ...SCORING_TOAST, duration: 6000, action: { label: "Undo", onClick: () => { save(null, "Couldn't undo half. Try again.") } } })
+      } else {
+        toast("Half unmarked", SCORING_TOAST)
+      }
     } catch (err) {
-      toast.error(writeErrorText(err, "Couldn't mark half. Try again."), SCORING_TOAST)
+      toast.error(writeErrorText(err, failMsg), SCORING_TOAST)
     } finally {
       setSaving(false)
     }
   }
 
-  return (
-    <Button variant="outline" size="sm" className="h-10" onClick={handleMark} loading={saving}>
+  return marked ? (
+    <Button variant="ghost" size="sm" className="h-10 text-fg-muted" onClick={() => save(null, "Couldn't undo half. Try again.")} loading={saving}>
+      Half after P{markedAt} · Undo
+    </Button>
+  ) : (
+    <Button variant="outline" size="sm" className="h-10" onClick={() => save(completedCount, "Couldn't mark half. Try again.")} loading={saving}>
       Mark half
     </Button>
   )
@@ -891,6 +1201,7 @@ function AddPointSection({
   completedPoints,
   currentScoreVoid,
   currentScoreOpponent,
+  onUndoLastPoint,
   onPointCreated,
 }: {
   game: GameItem
@@ -900,11 +1211,14 @@ function AddPointSection({
   completedPoints: PointItem[]
   currentScoreVoid: number
   currentScoreOpponent: number
+  /** Present when there's a finished point to take back. */
+  onUndoLastPoint?: () => Promise<boolean>
   onPointCreated: (p: PointItem) => void
 }) {
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
+  const [undoing, setUndoing] = useState(false)
 
   async function handleSubmit() {
     if (selectedPlayerIds.length === 0) return
@@ -944,12 +1258,9 @@ function AddPointSection({
   const count = selectedPlayerIds.length
   return (
     <section aria-labelledby="next-line-heading" className="flex flex-col gap-3">
-      <div>
-        <h2 id="next-line-heading" className="text-lg font-semibold">Point {nextPointNumber} line</h2>
-        <p className="text-sm text-fg-muted">
-          {lineType === "O" ? "O-line · VOID receives the pull" : "D-line · VOID pulls"}
-        </p>
-      </div>
+      <h2 id="next-line-heading" className="text-sm font-medium text-fg-muted">
+        Pick the line · {lineType === "O" ? "VOID receives" : "VOID pulls"}
+      </h2>
       <LinePicker
         pool={attendingPlayers}
         selected={selectedPlayerIds}
@@ -967,7 +1278,19 @@ function AddPointSection({
       {error && <p role="alert" className="text-destructive text-sm">{error}</p>}
 
       <ActionBar label="Start point">
-        <Button
+        {onUndoLastPoint && (
+          <Button data-haptic="impact-light"
+            variant="outline"
+            size="touch"
+            onClick={async () => { setUndoing(true); await onUndoLastPoint(); setUndoing(false) }}
+            loading={undoing}
+            disabled={submitting}
+            aria-label={`Undo point ${nextPointNumber - 1}: make it live again`}
+          >
+            <Undo2 /> P{nextPointNumber - 1}
+          </Button>
+        )}
+        <Button data-haptic="impact-light"
           size="touch"
           variant={count === 7 ? "default" : "outline"}
           className={cn("flex-1", count > 0 && count !== 7 && "border-warning text-warning")}
@@ -994,6 +1317,7 @@ function CompletedPointRow({
   onPointUpdated,
   onEventAdded,
   onEventDeleted,
+  onEventUpdated,
 }: {
   point: PointItem
   players: PlayerItem[]
@@ -1003,7 +1327,10 @@ function CompletedPointRow({
   onPointUpdated: (updated: PointItem) => void
   onEventAdded: (e: PointEventItem) => void
   onEventDeleted: (id: string) => void
+  onEventUpdated: (e: PointEventItem) => void
 }) {
+  const [editingEventId, setEditingEventId] = useState<string | null>(null)
+  const [savingWho, setSavingWho] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editOutcome, setEditOutcome] = useState<"HOLD" | "BREAK">(
@@ -1111,6 +1438,7 @@ function CompletedPointRow({
           playerId: opts.playerId ?? "",
           ...(opts.playerInId ? { playerInId: opts.playerInId } : {}),
           ...(opts.team ? { team: opts.team } : {}),
+          ...(opts.turnoverType ? { turnoverType: opts.turnoverType } : {}),
           sortOrder: nextSortOrder(events),
         }),
       })
@@ -1230,6 +1558,28 @@ function CompletedPointRow({
                     onRemove={toggleStaged}
                     onRestore={toggleStaged}
                     stagedIds={stagedDeletes}
+                    onEdit={ev => setEditingEventId(id => (id === ev.id ? null : ev.id))}
+                    editingId={editingEventId}
+                    renderEditor={ev => (
+                      <EventWhoEditor
+                        event={ev}
+                        linePool={linePlayerPool}
+                        benchPool={benchPool}
+                        allPlayers={players}
+                        opponent={opponent}
+                        busy={savingWho}
+                        onSave={async change => {
+                          setSavingWho(true)
+                          const updated = await saveEventWho(ev, change)
+                          setSavingWho(false)
+                          if (!updated) return false
+                          onEventUpdated(updated)
+                          setEditingEventId(null)
+                          return true
+                        }}
+                        onCancel={() => setEditingEventId(null)}
+                      />
+                    )}
                   />
                 ) : (
                   <p className="text-fg-muted text-sm">No events logged.</p>
@@ -1257,7 +1607,7 @@ function CompletedPointRow({
                   pool={editPool}
                   selected={editPlayerIds}
                   onChange={setEditPlayerIds}
-                  stickyClassName="top-[7.5rem] bg-background"
+                  stickyClassName="top-14 bg-background"
                   disabled={saving}
                 />
                 {removedWithEvents.length > 0 && (

@@ -3,6 +3,9 @@
 import { cn } from "@/lib/utils"
 
 /**
+ * iOS can only tick from a real tap on a switch overlay, and an overlay over scrolling content
+ * breaks scrolling, so the fixed bar is where those overlays live: `[data-haptic]` buttons inside it.
+ *
  * The console's thumb-zone bar: fixed to the bottom of the viewport on every screen size, with the
  * frequent actions for the current state (48px+). The page reserves room for it (see ACTION_BAR_SPACE).
  */

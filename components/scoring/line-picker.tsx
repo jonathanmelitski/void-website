@@ -28,7 +28,7 @@ export function LinePicker({
   onChange,
   presets,
   target = 7,
-  stickyClassName = "top-[7.5rem] bg-background",
+  stickyClassName = "top-14 bg-background",
   autoFocus = false,
   captureTyping = false,
   emptyPool,

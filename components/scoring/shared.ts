@@ -1,5 +1,6 @@
 import type { PlayerItem } from "@/lib/aws/players"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
+import { TURNOVER_TYPE_LABELS, type TurnoverType } from "@/lib/point-event-meta"
 
 // Scoring writes go through apiFetch: an expired session opens the in-place sign-in sheet and the
 // write continues after sign-in (waitForSession). Failures surface inline instead of being dropped.
@@ -16,36 +17,58 @@ export const SCORING_TOAST = { position: "top-center" } as const
 export const EVENT_TYPE_LABELS: Record<PointEventType, string> = {
   GOAL: "Goal",
   ASSIST: "Assist",
+  HOCKEY_ASSIST: "Hockey assist",
   TURNOVER: "Turnover",
   BLOCK: "Block",
   PULL: "Pull",
   PULL_FINISHED: "Pull Finished",
   SUBSTITUTION: "Sub",
   TIMEOUT: "Timeout",
+  TAP_IN: "Tapped in",
+  OPP_TURNOVER: "They turned it",
 }
 
 export const EVENT_TYPE_COLORS: Record<PointEventType, string> = {
   GOAL: "text-success",
   ASSIST: "text-brand-text",
+  HOCKEY_ASSIST: "text-brand-text",
   TURNOVER: "text-destructive",
   BLOCK: "text-warning",
   PULL: "text-fg-muted",
   PULL_FINISHED: "text-brand-text",
   SUBSTITUTION: "text-brand-text",
   TIMEOUT: "text-warning",
+  TAP_IN: "text-brand-text",
+  OPP_TURNOVER: "text-success",
 }
 
-/** Event types the scorer can log by hand (PULL_FINISHED is a film-sync marker). */
-export const LOGGABLE_EVENT_TYPES = (Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).filter(t => t !== "PULL_FINISHED")
+/** Event types the scorer can log from the grid (PULL_FINISHED and TAP_IN are film-sync markers with their own buttons). */
+export const LOGGABLE_EVENT_TYPES = (Object.keys(EVENT_TYPE_LABELS) as PointEventType[]).filter(t => t !== "PULL_FINISHED" && t !== "TAP_IN")
 
+/** Live point: the pull has its own hold button, and the assist is asked as part of Goal. */
+export const LIVE_GRID_TYPES = LOGGABLE_EVENT_TYPES.filter(t => t !== "PULL" && t !== "ASSIST" && t !== "HOCKEY_ASSIST")
+
+/**
+ * A logging step. `at` is when the first button of the sequence was tapped (ms since epoch): the
+ * event's time for film sync, kept through the follow-up taps (who? which team?).
+ */
 export type LogStep =
   | null
-  | { type: "GOAL" | "ASSIST" | "TURNOVER" | "BLOCK" | "PULL" }
-  | { type: "TIMEOUT" }
-  | { type: "SUBSTITUTION"; phase: "out" }
-  | { type: "SUBSTITUTION"; phase: "in"; playerOutId: string }
+  | ((
+    | { type: "GOAL" | "ASSIST" | "HOCKEY_ASSIST" | "BLOCK" | "PULL" }
+    /** No turnoverType yet: pick the type first, then who. */
+    | { type: "TURNOVER"; turnoverType?: TurnoverType }
+    | { type: "OPP_TURNOVER" }
+    | { type: "TIMEOUT" }
+    | { type: "SUBSTITUTION"; phase: "out" }
+    | { type: "SUBSTITUTION"; phase: "in"; playerOutId: string }
+    | { type: "GOAL_FLOW"; phase: "scorer" }
+    | { type: "GOAL_FLOW"; phase: "assist"; scorerId: string }
+    | { type: "GOAL_FLOW"; phase: "hockey"; scorerId: string; assisterId: string }
+  ) & { at?: number })
 
-export type LogEventOpts = { playerId?: string; playerInId?: string; team?: "VOID" | "OPP" }
+/** occurredAt: ISO time of the first tap of the sequence (see LogStep.at). */
+export type LogEventOpts = { playerId?: string; playerInId?: string; team?: "VOID" | "OPP"; occurredAt?: string; turnoverType?: TurnoverType }
 
 export function fullName(p: PlayerItem) {
   return `${p.first_name} ${p.last_name}`.trim()
@@ -63,6 +86,14 @@ export function makePlayerName(players: PlayerItem[]) {
 
 export function eventDetail(ev: PointEventItem, name: (id: string | undefined) => string, opponent = "Opponent"): string {
   if (ev.eventType === "TIMEOUT") return ev.team === "VOID" ? "VOID" : opponent
+  if (ev.eventType === "PULL") {
+    const who = ev.team === "OPP" ? opponent : name(ev.playerId) || "VOID"
+    return [who, ev.pullResult === "IN" ? "In" : ev.pullResult === "OUT" ? "Out" : null,
+      ev.hangTimeMs !== undefined ? `${(ev.hangTimeMs / 1000).toFixed(1)} s` : null].filter(Boolean).join(" · ")
+  }
+  if (ev.eventType === "PULL_FINISHED" || ev.eventType === "TAP_IN") return ""
+  if (ev.eventType === "OPP_TURNOVER") return ev.turnoverType ? TURNOVER_TYPE_LABELS[ev.turnoverType] : ""
+  if (ev.eventType === "TURNOVER" && ev.turnoverType) return `${name(ev.playerId)} · ${TURNOVER_TYPE_LABELS[ev.turnoverType]}`
   if (ev.eventType === "SUBSTITUTION") return `${name(ev.playerId)} → ${ev.playerInId ? name(ev.playerInId) : "?"}`
   return name(ev.playerId)
 }

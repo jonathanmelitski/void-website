@@ -200,6 +200,10 @@ wss.on("connection", (ws: ExtWebSocket, _req: IncomingMessage, gameId: string | 
   fetchGameState(gameId)
     .then(state => {
       if (!state) { ws.close(1008, "Game not found"); return }
+      // Test games are coach-only and this socket can't tell who's connected: refuse, and the page
+      // polls the API (which checks the login) instead. Mirrors lib/test-games.ts.
+      const g = state.game as { isTest?: boolean; eventId?: string }
+      if (g.isTest === true || g.eventId === "__test__") { ws.close(4403, "Test game"); return }
       sendState(ws, state)
     })
     .catch(err => {

@@ -3,6 +3,7 @@ import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { getGame, updateGame, deleteGame } from "@/lib/aws/games"
 import { canViewGame, getCaller } from "@/lib/event-access"
 import { pushGameUpdate } from "@/lib/ws-push"
+import { isTestGame } from "@/lib/test-games"
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda"
 
 const lambdaClient = new LambdaClient({
@@ -44,7 +45,11 @@ export async function PATCH(request: NextRequest, { params }: Props) {
   if (!auth.ok) return auth.response
 
   const { id } = await params
+  // A game can't be moved to another event or switch in or out of test mode.
   const fields = await request.json()
+  delete fields.isTest
+  delete fields.eventId
+  delete fields.id
 
   try {
     const prev = await getGame(id)
@@ -55,7 +60,10 @@ export async function PATCH(request: NextRequest, { params }: Props) {
     // Auto-lifecycle: spin up / tear down resources when game status changes
     const broadcastFn  = process.env.BROADCAST_WORKER_FUNCTION_NAME
     const liveServerFn = process.env.LIVE_SERVER_WORKER_FUNCTION_NAME
-    if (fields.status === "IN_PROGRESS" && prev?.status === "SCHEDULED") {
+    // Test games never start or stop the broadcast or the live server (they'd stop a real game's).
+    if (isTestGame(prev)) {
+      // no lifecycle
+    } else if (fields.status === "IN_PROGRESS" && prev?.status === "SCHEDULED") {
       if (liveServerFn) invokeWorker(liveServerFn, { action: "start" }).catch(() => {})
       if (broadcastFn)  invokeWorker(broadcastFn,  { action: "prepare", gameId: id }).catch(() => {})
     } else if (fields.status === "FINAL") {

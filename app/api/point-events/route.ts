@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
-import { listEventsByPoint, listEventsByGame, createPointEvent, POINT_EVENT_TYPES, PLAYERLESS_EVENT_TYPES } from "@/lib/aws/point-events"
+import { listEventsByPoint, listEventsByGame, createPointEvent, POINT_EVENT_TYPES } from "@/lib/aws/point-events"
+import { eventNeedsPlayer, TURNOVER_TYPES } from "@/lib/point-event-meta"
 import { pushGameUpdate } from "@/lib/ws-push"
 import { getPoint } from "@/lib/aws/points"
 import { denyIfGameHidden } from "@/lib/event-access"
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
 
-  const { pointId, gameId, eventType, playerId, playerInId, team, sortOrder } = await request.json()
+  const { pointId, gameId, eventType, playerId, playerInId, team, sortOrder, occurredAt, pullResult, hangTimeMs, turnoverType } = await request.json()
 
   if (!pointId || !gameId || !eventType || sortOrder === undefined) {
     return NextResponse.json(
@@ -45,8 +46,20 @@ export async function POST(request: NextRequest) {
   if (!POINT_EVENT_TYPES.includes(eventType)) {
     return NextResponse.json({ error: `eventType must be one of: ${POINT_EVENT_TYPES.join(", ")}` }, { status: 400 })
   }
-  if (!PLAYERLESS_EVENT_TYPES.includes(eventType) && !playerId) {
+  if (eventNeedsPlayer(eventType, team) && !playerId) {
     return NextResponse.json({ error: "playerId is required for this event type" }, { status: 400 })
+  }
+  if (occurredAt !== undefined && (typeof occurredAt !== "string" || Number.isNaN(Date.parse(occurredAt)))) {
+    return NextResponse.json({ error: "occurredAt must be an ISO date" }, { status: 400 })
+  }
+  if (pullResult !== undefined && (eventType !== "PULL" || (pullResult !== "IN" && pullResult !== "OUT"))) {
+    return NextResponse.json({ error: "pullResult must be IN or OUT on a PULL" }, { status: 400 })
+  }
+  if (turnoverType !== undefined && ((eventType !== "TURNOVER" && eventType !== "OPP_TURNOVER") || !TURNOVER_TYPES.includes(turnoverType))) {
+    return NextResponse.json({ error: `turnoverType must be one of ${TURNOVER_TYPES.join(", ")} on a TURNOVER` }, { status: 400 })
+  }
+  if (hangTimeMs !== undefined && (eventType !== "PULL" || !Number.isFinite(hangTimeMs) || hangTimeMs < 0 || hangTimeMs > 60_000)) {
+    return NextResponse.json({ error: "hangTimeMs must be 0–60000 on a PULL" }, { status: 400 })
   }
 
   const item = {
@@ -58,6 +71,10 @@ export async function POST(request: NextRequest) {
     ...(playerInId ? { playerInId } : {}),
     ...(team ? { team } : {}),
     sortOrder,
+    ...(occurredAt ? { occurredAt: new Date(occurredAt).toISOString() } : {}),
+    ...(pullResult ? { pullResult } : {}),
+    ...(hangTimeMs !== undefined ? { hangTimeMs: Math.round(hangTimeMs) } : {}),
+    ...(turnoverType ? { turnoverType } : {}),
     createdAt: new Date().toISOString(),
   }
 

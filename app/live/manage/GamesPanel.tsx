@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
+import { FlaskConical } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Field } from "@/components/ui/field"
@@ -16,6 +18,7 @@ import { PrefetchLink } from "@/components/prefetch-link"
 import { apiFetch } from "@/lib/api-fetch"
 import { toast } from "@/components/ui/sonner"
 import type { GameStatus, GameResult } from "@/lib/aws/games"
+import { TEST_EVENT_ID } from "@/lib/test-games"
 import { CONNECTION_HINT, deleteMany, friendlyError } from "./api-helpers"
 import { FormFooter } from "./form-footer"
 
@@ -87,6 +90,11 @@ function ManageLink({ row, className }: { row: GameRow; className?: string }) {
 }
 
 export function GamesPanel() {
+  const router = useRouter()
+  const [testGames, setTestGames] = useState<GameRow[]>([])
+  const [creatingTest, setCreatingTest] = useState(false)
+  const [discardTarget, setDiscardTarget] = useState<GameRow | null>(null)
+  const [discarding, setDiscarding] = useState(false)
   const [events, setEvents] = useState<EventRow[]>([])
   const [selectedEventId, setSelectedEventId] = useState<string>("")
   const [games, setGames] = useState<GameRow[]>([])
@@ -125,6 +133,48 @@ export function GamesPanel() {
       .catch(() => setError(`Couldn't load games. ${CONNECTION_HINT}`))
       .finally(() => setLoadingGames(false))
   }, [selectedEventId])
+
+  useEffect(() => {
+    apiFetch(`/api/games?eventId=${TEST_EVENT_ID}`)
+      .then(r => (r.ok ? r.json() : []))
+      .then(data => { if (Array.isArray(data)) setTestGames(data) })
+      .catch(() => {})
+  }, [])
+
+  // One tap: create a throwaway game and go straight to the scoring console.
+  async function startTestGame() {
+    setCreatingTest(true)
+    try {
+      const res = await apiFetch("/api/games", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isTest: true }),
+        waitForSession: true,
+      })
+      if (!res.ok) { toast.error(await friendlyError(res, "Couldn't start a test game. Try again.")); return }
+      const game: GameRow = await res.json()
+      router.push(`/live/manage/games/${game.id}`)
+    } catch {
+      toast.error(`Couldn't start a test game. ${CONNECTION_HINT}`)
+    } finally {
+      setCreatingTest(false)
+    }
+  }
+
+  async function discardTestGame(game: GameRow) {
+    setDiscarding(true)
+    try {
+      const res = await apiFetch(`/api/games/${game.id}/discard`, { method: "POST", waitForSession: true })
+      if (!res.ok) { toast.error(await friendlyError(res, "Couldn't discard the test game. Try again.")); return }
+      setTestGames(prev => prev.filter(g => g.id !== game.id))
+      setDiscardTarget(null)
+      toast.success("Test game discarded")
+    } catch {
+      toast.error(`Couldn't discard the test game. ${CONNECTION_HINT}`)
+    } finally {
+      setDiscarding(false)
+    }
+  }
 
   function onGameCreated(game: GameRow) {
     setGames(prev => [...prev, game])
@@ -193,9 +243,19 @@ export function GamesPanel() {
             </NativeSelect>
           </Field>
         )}
+        <div className="flex w-full gap-2 sm:w-auto">
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-10 flex-1 sm:h-9 sm:flex-none"
+          onClick={startTestGame}
+          loading={creatingTest}
+        >
+          <FlaskConical aria-hidden /> Test game
+        </Button>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button size="sm" className="h-10 sm:h-9" disabled={!selectedEventId}>New game</Button>
+            <Button size="sm" className="h-10 flex-1 sm:h-9 sm:flex-none" disabled={!selectedEventId}>New game</Button>
           </DialogTrigger>
           <DialogContent className="max-w-md">
             <DialogHeader>
@@ -208,7 +268,44 @@ export function GamesPanel() {
             />
           </DialogContent>
         </Dialog>
+        </div>
       </div>
+
+      {testGames.length > 0 && (
+        <section aria-labelledby="test-games-heading" className="flex flex-col gap-2 rounded-xl border border-dashed border-warning/30 bg-warning/10 p-3">
+          <div>
+            <h2 id="test-games-heading" className="text-sm font-semibold text-warning">Test games</h2>
+            <p className="text-xs text-fg-muted">Practice only. Hidden from the site and stats. Discard them when you&apos;re done.</p>
+          </div>
+          <ul className="flex flex-col divide-y divide-border">
+            {testGames.map(g => (
+              <li key={g.id} className="flex items-center gap-2 py-1">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">vs {g.opponent}</p>
+                  <p className="text-xs text-fg-muted">
+                    {STATUS_LABEL[g.status]}
+                    {g.status !== "SCHEDULED" && <> · <span className="font-mono tabular-nums">{g.scoreVoid}–{g.scoreOpponent}</span></>}
+                  </p>
+                </div>
+                <ManageLink row={g} className="h-10" />
+                <Button variant="ghost" size="sm" className="h-10 text-destructive hover:text-destructive" onClick={() => setDiscardTarget(g)}>
+                  Discard
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <ConfirmDialog
+        open={discardTarget !== null}
+        onOpenChange={o => { if (!o && !discarding) setDiscardTarget(null) }}
+        title="Discard this test game?"
+        description="The game and every point, event and roster entry in it are deleted for good."
+        confirmLabel="Discard"
+        isLoading={discarding}
+        onConfirm={() => discardTarget && discardTestGame(discardTarget)}
+      />
 
       {error && <p className="text-destructive text-sm">{error}</p>}
 

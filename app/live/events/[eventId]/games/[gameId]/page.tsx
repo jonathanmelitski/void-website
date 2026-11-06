@@ -16,6 +16,7 @@ import type { PlayerItem } from "@/lib/aws/players"
 import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
 import { deriveGameStats, type DerivedPoint, type GameStats } from "@/lib/stats/derive"
+import { breakStats } from "@/lib/stats/possession"
 
 const RESULT_BADGE: Record<GameResult, { label: string; variant: "success" | "destructive" | "warning" }> = {
   WIN: { label: "Win", variant: "success" },
@@ -34,23 +35,29 @@ function pointLabel(p: DerivedPoint): { text: string; tone: string } {
 const EVENT_TYPE_LABELS: Record<PointEventType, string> = {
   GOAL: "Goal",
   ASSIST: "Assist",
+  HOCKEY_ASSIST: "Hockey assist",
   TURNOVER: "Turnover",
   BLOCK: "Block",
   PULL: "Pull",
   PULL_FINISHED: "Pull landed",
   SUBSTITUTION: "Sub",
   TIMEOUT: "Timeout",
+  TAP_IN: "Tapped in",
+  OPP_TURNOVER: "They turned it",
 }
 
 const EVENT_TYPE_COLORS: Record<PointEventType, string> = {
   GOAL: "text-success",
   ASSIST: "text-brand-text",
+  HOCKEY_ASSIST: "text-brand-text",
   TURNOVER: "text-destructive",
   BLOCK: "text-warning",
   PULL: "text-fg-muted",
   PULL_FINISHED: "text-brand-text",
   SUBSTITUTION: "text-brand-text",
   TIMEOUT: "text-warning",
+  TAP_IN: "text-brand-text",
+  OPP_TURNOVER: "text-success",
 }
 
 type PlayerStat = {
@@ -60,6 +67,7 @@ type PlayerStat = {
   turnovers: number
   blocks: number
   pulls: number
+  hockeyAssists: number
 }
 
 // Roster players with at least one counted event, from the derived stats
@@ -68,9 +76,9 @@ function toPlayerStats(stats: GameStats, players: PlayerItem[]): PlayerStat[] {
   return stats.players
     .flatMap(s => {
       const player = byId.get(s.playerId)
-      return player ? [{ player, goals: s.goals, assists: s.assists, turnovers: s.turnovers, blocks: s.blocks, pulls: s.pulls }] : []
+      return player ? [{ player, goals: s.goals, assists: s.assists, hockeyAssists: s.hockeyAssists, turnovers: s.turnovers, blocks: s.blocks, pulls: s.pulls }] : []
     })
-    .filter(s => s.goals + s.assists + s.turnovers + s.blocks + s.pulls > 0)
+    .filter(s => s.goals + s.assists + s.hockeyAssists + s.turnovers + s.blocks + s.pulls > 0)
 }
 
 export default function GameDetailPage() {
@@ -154,6 +162,8 @@ export default function GameDetailPage() {
   const startTime = formatGameTime(game.scheduledTime)
 
   const playerStats = toPlayerStats(stats, players)
+  const derivedScorer = new Map(stats.points.map(p => [p.id, p.scorer]))
+  const breakChances = breakStats(points, pointEvents, id => derivedScorer.get(id) ?? null)
 
   return (
     <PageContainer width="prose" className="flex flex-col gap-8 text-left">
@@ -203,6 +213,8 @@ export default function GameDetailPage() {
           <StatCard label="Breaks" value={breaks} />
           {oEfficiency !== null && <StatCard label="O-efficiency" value={`${oEfficiency}%`} />}
           {dConversion !== null && <StatCard label="D-conversion" value={`${dConversion}%`} />}
+          {breakChances.breakChances > 0 && <StatCard label="Breaks / break chances" value={`${breakChances.breaks}/${breakChances.breakChances}`} />}
+          {breakChances.oppBreakChances > 0 && <StatCard label={`${game.opponent} breaks / chances`} value={`${breakChances.oppBreaks}/${breakChances.oppBreakChances}`} />}
         </div>
       )}
 
@@ -224,20 +236,20 @@ export default function GameDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {playerStats.map(({ player, goals, assists, turnovers, blocks, pulls }) => (
+                {playerStats.map(({ player, goals, assists, hockeyAssists, turnovers, blocks, pulls }) => (
                   <tr key={player.id} className="border-b border-border hover:bg-surface-2 transition-colors">
                     <td className="py-2 pr-4">
                       <span className="text-foreground">{player.first_name} {player.last_name}</span>
                       {player.number != null && <span className="text-fg-muted text-xs ml-2">#{player.number}</span>}
                     </td>
-                    {[goals, assists, turnovers, blocks, pulls].map((n, i) => (
+                    {[goals, assists, hockeyAssists, turnovers, blocks, pulls].map((n, i) => (
                       <td key={i} className={`text-right py-2 px-2 sm:px-3 font-mono tabular-nums ${n ? "text-foreground" : "text-fg-faint"}`}>{n || "—"}</td>
                     ))}
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="text-fg-muted text-xs mt-2 sm:hidden">G goals · A assists · T turnovers · B blocks · Pl pulls</p>
+            <p className="text-fg-muted text-xs mt-2 sm:hidden">G goals · A assists · HA hockey assists · T turnovers · B blocks · Pl pulls</p>
           </div>
         </section>
       )}
@@ -295,7 +307,7 @@ export default function GameDetailPage() {
   )
 }
 
-const STAT_COLUMNS: [string, string][] = [["G", "Goals"], ["A", "Assists"], ["T", "Turnovers"], ["B", "Blocks"], ["Pl", "Pulls"]]
+const STAT_COLUMNS: [string, string][] = [["G", "Goals"], ["A", "Assists"], ["HA", "Hockey assists"], ["T", "Turnovers"], ["B", "Blocks"], ["Pl", "Pulls"]]
 
 function GameSkeleton() {
   return (

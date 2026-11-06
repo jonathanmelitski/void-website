@@ -31,6 +31,7 @@ export type GameItem = {
   secondHalfStartCompletedCount?: number // number of completed points when second half was marked
   notes?: string
   filmTracks?: FilmTrack[]    // extra camera angles for film review (main track is implicit)
+  isTest?: boolean            // scoring practice: hidden everywhere public, discarded after (lib/test-games.ts)
   createdAt: string
   updatedAt: string
 }
@@ -87,22 +88,26 @@ export async function createGame(item: GameItem): Promise<void> {
   await dynamo.send(new PutCommand({ TableName: TABLE(), Item: item }))
 }
 
+// A field set to null is REMOVEd (e.g. un-marking half time); undefined fields are ignored.
+type Removable<T> = { [K in keyof T]?: T[K] | null }
+
 export async function updateGame(
   id: string,
-  fields: Partial<Omit<GameItem, "id" | "eventId" | "createdAt">>
+  fields: Removable<Omit<GameItem, "id" | "eventId" | "createdAt">>
 ): Promise<void> {
   const entries = Object.entries(fields).filter(([, v]) => v !== undefined)
   if (entries.length === 0) return
-  const sets = entries.map(([k], i) => `#f${i} = :v${i}`)
   const names = Object.fromEntries(entries.map(([k], i) => [`#f${i}`, k]))
-  const values = Object.fromEntries(entries.map(([, v], i) => [`:v${i}`, v]))
+  const sets = entries.flatMap(([, v], i) => (v === null ? [] : [`#f${i} = :v${i}`]))
+  const removes = entries.flatMap(([, v], i) => (v === null ? [`#f${i}`] : []))
+  const values = Object.fromEntries(entries.flatMap(([, v], i) => (v === null ? [] : [[`:v${i}`, v]])))
   await dynamo.send(
     new UpdateCommand({
       TableName: TABLE(),
       Key: { id },
-      UpdateExpression: `SET ${sets.join(", ")}`,
+      UpdateExpression: [sets.length ? `SET ${sets.join(", ")}` : "", removes.length ? `REMOVE ${removes.join(", ")}` : ""].filter(Boolean).join(" "),
       ExpressionAttributeNames: names,
-      ExpressionAttributeValues: values,
+      ...(Object.keys(values).length ? { ExpressionAttributeValues: values } : {}),
     })
   )
 }

@@ -6,6 +6,7 @@ import { getCallerEmail, getOptionalUser } from "@/lib/auth/server"
 import { getEvent, type EventItem } from "@/lib/aws/dynamo"
 import { getGame, type GameItem } from "@/lib/aws/games"
 import { getBroadcastState } from "@/lib/aws/broadcast-jobs"
+import { isTestGame } from "@/lib/test-games"
 
 export type Caller = { groups: string[]; email?: string } | null
 
@@ -42,8 +43,12 @@ async function broadcastGameId(): Promise<string | null> {
   return broadcastCache.gameId
 }
 
-/** True if the caller may see this game's data. A game whose event no longer exists has no privacy flag. */
-export async function canViewGame(game: Pick<GameItem, "id" | "eventId">, caller: Caller): Promise<boolean> {
+/**
+ * True if the caller may see this game's data. Test games: coaches/admins only. A game whose event no
+ * longer exists has no privacy flag.
+ */
+export async function canViewGame(game: Pick<GameItem, "id" | "eventId"> & Partial<Pick<GameItem, "isTest">>, caller: Caller): Promise<boolean> {
+  if (isTestGame(game)) return isCoach(caller)
   const event = await getEvent(game.eventId)
   if (!event || canViewEvent(event, caller)) return true
   return (await broadcastGameId()) === game.id

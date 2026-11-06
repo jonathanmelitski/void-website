@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
 import { listGamesByEvent, createGame } from "@/lib/aws/games"
 import { getEvent } from "@/lib/aws/dynamo"
-import { canViewEvent, getCaller } from "@/lib/event-access"
+import { canViewEvent, getCaller, isCoach } from "@/lib/event-access"
+import { TEST_EVENT_ID, isTestGame } from "@/lib/test-games"
 import { deriveScores } from "@/lib/derived-score"
 import { publicReadHeaders } from "@/lib/http-cache"
 import { randomUUID } from "crypto"
@@ -15,13 +16,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "eventId query param is required" }, { status: 400 })
   }
   try {
+    // Test games: coaches only, never cached.
+    if (eventId === TEST_EVENT_ID) {
+      if (!isCoach(await getCaller(request))) return NextResponse.json({ error: "Not found" }, { status: 404 })
+      const games = await listGamesByEvent(TEST_EVENT_ID)
+      return NextResponse.json(games.map(g => ({ ...g, derived: null })), { headers: { "Cache-Control": "no-store" } })
+    }
     // Same rule as denyIfEventHidden: private events 404 for callers who can't see them;
     // a missing event has no privacy flag.
     const [event, caller] = await Promise.all([getEvent(eventId), getCaller(request)])
     if (event && !canViewEvent(event, caller)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 })
     }
-    const games = await listGamesByEvent(eventId)
+    const games = (await listGamesByEvent(eventId)).filter(g => !isTestGame(g))
     const derived = await deriveScores(games)
     return NextResponse.json(
       games.map(g => ({ ...g, derived: derived.get(g.id) ?? null })),
@@ -38,8 +45,12 @@ export async function POST(request: NextRequest) {
   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
   if (!auth.ok) return auth.response
 
-  const { eventId, opponent, round, scheduledTime, cap, voidReceivingFirst, notes } =
-    await request.json()
+  const body = await request.json()
+  const isTest = body.isTest === true
+  // A test game never belongs to a real event and gets a placeholder opponent if none is given.
+  const { round, scheduledTime, cap, voidReceivingFirst, notes } = body
+  const eventId = isTest ? TEST_EVENT_ID : body.eventId
+  const opponent = typeof body.opponent === "string" && body.opponent.trim() ? body.opponent.trim() : isTest ? "Test opponent" : ""
 
   if (!eventId || !opponent) {
     return NextResponse.json({ error: "eventId and opponent are required" }, { status: 400 })
@@ -58,6 +69,7 @@ export async function POST(request: NextRequest) {
     status: "SCHEDULED" as const,
     voidReceivingFirst: voidReceivingFirst ?? false,
     ...(notes ? { notes } : {}),
+    ...(isTest ? { isTest: true } : {}),
     createdAt: now,
     updatedAt: now,
   }

@@ -11,16 +11,18 @@ import { eventNeedsPlayer } from "@/lib/point-event-meta"
  * A saved filmOffsetMs wins; otherwise spacing comes from the live createdAt times, first event at 0.
  */
 export function resolveOffsets(pointEvents: PointEventItem[]): Map<string, number> {
-  const byCreated = [...pointEvents].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.sortOrder - b.sortOrder)
-  const ref = byCreated.length > 0 ? Date.parse(byCreated[0].createdAt) : 0
-  return new Map(pointEvents.map(ev => [ev.id, ev.filmOffsetMs ?? Date.parse(ev.createdAt) - ref]))
+  // occurredAt (the scorer's phone clock) beats createdAt (server receipt), so a slow network doesn't skew spacing
+  const at = (ev: PointEventItem) => Date.parse(ev.occurredAt ?? ev.createdAt)
+  const byTime = [...pointEvents].sort((a, b) => at(a) - at(b) || a.sortOrder - b.sortOrder)
+  const ref = byTime.length > 0 ? at(byTime[0]) : 0
+  return new Map(pointEvents.map(ev => [ev.id, ev.filmOffsetMs ?? at(ev) - ref]))
 }
 
 /** True when the event has everything the API requires (incomplete events stay local until fixed) */
 export function isEventComplete(ev: PointEventItem): boolean {
   if (ev.eventType === "TIMEOUT") return ev.team === "VOID" || ev.team === "OPP"
   if (ev.eventType === "SUBSTITUTION") return !!ev.playerId && !!ev.playerInId
-  return !eventNeedsPlayer(ev.eventType) || !!ev.playerId
+  return !eventNeedsPlayer(ev.eventType, ev.team) || !!ev.playerId
 }
 
 // Pin every event to an explicit film offset (never before the point's start), then order sortOrder by film time

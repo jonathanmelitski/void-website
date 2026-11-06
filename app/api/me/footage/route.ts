@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth/server"
 import { getPlayerLink } from "@/lib/aws/player-links"
 import { getPlayer, listPlayers, type PlayerItem } from "@/lib/aws/players"
 import { listPointsByGame, listPointsByPlayer, type PointItem } from "@/lib/aws/points"
+import { isTestGame } from "@/lib/test-games"
 import { listEventsByGame } from "@/lib/aws/point-events"
 import { getGames, type GameItem } from "@/lib/aws/games"
 import { getEvent, type EventItem } from "@/lib/aws/dynamo"
@@ -71,7 +72,7 @@ export async function GET(request: NextRequest) {
     // Same rule as canViewGame: a game whose event no longer exists has no privacy flag
     const visible = [...byGame.keys()].filter(id => {
       const game = gamesById.get(id)
-      if (!game) return false
+      if (!game || isTestGame(game)) return false
       const event = events.get(game.eventId)
       return !event || canViewEvent(event, caller)
     })

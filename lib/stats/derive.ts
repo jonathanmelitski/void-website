@@ -52,6 +52,7 @@ export type PlayerStats = {
   player: StatsPlayer | null   // null when the id is not on the roster
   goals: number
   assists: number
+  hockeyAssists: number
   blocks: number
   turnovers: number
   pulls: number
@@ -195,7 +196,7 @@ export function deriveGameStats(
   const statFor = (playerId: string) => {
     let s = byPlayer.get(playerId)
     if (!s) {
-      s = { playerId, player: rosterById.get(playerId) ?? null, goals: 0, assists: 0, blocks: 0, turnovers: 0, pulls: 0, pointsPlayed: 0 }
+      s = { playerId, player: rosterById.get(playerId) ?? null, goals: 0, assists: 0, hockeyAssists: 0, blocks: 0, turnovers: 0, pulls: 0, pointsPlayed: 0 }
       byPlayer.set(playerId, s)
     }
     return s
@@ -207,6 +208,7 @@ export function deriveGameStats(
     switch (e.eventType) {
       case "GOAL": statFor(e.playerId).goals++; break
       case "ASSIST": statFor(e.playerId).assists++; break
+      case "HOCKEY_ASSIST": statFor(e.playerId).hockeyAssists++; break
       case "BLOCK": statFor(e.playerId).blocks++; break
       case "TURNOVER": statFor(e.playerId).turnovers++; break
       case "PULL": statFor(e.playerId).pulls++; break

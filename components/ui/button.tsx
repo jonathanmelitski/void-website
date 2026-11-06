@@ -62,6 +62,8 @@ type ButtonProps = React.ComponentProps<"button"> &
     asChild?: boolean
     /** Shows a spinner, sets aria-busy and disables the button. */
     loading?: boolean
+    /** Haptic on tap (react-haptics preset or lib/haptics.ts pattern); false for none. See TapHaptics. */
+    haptic?: string | false
   }
 
 function Button({
@@ -71,9 +73,11 @@ function Button({
   asChild = false,
   loading = false,
   disabled,
+  haptic,
   children,
   ...props
 }: ButtonProps) {
+  const hapticName = haptic === false ? undefined : haptic ?? (variant === "destructive" ? "impact-medium" : "selection")
   const Comp = asChild ? Slot.Root : "button"
 
   return (
@@ -84,6 +88,7 @@ function Button({
       className={cn(buttonVariants({ variant, size, className }))}
       disabled={asChild ? undefined : disabled || loading}
       aria-busy={loading || undefined}
+      data-tap-haptic={hapticName ?? "off"}
       {...props}
     >
       {loading && !asChild ? (

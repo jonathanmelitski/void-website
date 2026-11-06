@@ -5,11 +5,11 @@ import {
   listEventsByPoint,
   applyPointEventBatch,
   POINT_EVENT_TYPES,
-  PLAYERLESS_EVENT_TYPES,
   type PointEventItem,
   type PointEventType,
 } from "@/lib/aws/point-events"
 import { pushGameUpdate } from "@/lib/ws-push"
+import { eventNeedsPlayer } from "@/lib/point-event-meta"
 
 type UpsertInput = {
   id: string
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     if (!POINT_EVENT_TYPES.includes(u.eventType)) {
       return NextResponse.json({ error: `Invalid eventType: ${u.eventType}` }, { status: 400 })
     }
-    if (!PLAYERLESS_EVENT_TYPES.includes(u.eventType) && !u.playerId) {
+    if (eventNeedsPlayer(u.eventType, u.team) && !u.playerId) {
       return NextResponse.json({ error: `${u.eventType} needs a player` }, { status: 400 })
     }
     if (u.eventType === "TIMEOUT" && u.team !== "VOID" && u.team !== "OPP") {
@@ -70,9 +70,14 @@ export async function POST(request: NextRequest) {
       eventType: u.eventType,
       playerId: u.playerId ?? "",
       ...(u.eventType === "SUBSTITUTION" && u.playerInId ? { playerInId: u.playerInId } : {}),
-      ...(u.eventType === "TIMEOUT" && u.team ? { team: u.team } : {}),
+      ...((u.eventType === "TIMEOUT" || u.eventType === "PULL") && u.team ? { team: u.team } : {}),
       sortOrder: u.sortOrder,
       ...(u.filmOffsetMs !== undefined ? { filmOffsetMs: Math.round(u.filmOffsetMs) } : {}),
+      // The film editor doesn't send live-scoring details; keep them while the event stays the same type.
+      ...(prev?.occurredAt ? { occurredAt: prev.occurredAt } : {}),
+      ...(prev?.eventType === "PULL" && u.eventType === "PULL" && prev.pullResult ? { pullResult: prev.pullResult } : {}),
+      ...(prev?.eventType === "PULL" && u.eventType === "PULL" && prev.hangTimeMs !== undefined ? { hangTimeMs: prev.hangTimeMs } : {}),
+      ...(prev?.turnoverType && prev.eventType === u.eventType && (u.eventType === "TURNOVER" || u.eventType === "OPP_TURNOVER") ? { turnoverType: prev.turnoverType } : {}),
       createdAt: prev?.createdAt ?? now,
     }
     return { item, isNew: !prev }

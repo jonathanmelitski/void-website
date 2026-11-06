@@ -7,20 +7,35 @@ import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
 import type { PlayerItem } from "@/lib/aws/players"
 import type { PointEventType } from "@/lib/aws/point-events"
+import { OPP_TURNOVER_TYPES, TURNOVER_TYPES, TURNOVER_TYPE_LABELS, TURNOVER_WHO } from "@/lib/point-event-meta"
 import { PlayerTile } from "./player-tile"
+import { EVENT_BUTTON, FALLBACK_BUTTON } from "./event-style"
+import type { DiscTeam } from "@/lib/stats/possession"
 import {
   EVENT_TYPE_COLORS, EVENT_TYPE_LABELS, LOGGABLE_EVENT_TYPES, byDisplayName, fullName,
   type LogEventOpts, type LogStep,
 } from "./shared"
 
-/** Two-tap event logging: event type, then the player (or team for a timeout). */
+/** Wall-clock now (only ever called from event handlers). */
+const nowMs = () => Date.now()
+
+/**
+ * Two-tap event logging: event type, then the player (or team for a timeout). With `onGoal`, Goal
+ * becomes one sequence: scorer, then assister (or none), and the parent finishes the point.
+ * `step`/`onStepChange` let the parent open a step (the action bar's "VOID scored" opens the goal flow).
+ */
 export function EventLogger({
   linePool,
   benchPool,
   opponent,
   busy,
   onLog,
+  onGoal,
   onEditLine,
+  types = LOGGABLE_EVENT_TYPES,
+  step: controlledStep,
+  onStepChange,
+  possession,
   title = "Log event",
 }: {
   /** Players on the line: who can score, turn it over, go out on a sub. */
@@ -31,34 +46,78 @@ export function EventLogger({
   busy: boolean
   /** Resolves true when the event was saved (the logger then returns to the type grid). */
   onLog: (type: PointEventType, opts: LogEventOpts) => Promise<boolean>
+  /** Goal + assist + finish the point in one go. Resolves true when saved. */
+  onGoal?: (scorerId: string, assisterId: string | null, hockeyAssisterId: string | null, at: Date) => Promise<boolean>
   onEditLine?: () => void
+  /** Buttons in the type grid. */
+  types?: readonly PointEventType[]
+  step?: LogStep
+  onStepChange?: (step: LogStep) => void
+  /** Who has the disc: their two likely moves become the big buttons, the rest go below. */
+  possession?: DiscTeam
   title?: string
 }) {
-  const [step, setStep] = useState<LogStep>(null)
+  const [ownStep, setOwnStep] = useState<LogStep>(null)
+  const step = controlledStep !== undefined ? controlledStep : ownStep
+  // The first tap of a sequence stamps the time; later steps keep it.
+  const setStep = (next: LogStep) => {
+    const stamped = next && next.at === undefined ? { ...next, at: step?.at ?? nowMs() } : next
+    setOwnStep(stamped)
+    onStepChange?.(stamped)
+  }
+  const stepAt = () => new Date(step?.at ?? nowMs())
+  // Per-device preference: also ask for the hockey assist (the throw before the assist)
+  // Only read on the client: the assist step never renders on the server.
+  const [askHockey, setAskHockey] = useState(() => {
+    try { return typeof window !== "undefined" && localStorage.getItem("scoring.hockeyAssists") === "1" } catch { return false }
+  })
+  const toggleHockey = () => setAskHockey(v => {
+    try { localStorage.setItem("scoring.hockeyAssists", v ? "0" : "1") } catch {}
+    return !v
+  })
 
   async function log(type: PointEventType, opts: LogEventOpts) {
-    if (await onLog(type, opts)) setStep(null)
+    if (await onLog(type, { ...opts, occurredAt: stepAt().toISOString() })) setStep(null)
   }
 
   if (step === null) {
+    const open = (type: PointEventType) => setStep(
+      type === "SUBSTITUTION" ? { type, phase: "out" }
+      : type === "GOAL" && onGoal ? { type: "GOAL_FLOW", phase: "scorer" }
+      : { type } as LogStep
+    )
+    const primaryTypes: PointEventType[] = possession === "VOID" ? ["GOAL", "TURNOVER"] : possession === "OPP" ? ["BLOCK", "OPP_TURNOVER"] : []
+    const primary = primaryTypes.filter(t => types.includes(t))
+    const rest = types.filter(t => !primary.includes(t))
+    const tile = (type: PointEventType, big: boolean) => {
+      const { icon: Icon, tone } = EVENT_BUTTON[type] ?? FALLBACK_BUTTON
+      const label = type === "OPP_TURNOVER" ? `${opponent} turned it` : EVENT_TYPE_LABELS[type]
+      return (
+        <button
+          key={type}
+          type="button"
+          onClick={() => open(type)}
+          disabled={busy}
+          data-tap-haptic={big ? "impact-medium" : "impact-light"}
+          className={cn(
+            "flex min-w-0 items-center justify-center gap-2 rounded-xl border font-semibold transition-[transform,background-color] active:scale-[0.97] disabled:opacity-50 touch-manipulation motion-reduce:active:scale-100",
+            big ? "h-20 flex-col text-base" : "h-12 text-sm",
+            tone,
+          )}
+        >
+          <Icon aria-hidden className={big ? "size-6" : "size-4"} />
+          <span className="max-w-full truncate px-1">{label}</span>
+        </button>
+      )
+    }
     return (
-      <div>
-        <p className="mb-2 text-xs font-medium text-fg-muted">{title}</p>
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-          {LOGGABLE_EVENT_TYPES.map(type => (
-            <button
-              key={type}
-              type="button"
-              onClick={() => setStep(type === "SUBSTITUTION" ? { type, phase: "out" } : { type } as LogStep)}
-              disabled={busy}
-              className={cn(
-                "h-12 rounded-md border border-border bg-surface text-sm font-medium transition-colors hover:bg-surface-2 active:scale-95 disabled:opacity-50 touch-manipulation",
-                EVENT_TYPE_COLORS[type]
-              )}
-            >
-              {EVENT_TYPE_LABELS[type]}
-            </button>
-          ))}
+      <div className="flex flex-col gap-2">
+        <p className="text-xs font-medium text-fg-muted">
+          {possession === "VOID" ? "VOID has the disc" : possession === "OPP" ? `${opponent} has the disc` : title}
+        </p>
+        {primary.length > 0 && <div className="grid grid-cols-2 gap-2">{primary.map(t => tile(t, true))}</div>}
+        <div className={cn("grid gap-2", rest.length > 4 ? "grid-cols-3 sm:grid-cols-6" : "grid-cols-2 sm:grid-cols-4")}>
+          {rest.map(t => tile(t, false))}
         </div>
       </div>
     )
@@ -80,7 +139,102 @@ export function EventLogger({
     />
   )
 
-  if (step.type === "TIMEOUT") {
+  if (step.type === "GOAL_FLOW" && step.phase === "scorer") {
+    heading = "Goal: who caught it?"
+    headingColor = EVENT_TYPE_COLORS.GOAL
+    body = sortedLine.length === 0 ? emptyLine : (
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {sortedLine.map(p => (
+          <PlayerTile key={p.id} player={p} disabled={busy} onClick={() => setStep({ type: "GOAL_FLOW", phase: "assist", scorerId: p.id })} />
+        ))}
+      </div>
+    )
+  } else if (step.type === "GOAL_FLOW" && step.phase === "assist") {
+    const scorerId = step.scorerId
+    const scorer = linePool.find(p => p.id === scorerId)
+    heading = `Goal by ${scorer ? scorer.first_name : "?"}: who threw it?`
+    headingColor = EVENT_TYPE_COLORS.ASSIST
+    back = () => setStep({ type: "GOAL_FLOW", phase: "scorer" })
+    const finish = async (assisterId: string | null) => {
+      if (onGoal && await onGoal(scorerId, assisterId, null, stepAt())) setStep(null)
+    }
+    body = (
+      <>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {sortedLine.filter(p => p.id !== scorerId).map(p => (
+            <PlayerTile
+              key={p.id}
+              player={p}
+              disabled={busy}
+              onClick={() => askHockey ? setStep({ type: "GOAL_FLOW", phase: "hockey", scorerId, assisterId: p.id }) : finish(p.id)}
+            />
+          ))}
+          <Button variant="outline" disabled={busy} onClick={() => finish(null)} className="h-auto min-h-12 whitespace-normal">
+            No assist (Callahan)
+          </Button>
+        </div>
+        <label className="mt-2 flex min-h-10 cursor-pointer items-center gap-2 text-sm text-fg-secondary">
+          <input type="checkbox" checked={askHockey} onChange={toggleHockey} className="size-4 accent-foreground" />
+          Also ask for the hockey assist
+        </label>
+      </>
+    )
+  } else if (step.type === "GOAL_FLOW") {
+    const { scorerId, assisterId } = step
+    const assister = linePool.find(p => p.id === assisterId)
+    heading = `Hockey assist: who threw to ${assister ? assister.first_name : "them"}?`
+    headingColor = EVENT_TYPE_COLORS.HOCKEY_ASSIST
+    back = () => setStep({ type: "GOAL_FLOW", phase: "assist", scorerId })
+    const finish = async (hockeyId: string | null) => {
+      if (onGoal && await onGoal(scorerId, assisterId, hockeyId, stepAt())) setStep(null)
+    }
+    body = (
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <Button disabled={busy} onClick={() => finish(null)} className="h-auto min-h-12 whitespace-normal">
+          None · finish point
+        </Button>
+        {sortedLine.filter(p => p.id !== assisterId).map(p => (
+          <PlayerTile key={p.id} player={p} disabled={busy} onClick={() => finish(p.id)} />
+        ))}
+      </div>
+    )
+  } else if (step.type === "TURNOVER" && !step.turnoverType) {
+    heading = "Turnover: what happened?"
+    headingColor = EVENT_TYPE_COLORS.TURNOVER
+    body = (
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {TURNOVER_TYPES.map(t => (
+          <Button key={t} variant="outline" size="touch" disabled={busy} onClick={() => setStep({ type: "TURNOVER", turnoverType: t })}>
+            {TURNOVER_TYPE_LABELS[t]}
+          </Button>
+        ))}
+      </div>
+    )
+  } else if (step.type === "TURNOVER") {
+    const turnoverType = step.turnoverType!
+    heading = `${TURNOVER_TYPE_LABELS[turnoverType]}: ${TURNOVER_WHO[turnoverType]}`
+    headingColor = EVENT_TYPE_COLORS.TURNOVER
+    back = () => setStep({ type: "TURNOVER" })
+    body = sortedLine.length === 0 ? emptyLine : (
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {sortedLine.map(p => (
+          <PlayerTile key={p.id} player={p} disabled={busy} onClick={() => log("TURNOVER", { playerId: p.id, turnoverType })} />
+        ))}
+      </div>
+    )
+  } else if (step.type === "OPP_TURNOVER") {
+    heading = `${opponent} turned it: how?`
+    headingColor = EVENT_TYPE_COLORS.OPP_TURNOVER
+    body = (
+      <div className="grid grid-cols-2 gap-2">
+        {OPP_TURNOVER_TYPES.map(t => (
+          <Button key={t} variant="outline" size="touch" disabled={busy} onClick={() => log("OPP_TURNOVER", { turnoverType: t })}>
+            {TURNOVER_TYPE_LABELS[t]}
+          </Button>
+        ))}
+      </div>
+    )
+  } else if (step.type === "TIMEOUT") {
     heading = "Timeout: which team?"
     headingColor = EVENT_TYPE_COLORS.TIMEOUT
     body = (
