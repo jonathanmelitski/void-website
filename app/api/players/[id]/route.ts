@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getPlayer, updatePlayer, deletePlayer } from "@/lib/aws/players"
 
 interface Props {
@@ -19,7 +19,7 @@ export async function GET(_request: NextRequest, { params }: Props) {
 }
 
 export async function PUT(request: NextRequest, { params }: Props) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "players.manage" })
   if (!auth.ok) return auth.response
 
   const { id } = await params
@@ -36,7 +36,7 @@ export async function PUT(request: NextRequest, { params }: Props) {
 }
 
 export async function DELETE(request: NextRequest, { params }: Props) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "players.manage" })
   if (!auth.ok) return auth.response
 
   const { id } = await params

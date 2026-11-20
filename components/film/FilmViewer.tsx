@@ -4,7 +4,7 @@ import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } fr
 import { useHotkeys } from "react-hotkeys-hook"
 import {
   Play, Pause, Volume2, VolumeX, Maximize, Minimize, ChevronRight,
-  Columns2, Keyboard, Link2, PanelRightClose, PanelRightOpen, VideoOff, X,
+  Columns2, Keyboard, Link2, Link2Off, PanelRightClose, PanelRightOpen, VideoOff, X,
 } from "lucide-react"
 import { YouTubePlayer, type YouTubePlayerHandle } from "./YouTubePlayer"
 import { PointEventEditor, controlHasFocus } from "./PointEventEditor"
@@ -13,7 +13,6 @@ import { FollowerPlayer } from "./FollowerPlayer"
 import { SyncEditor } from "./SyncEditor"
 import type { FilmClipItem } from "@/lib/aws/film-clips"
 import type { FilmAnnotationItem } from "@/lib/aws/film-annotations"
-import type { FilmAnnotationMessage } from "@/lib/ws-push"
 import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem } from "@/lib/aws/point-events"
 import { POINT_EVENT_META } from "@/lib/point-event-meta"
@@ -725,10 +724,105 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
       const annotation: FilmAnnotationItem = await res.json()
       setAnnotations(prev => [...prev, annotation])
       choosePoint(point.id)
+      // Tagging proves it was filmed
+      if (point.notFilmed) void saveNotFilmed(point, false, { quiet: true })
     } catch {
       toast.error(`Couldn't tag point ${point.pointNumber}. Check your connection and try again.`)
     }
-  }, [mainAnchorNow, choosePoint])
+  }, [mainAnchorNow, choosePoint]) // eslint-disable-line react-hooks/exhaustive-deps -- saveNotFilmed only uses setters
+
+  /** Mark a point as not on the recording (or undo that). Optimistic; Undo in the toast. */
+  async function saveNotFilmed(point: PointItem, value: boolean, opts: { quiet?: boolean } = {}) {
+    setPoints(prev => prev.map(p => (p.id === point.id ? { ...p, notFilmed: value } : p)))
+    try {
+      const res = await apiFetch(`/api/points/${point.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notFilmed: value }),
+        waitForSession: true,
+      })
+      if (!res.ok) throw new Error()
+      if (!opts.quiet) {
+        toast(value ? `Point ${point.pointNumber} marked not filmed` : `Point ${point.pointNumber} marked filmed`, {
+          action: { label: "Undo", onClick: () => void saveNotFilmed({ ...point, notFilmed: value }, !value, { quiet: true }) },
+        })
+      }
+    } catch {
+      setPoints(prev => prev.map(p => (p.id === point.id ? { ...p, notFilmed: point.notFilmed } : p)))
+      toast.error(`Couldn't update point ${point.pointNumber}. Check your connection and try again.`)
+    }
+  }
+
+  /**
+   * Remove a point's link to the film: delete its empty tag markers and detach its notes from the
+   * point (the notes themselves stay). Undo in the toast puts both back.
+   */
+  async function untagPoint(point: PointItem) {
+    const linked = annotations.filter(a => a.pointId === point.id && !a.id.startsWith("temp_"))
+    const markers = linked.filter(a => !a.text)
+    const notes = linked.filter(a => a.text)
+    if (linked.length === 0) return
+    const before = annotations
+    setAnnotations(prev =>
+      prev
+        .filter(a => !markers.some(m => m.id === a.id))
+        .map(a => (notes.some(n => n.id === a.id) ? { ...a, pointId: undefined, pointEventId: undefined } : a))
+    )
+    try {
+      const results = await Promise.all([
+        ...markers.map(m => apiFetch(`/api/film/annotations/${m.id}`, { method: "DELETE", waitForSession: true })),
+        ...notes.map(n => apiFetch(`/api/film/annotations/${n.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pointId: null }),
+          waitForSession: true,
+        })),
+      ])
+      const failed = results.find(r => !r.ok)
+      if (failed) {
+        setAnnotations(before)
+        toast.error(await errorMessage(failed, `Couldn't untag point ${point.pointNumber}. Try again.`))
+        return
+      }
+      if (selectedPointId === point.id) setSelectedPointId(null)
+      toast(`Point ${point.pointNumber} untagged`, {
+        action: { label: "Undo", onClick: () => void retag(point, markers, notes) },
+      })
+    } catch {
+      setAnnotations(before)
+      toast.error(`Couldn't untag point ${point.pointNumber}. Check your connection and try again.`)
+    }
+  }
+
+  async function retag(point: PointItem, markers: FilmAnnotationItem[], notes: FilmAnnotationItem[]) {
+    try {
+      const recreated = await Promise.all(markers.map(async m => {
+        const res = await apiFetch("/api/film/annotations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clipId: m.clipId, videoTimestampMs: m.videoTimestampMs, text: "", pointId: point.id }),
+          waitForSession: true,
+        })
+        if (!res.ok) throw new Error()
+        return (await res.json()) as FilmAnnotationItem
+      }))
+      await Promise.all(notes.map(async n => {
+        const res = await apiFetch(`/api/film/annotations/${n.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pointId: point.id }),
+          waitForSession: true,
+        })
+        if (!res.ok) throw new Error()
+      }))
+      setAnnotations(prev => [
+        ...prev.map(a => (notes.some(n => n.id === a.id) ? { ...a, pointId: point.id } : a)),
+        ...recreated,
+      ])
+    } catch {
+      toast.error(`Couldn't restore point ${point.pointNumber}'s tag. Tag it again from the list.`)
+    }
+  }
 
   // RAF loop — smooth 60fps playhead + timecode, bypasses React render cycle.
   // Reads all changing values from refs so it never restarts on clip switch (no stale-closure flash).
@@ -915,61 +1009,6 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
     document.addEventListener("touchmove", onMove, { passive: false })
     document.addEventListener("touchend", onEnd)
   }, [seekGlobal, totalDurationMs])
-
-  const wsRef = useRef<WebSocket | null>(null)
-  const unmountedRef = useRef(false)
-  const attemptsRef = useRef(0)
-  const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const clipId = activeClip?.id
-
-  const connect = useCallback(() => {
-    if (unmountedRef.current || attemptsRef.current >= 3 || !clipId) return
-    try {
-      const protocol = location.protocol === "https:" ? "wss:" : "ws:"
-      const wsHost = process.env.NEXT_PUBLIC_WS_HOST ?? location.host
-      const ws = new WebSocket(`${protocol}//${wsHost}/ws/film/${clipId}`)
-      wsRef.current = ws
-      ws.onopen = () => { attemptsRef.current = 0 }
-      ws.onmessage = e => {
-        try {
-          const msg = JSON.parse(e.data) as FilmAnnotationMessage
-          setAnnotations(prev => {
-            if (msg.type === "ANNOTATION_CREATED") {
-              if (prev.some(a => a.id === msg.annotation.id)) return prev
-              return [...prev, msg.annotation]
-            }
-            if (msg.type === "ANNOTATION_UPDATED") {
-              return prev.map(a => a.id === msg.annotation.id ? msg.annotation : a)
-            }
-            if (msg.type === "ANNOTATION_DELETED") {
-              return prev.filter(a => a.id !== msg.annotation.id)
-            }
-            return prev
-          })
-        } catch { /* ignore */ }
-      }
-      ws.onclose = e => {
-        wsRef.current = null
-        if (e.code === 1000 || unmountedRef.current) return
-        const delay = Math.min(1_000 * Math.pow(2, attemptsRef.current++), 30_000)
-        reconnectRef.current = setTimeout(connect, delay)
-      }
-      ws.onerror = () => ws.close()
-    } catch { attemptsRef.current++ }
-  }, [clipId])
-
-  useEffect(() => {
-    unmountedRef.current = false
-    attemptsRef.current = 0
-    connect()
-    return () => {
-      unmountedRef.current = true
-      if (reconnectRef.current) clearTimeout(reconnectRef.current)
-      wsRef.current?.close(1000)
-      wsRef.current = null
-    }
-  }, [connect])
 
   // [ / ] keyboard navigation through tagged points
   useEffect(() => {
@@ -1184,7 +1223,7 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
     () => new Set(annotations.filter(a => a.pointId && !a.id.startsWith("temp_")).map(a => a.pointId!)),
     [annotations]
   )
-  const untaggedPoints = useMemo(() => points.filter(p => !taggedPointIds.has(p.id)), [points, taggedPointIds])
+  const untaggedPoints = useMemo(() => points.filter(p => !taggedPointIds.has(p.id) && !p.notFilmed), [points, taggedPointIds])
   const selectedPoint = selectedPointId ? pointMap[selectedPointId] : null
 
   const toggleBtn = (active: boolean) =>
@@ -1779,11 +1818,15 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                             isTagged ? "hover:bg-surface-2 cursor-pointer" : "cursor-default opacity-50"
                           }`}
                         >
-                          <span
-                            className={`w-2 h-2 rounded-md shrink-0 ${
-                              isTagged ? getPointColor(point.lineType, point.outcome) : "border border-border-strong"
-                            }`}
-                          />
+                          {!isTagged && point.notFilmed ? (
+                            <VideoOff size={10} aria-label="Not filmed" className="shrink-0 text-fg-muted" />
+                          ) : (
+                            <span
+                              className={`w-2 h-2 rounded-md shrink-0 ${
+                                isTagged ? getPointColor(point.lineType, point.outcome) : "border border-border-strong"
+                              }`}
+                            />
+                          )}
                           <span className="text-xs font-mono text-fg-secondary shrink-0">P{point.pointNumber}</span>
                           <span className="text-xs text-fg-muted">{point.lineType}-line</span>
                           {point.outcome !== "IN_PROGRESS" && (
@@ -1803,6 +1846,17 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                             </span>
                           )}
                         </button>
+                        {isTagged && canAnnotate && (
+                          <Tooltip content="Untag: remove this point's link to the film">
+                            <button
+                              onClick={() => untagPoint(point)}
+                              aria-label={`Untag point ${point.pointNumber}`}
+                              className="shrink-0 flex items-center justify-center size-10 md:size-7 rounded-md text-fg-muted hover:text-foreground hover:bg-surface-2 transition-colors"
+                            >
+                              <Link2Off size={13} />
+                            </button>
+                          </Tooltip>
+                        )}
                       </div>
 
                       {isExpanded && pointEvents.length > 0 && (() => {
@@ -1835,14 +1889,36 @@ export function FilmViewer({ clips: clipsProp, initialAnnotations, canAnnotate, 
                         )
                       })()}
 
-                      {!isTagged && canAnnotate && (
-                        <div className="px-4 pb-1.5">
-                          <button
-                            onClick={() => addPointTag(point)}
-                            className="text-[11px] text-fg-muted hover:text-foreground transition-colors"
-                          >
-                            + Tag at {formatTime(globalMs)}
-                          </button>
+                      {!isTagged && (canAnnotate || point.notFilmed) && (
+                        <div className="flex flex-wrap items-center gap-x-3 px-4 pb-1.5 text-xs md:text-[11px]">
+                          {point.notFilmed ? (
+                            <>
+                              <span className="text-fg-muted">Not filmed</span>
+                              {canAnnotate && (
+                                <button
+                                  onClick={() => saveNotFilmed(point, false)}
+                                  className="min-h-10 md:min-h-0 text-fg-muted underline-offset-2 hover:text-foreground hover:underline transition-colors"
+                                >
+                                  It was filmed
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => addPointTag(point)}
+                                className="min-h-10 md:min-h-0 text-fg-muted hover:text-foreground transition-colors"
+                              >
+                                + Tag at {formatTime(globalMs)}
+                              </button>
+                              <button
+                                onClick={() => saveNotFilmed(point, true)}
+                                className="min-h-10 md:min-h-0 text-fg-muted hover:text-foreground transition-colors"
+                              >
+                                Not filmed
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
 

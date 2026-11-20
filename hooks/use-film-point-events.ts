@@ -37,7 +37,8 @@ function normalizePoint(pointEvents: PointEventItem[]): PointEventItem[] {
 
 function sameEvent(a: PointEventItem, b: PointEventItem) {
   return a.eventType === b.eventType && a.playerId === b.playerId && a.playerInId === b.playerInId &&
-    a.team === b.team && a.sortOrder === b.sortOrder && a.filmOffsetMs === b.filmOffsetMs
+    a.team === b.team && a.sortOrder === b.sortOrder && a.filmOffsetMs === b.filmOffsetMs &&
+    a.pullResult === b.pullResult && a.turnoverType === b.turnoverType && !!a.huck === !!b.huck && a.zone === b.zone
 }
 
 // ─── Undo history ─────────────────────────────────────────────────────────────
@@ -92,6 +93,12 @@ function toUpsert(ev: PointEventItem) {
     team: ev.team,
     sortOrder: ev.sortOrder,
     filmOffsetMs: ev.filmOffsetMs,
+    // Event details: sent explicitly (null = cleared) so edits made here stick. hangTimeMs is
+    // live-only and not sent; the server keeps it.
+    pullResult: ev.pullResult ?? null,
+    turnoverType: ev.turnoverType ?? null,
+    huck: !!ev.huck,
+    zone: ev.zone ?? null,
   }
 }
 

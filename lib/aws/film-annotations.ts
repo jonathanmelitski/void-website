@@ -46,6 +46,22 @@ export async function createAnnotation(item: FilmAnnotationItem): Promise<void> 
   await dynamo.send(new PutCommand({ TableName: TABLE(), Item: item }))
 }
 
+/** Link a note to a point, or unlink it (null). Clears pointEventId too, since it belongs to the old point. */
+export async function setAnnotationPoint(id: string, pointId: string | null, updatedAt: string): Promise<void> {
+  await dynamo.send(
+    new UpdateCommand({
+      TableName: TABLE(),
+      Key: { id },
+      UpdateExpression: pointId
+        ? "SET #p = :p, #u = :u REMOVE #e"
+        : "SET #u = :u REMOVE #p, #e",
+      ExpressionAttributeNames: { "#p": "pointId", "#u": "updatedAt", "#e": "pointEventId" },
+      ExpressionAttributeValues: pointId ? { ":p": pointId, ":u": updatedAt } : { ":u": updatedAt },
+      ConditionExpression: "attribute_exists(id)",
+    })
+  )
+}
+
 export async function updateAnnotation(
   id: string,
   fields: Partial<Pick<FilmAnnotationItem, "text" | "updatedAt">>

@@ -20,6 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ArrowLeft, ImageIcon } from "lucide-react"
 import { formatDate } from "@/lib/format-date"
 import { UserPanel } from "@/app/live/manage/UserPanel"
+import { can } from "@/lib/permissions/catalog"
 
 interface EventGalleryViewProps {
   event: GalleryEvent
@@ -31,7 +32,7 @@ export function EventGalleryView({ event }: EventGalleryViewProps) {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [loaded, setLoaded] = useState(event.photos.length > 0)
   const { user } = useAuth()
-  const canUpload = !!user?.groups?.some(g => g === "ADMIN" || g === "COACH")
+  const canUpload = can(user?.permissions, "photos.upload")
 
   useEffect(() => {
     if (event.photos.length > 0) return

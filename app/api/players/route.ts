@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { listPlayers, createPlayer } from "@/lib/aws/players"
 import { publicReadHeaders } from "@/lib/http-cache"
 import { randomUUID } from "crypto"
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "players.manage" })
   if (!auth.ok) return auth.response
 
   const { first_name, last_name, number, team, is_captain, jersey_name_text, is_active } =

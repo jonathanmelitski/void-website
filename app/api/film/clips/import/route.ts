@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { randomUUID } from "crypto"
 import { createClip } from "@/lib/aws/film-clips"
 import { getGame } from "@/lib/aws/games"
@@ -39,7 +39,7 @@ async function fetchDurationSeconds(videoId: string): Promise<number | undefined
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "film.manage" })
   if (!auth.ok) return auth.response
   const { payload } = auth
 

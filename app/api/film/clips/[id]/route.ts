@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getClip, updateClip, deleteClip, listClipsByGame } from "@/lib/aws/film-clips"
 import type { FilmSyncPoint } from "@/lib/film-tracks"
 import { denyIfGameHidden } from "@/lib/event-access"
@@ -63,7 +63,7 @@ export async function PATCH(
 ) {
   const { id } = await params
 
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "film.manage" })
   if (!auth.ok) return auth.response
 
   const body = await request.json()
@@ -96,7 +96,7 @@ export async function DELETE(
 ) {
   const { id } = await params
 
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "film.manage" })
   if (!auth.ok) return auth.response
 
   try {

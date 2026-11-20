@@ -8,7 +8,10 @@ import {
 import type { PointEventItem } from "@/lib/aws/point-events"
 import type { PointItem } from "@/lib/aws/points"
 import type { PlayerItem } from "@/lib/aws/players"
-import { POINT_EVENT_META, POINT_EVENT_TYPES, eventNeedsPlayer, type PointEventType } from "@/lib/point-event-meta"
+import {
+  POINT_EVENT_META, POINT_EVENT_TYPES, eventNeedsPlayer, type PointEventType,
+  FIELD_ZONES, FIELD_ZONE_LABELS, HUCKABLE_TYPES, ZONABLE_TYPES, TURNOVER_TYPES, OPP_TURNOVER_TYPES, TURNOVER_TYPE_LABELS,
+} from "@/lib/point-event-meta"
 import { isEventComplete, resolveOffsets, type SaveStatus } from "@/hooks/use-film-point-events"
 import { PlayerPicker, type PickerMode } from "./PlayerPicker"
 import { LineEditor } from "./LineEditor"
@@ -237,7 +240,8 @@ export function PointEventEditor({
       return p ? `#${p.number} ${p.first_name} ${p.last_name}` : "—"
     }
     if (ev.eventType === "SUBSTITUTION") return `${name(ev.playerId)} → ${name(ev.playerInId)}`
-    return eventNeedsPlayer(ev.eventType) ? name(ev.playerId) : ""
+    if (ev.eventType === "PULL" && ev.team === "OPP") return "Opponent"
+    return eventNeedsPlayer(ev.eventType, ev.team) ? name(ev.playerId) : ""
   }, [playerById])
 
   // ─── Chip layout (greedy row packing per lane) ─────────────────────────────
@@ -408,8 +412,25 @@ export function PointEventEditor({
       if (e.id !== ev.id) return e
       const next: PointEventItem = { ...e, eventType: type }
       if (type !== "SUBSTITUTION") delete next.playerInId
-      if (type !== "TIMEOUT") delete next.team
-      if (!eventNeedsPlayer(type)) next.playerId = ""
+      if (type !== "TIMEOUT" && type !== "PULL") delete next.team
+      if (!eventNeedsPlayer(type, next.team)) next.playerId = ""
+      // Drop details that don't apply to the new type
+      if (type !== "PULL") delete next.pullResult
+      const turnoverTypes = type === "TURNOVER" ? TURNOVER_TYPES : type === "OPP_TURNOVER" ? OPP_TURNOVER_TYPES : []
+      if (next.turnoverType && !turnoverTypes.includes(next.turnoverType)) delete next.turnoverType
+      if (!HUCKABLE_TYPES.includes(type)) delete next.huck
+      if (!ZONABLE_TYPES.includes(type)) delete next.zone
+      return next
+    }))
+  }, [onEdit])
+
+  /** Set or clear event details (huck, zone, turnover type, pull result, who pulled). undefined = clear. */
+  const setDetail = useCallback((ev: PointEventItem, patch: Partial<Pick<PointEventItem, "huck" | "zone" | "turnoverType" | "pullResult" | "team" | "playerId">>) => {
+    onEdit(evs => evs.map(e => {
+      if (e.id !== ev.id) return e
+      const next: PointEventItem = { ...e, ...patch }
+      for (const k of Object.keys(patch) as (keyof typeof patch)[]) if (patch[k] === undefined) delete next[k]
+      if (!next.huck) delete next.huck
       return next
     }))
   }, [onEdit])
@@ -864,12 +885,13 @@ export function PointEventEditor({
       </div>
 
       {/* Inspector / hints */}
-      <div className="flex items-center gap-3 px-3 py-1.5 border-t border-border min-h-[34px] text-[11px]">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5 border-t border-border min-h-[34px] text-[11px]">
         {!editable ? (
           single ? (
             <>
               <span className={POINT_EVENT_META[single.eventType].text}>{POINT_EVENT_META[single.eventType].label}</span>
               {describe(single) && <span className="text-fg-secondary truncate">{describe(single)}</span>}
+              {detailSummary(single) && <span className="text-fg-muted">{detailSummary(single)}</span>}
               <span className="font-mono text-fg-muted">{formatPointTime(offsets.get(single.id) ?? 0, true)}</span>
               <span className="ml-auto hidden pointer-fine:inline-flex items-center gap-1 text-fg-muted"><Kbd>Tab</Kbd> next event</span>
             </>
@@ -889,7 +911,7 @@ export function PointEventEditor({
             >
               {POINT_EVENT_TYPES.map(t => <option key={t} value={t} className="bg-card text-foreground">{POINT_EVENT_META[t].label}</option>)}
             </select>
-            {pickerStepFor(single.eventType) && (
+            {pickerStepFor(single.eventType) && !(single.eventType === "PULL" && single.team === "OPP") && (
               <button
                 onClick={() => editPlayers(single)}
                 className={`truncate max-w-[220px] px-2 py-0.5 rounded-md border transition-colors ${isEventComplete(single) ? "border-border text-fg-secondary hover:border-border-strong" : "border-warning/50 text-warning hover:border-warning"}`}
@@ -898,6 +920,7 @@ export function PointEventEditor({
                 {describe(single) || "Set…"}
               </button>
             )}
+            <EventDetails ev={single} onChange={patch => setDetail(single, patch)} />
             <span className="font-mono text-fg-muted">{formatPointTime(offsets.get(single.id) ?? 0, true)}</span>
             <span className="ml-auto flex items-center gap-2 text-fg-muted">
               <span className="hidden pointer-fine:inline-flex items-center gap-1"><Kbd>,</Kbd><Kbd>.</Kbd> nudge <Kbd>M</Kbd> to playhead</span>
@@ -956,6 +979,78 @@ export function PointEventEditor({
 }
 
 // ─── Small pieces ────────────────────────────────────────────────────────────
+
+/** "Throwaway · Huck · Red zone" style summary of an event's details, or "". */
+function detailSummary(ev: PointEventItem): string {
+  return [
+    ev.eventType === "PULL" && ev.pullResult ? (ev.pullResult === "IN" ? "In" : "Out of bounds") : "",
+    ev.turnoverType ? TURNOVER_TYPE_LABELS[ev.turnoverType] : "",
+    ev.huck ? "Huck" : "",
+    ev.zone ? FIELD_ZONE_LABELS[ev.zone] : "",
+  ].filter(Boolean).join(" · ")
+}
+
+const detailChip = (on: boolean) =>
+  `px-1.5 py-0.5 rounded-md border transition-colors ${on ? "border-brand bg-brand/15 text-foreground" : "border-border text-fg-muted hover:border-border-strong hover:text-foreground"}`
+
+/** Toggle chips for the details the live recorder captures: same options, same rules. */
+function EventDetails({ ev, onChange }: {
+  ev: PointEventItem
+  onChange: (patch: Partial<Pick<PointEventItem, "huck" | "zone" | "turnoverType" | "pullResult" | "team" | "playerId">>) => void
+}) {
+  const turnoverTypes = ev.eventType === "TURNOVER" ? TURNOVER_TYPES : ev.eventType === "OPP_TURNOVER" ? OPP_TURNOVER_TYPES : []
+  const groups: React.ReactNode[] = []
+
+  if (ev.eventType === "PULL") {
+    groups.push(
+      <span key="pull-team" role="group" aria-label="Who pulled" className="flex items-center gap-1">
+        <button type="button" aria-pressed={ev.team !== "OPP"} className={detailChip(ev.team !== "OPP")} onClick={() => onChange({ team: "VOID" })}>Void</button>
+        <button type="button" aria-pressed={ev.team === "OPP"} className={detailChip(ev.team === "OPP")} onClick={() => onChange({ team: "OPP", playerId: "" })}>Opp</button>
+      </span>,
+      <span key="pull-result" role="group" aria-label="Pull landed" className="flex items-center gap-1">
+        {(["IN", "OUT"] as const).map(r => (
+          <button key={r} type="button" aria-pressed={ev.pullResult === r} className={detailChip(ev.pullResult === r)}
+            onClick={() => onChange({ pullResult: ev.pullResult === r ? undefined : r })}>
+            {r === "IN" ? "In" : "Out"}
+          </button>
+        ))}
+      </span>,
+    )
+  }
+  if (turnoverTypes.length) {
+    groups.push(
+      <span key="turnover" role="group" aria-label="Turnover type" className="flex flex-wrap items-center gap-1">
+        {turnoverTypes.map(t => (
+          <button key={t} type="button" aria-pressed={ev.turnoverType === t} className={detailChip(ev.turnoverType === t)}
+            onClick={() => onChange({ turnoverType: ev.turnoverType === t ? undefined : t })}>
+            {TURNOVER_TYPE_LABELS[t]}
+          </button>
+        ))}
+      </span>,
+    )
+  }
+  if (HUCKABLE_TYPES.includes(ev.eventType)) {
+    groups.push(
+      <button key="huck" type="button" aria-pressed={!!ev.huck} className={detailChip(!!ev.huck)} onClick={() => onChange({ huck: !ev.huck })}>
+        Huck
+      </button>,
+    )
+  }
+  if (ZONABLE_TYPES.includes(ev.eventType)) {
+    groups.push(
+      <span key="zone" role="group" aria-label="Field zone" className="flex items-center gap-1">
+        {FIELD_ZONES.map(z => (
+          <button key={z} type="button" aria-pressed={ev.zone === z} className={detailChip(ev.zone === z)}
+            onClick={() => onChange({ zone: ev.zone === z ? undefined : z })}>
+            {FIELD_ZONE_LABELS[z]}
+          </button>
+        ))}
+      </span>,
+    )
+  }
+  if (!groups.length) return null
+  return <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">{groups}</span>
+}
 
 function IconButton({ label, onClick, disabled, active, children }: {
   label: string; onClick: () => void; disabled?: boolean; active?: boolean; children: React.ReactNode

@@ -2,25 +2,14 @@
 
 import { useState } from "react"
 import { useAuth } from "@/lib/use-auth"
-import { Badge } from "@/components/ui/badge"
+import { RoleBadges } from "@/components/role-badges"
+import { can } from "@/lib/permissions/catalog"
 import { Button } from "@/components/ui/button"
 import { UserPanel } from "@/app/live/manage/UserPanel"
 import { EventsPanel } from "@/app/live/manage/EventsPanel"
 import { AdminPanel } from "@/app/live/manage/AdminPanel"
 
 type Tab = "photos" | "events" | "users"
-
-const ROLE_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
-  ADMIN: "default",
-  COACH: "secondary",
-  USER: "outline",
-}
-
-function getHighestRole(groups: string[]) {
-  if (groups.includes("ADMIN")) return "ADMIN"
-  if (groups.includes("COACH")) return "COACH"
-  return "USER"
-}
 
 interface VoidLiveTabsProps {
   onClose: () => void
@@ -32,14 +21,10 @@ export function VoidLiveTabs({ onClose }: VoidLiveTabsProps) {
 
   if (!user) return null
 
-  const role = getHighestRole(user.groups)
-  const isCoachOrAdmin = role === "COACH" || role === "ADMIN"
-  const isAdmin = role === "ADMIN"
-
   const tabs: { id: Tab; label: string }[] = [
-    { id: "photos", label: "Photos" },
-    ...(isCoachOrAdmin ? [{ id: "events" as Tab, label: "Events" }] : []),
-    ...(isAdmin ? [{ id: "users" as Tab, label: "Users" }] : []),
+    ...(can(user.permissions, "photos.upload") ? [{ id: "photos" as Tab, label: "Photos" }] : []),
+    ...(can(user.permissions, "events.manage") ? [{ id: "events" as Tab, label: "Events" }] : []),
+    ...(can(user.permissions, "users.manage") ? [{ id: "users" as Tab, label: "Users" }] : []),
   ]
 
   return (
@@ -62,9 +47,7 @@ export function VoidLiveTabs({ onClose }: VoidLiveTabsProps) {
         ))}
 
         <div className="ml-auto flex items-center gap-2">
-          <Badge variant={ROLE_VARIANT[role] ?? "outline"} className="text-xs">
-            {role}
-          </Badge>
+          <RoleBadges roles={user.roles} isOwner={user.isOwner} />
           <Button
             variant="ghost"
             size="xs"
@@ -78,9 +61,9 @@ export function VoidLiveTabs({ onClose }: VoidLiveTabsProps) {
 
       {/* Content */}
       <div className="px-6 py-4 text-foreground">
-        {activeTab === "photos" && <UserPanel />}
-        {activeTab === "events" && isCoachOrAdmin && <EventsPanel />}
-        {activeTab === "users" && isAdmin && <AdminPanel />}
+        {activeTab === "photos" && tabs.some(t => t.id === "photos") && <UserPanel />}
+        {activeTab === "events" && tabs.some(t => t.id === "events") && <EventsPanel />}
+        {activeTab === "users" && tabs.some(t => t.id === "users") && <AdminPanel />}
       </div>
     </div>
   )

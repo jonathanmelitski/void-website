@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { listGamesByEvent, createGame } from "@/lib/aws/games"
 import { getEvent } from "@/lib/aws/dynamo"
 import { canViewEvent, getCaller, isCoach } from "@/lib/event-access"
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "games.score" })
   if (!auth.ok) return auth.response
 
   const body = await request.json()

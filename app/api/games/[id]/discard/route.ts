@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getGame } from "@/lib/aws/games"
 import { discardTestGame } from "@/lib/aws/test-games"
 import { isTestGame } from "@/lib/test-games"
@@ -10,7 +10,7 @@ interface Props {
 
 // Throws a test game away with everything scored in it. Real games are refused.
 export async function POST(request: NextRequest, { params }: Props) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "games.score" })
   if (!auth.ok) return auth.response
 
   const { id } = await params

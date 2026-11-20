@@ -7,7 +7,8 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { ChevronLeft } from "lucide-react"
 import { useAuth } from "@/lib/use-auth"
 import { useRequireAuth } from "@/hooks/use-require-auth"
-import { Badge } from "@/components/ui/badge"
+import { RoleBadges } from "@/components/role-badges"
+import { MANAGE_TABS, visibleManageTabs, type ManageTab } from "./tabs"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton"
@@ -41,24 +42,10 @@ const AdminPanel = dynamic(() => import("./AdminPanel").then(m => m.AdminPanel),
 const AuditPanel = dynamic(() => import("./AuditPanel").then(m => m.AuditPanel), { loading })
 const MarketingPanel = dynamic(() => import("./MarketingPanel").then(m => m.MarketingPanel), { loading })
 const LiveServerPanel = dynamic(() => import("./LiveServerPanel").then(m => m.LiveServerPanel), { loading })
+const RolesPanel = dynamic(() => import("./RolesPanel").then(m => m.RolesPanel), { loading })
 
-type Tab = "photos" | "events" | "games" | "players" | "film" | "player-links" | "users" | "newsletters" | "audit" | "marketing" | "live-server"
-
-const ALL_TABS: Tab[] = ["photos", "events", "games", "players", "film", "player-links", "newsletters", "users", "audit", "marketing", "live-server"]
-
-function getHighestRole(groups: string[]) {
-  if (groups.includes("ADMIN")) return "ADMIN"
-  if (groups.includes("COACH")) return "COACH"
-  return "USER"
-}
-
-const ROLE_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
-  ADMIN: "default",
-  COACH: "secondary",
-  USER: "outline",
-}
-
-const ROLE_LABEL: Record<string, string> = { ADMIN: "Admin", COACH: "Coach", USER: "User" }
+type Tab = ManageTab
+const ALL_TABS: readonly Tab[] = MANAGE_TABS.map(t => t.id)
 
 export default function ManagePage() {
   return (
@@ -87,25 +74,12 @@ function ManagePageInner() {
     )
   }
 
-  const role = getHighestRole(user.groups)
-  const isCoachOrAdmin = role === "COACH" || role === "ADMIN"
-  const isAdmin = role === "ADMIN"
-  // Coaches and admins mostly come here to run games, so open on Games
-  const activeTab: Tab = pickedTab ?? (isCoachOrAdmin ? "games" : "photos")
+  const tabs = visibleManageTabs(user.permissions)
+  const visible = new Set<Tab>(tabs.map(t => t.id))
+  // Scorers mostly come here to run games, so open on Games when they can
+  const fallbackTab: Tab | undefined = visible.has("games") ? "games" : tabs[0]?.id
+  const activeTab: Tab | undefined = pickedTab && visible.has(pickedTab) ? pickedTab : fallbackTab
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: "photos", label: "Photos" },
-    ...(isCoachOrAdmin ? [{ id: "events" as Tab, label: "Events" }] : []),
-    ...(isCoachOrAdmin ? [{ id: "games" as Tab, label: "Games" }] : []),
-    ...(isCoachOrAdmin ? [{ id: "players" as Tab, label: "Players" }] : []),
-    ...(isCoachOrAdmin ? [{ id: "film" as Tab, label: "Film" }] : []),
-    ...(isCoachOrAdmin ? [{ id: "player-links" as Tab, label: "Player links" }] : []),
-    ...(isCoachOrAdmin ? [{ id: "newsletters" as Tab, label: "Newsletters" }] : []),
-    ...(isAdmin ? [{ id: "users" as Tab, label: "Users" }] : []),
-    ...(isAdmin ? [{ id: "audit" as Tab, label: "Audit" }] : []),
-    ...(isAdmin ? [{ id: "marketing" as Tab, label: "Marketing" }] : []),
-    ...(isAdmin ? [{ id: "live-server" as Tab, label: "Live server" }] : []),
-  ]
 
   return (
     <div className="flex min-w-0 flex-col gap-8 px-4 py-6 text-left sm:p-8 lg:px-16">
@@ -121,7 +95,7 @@ function ManagePageInner() {
           <p className="text-fg-muted mt-1 text-sm">{user.email}</p>
         </div>
         <div className="flex items-center gap-3">
-          <Badge variant={ROLE_VARIANT[role] ?? "outline"}>{ROLE_LABEL[role] ?? role}</Badge>
+          <RoleBadges roles={user.roles} isOwner={user.isOwner} />
           <Button
             variant="ghost"
             size="sm"
@@ -134,7 +108,7 @@ function ManagePageInner() {
       </div>
 
       <Tabs
-        value={activeTab}
+        value={activeTab ?? ""}
         onValueChange={v => {
           setPickedTab(v as Tab)
           router.replace(`/live/manage?tab=${v}`, { scroll: false })
@@ -155,17 +129,21 @@ function ManagePageInner() {
         </TabsList>
 
         <div>
+          {!activeTab && (
+            <p className="text-sm text-fg-muted">Your roles don&apos;t include anything to manage yet. Ask an admin if you need access.</p>
+          )}
           {activeTab === "photos" && <UserPanel />}
-          {activeTab === "events" && isCoachOrAdmin && <EventsPanel />}
-          {activeTab === "games" && isCoachOrAdmin && <GamesPanel />}
-          {activeTab === "players" && isCoachOrAdmin && <PlayersPanel />}
-          {activeTab === "film" && isCoachOrAdmin && <FilmPanel />}
-          {activeTab === "player-links" && isCoachOrAdmin && <PlayerLinksPanel />}
-          {activeTab === "newsletters" && isCoachOrAdmin && <NewslettersPanel />}
-          {activeTab === "users" && isAdmin && <AdminPanel />}
-          {activeTab === "audit" && isAdmin && <AuditPanel />}
-          {activeTab === "marketing" && isAdmin && <MarketingPanel />}
-          {activeTab === "live-server" && isAdmin && <LiveServerPanel />}
+          {activeTab === "events" && <EventsPanel />}
+          {activeTab === "games" && <GamesPanel />}
+          {activeTab === "players" && <PlayersPanel />}
+          {activeTab === "film" && <FilmPanel />}
+          {activeTab === "player-links" && <PlayerLinksPanel />}
+          {activeTab === "newsletters" && <NewslettersPanel />}
+          {activeTab === "users" && <AdminPanel />}
+          {activeTab === "roles" && <RolesPanel />}
+          {activeTab === "audit" && <AuditPanel />}
+          {activeTab === "marketing" && <MarketingPanel />}
+          {activeTab === "live-server" && <LiveServerPanel />}
         </div>
       </Tabs>
     </div>

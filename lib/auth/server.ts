@@ -2,16 +2,23 @@ import { NextRequest, NextResponse } from "next/server"
 import { AuthError, verifyToken, type TokenPayload } from "@/lib/aws/cognito"
 import { ACCESS_COOKIE } from "./cookies"
 import { lookupEmailBySub } from "./cognito-lookup"
-
-export type Role = "ADMIN" | "COACH" | "USER"
-
-export const ADMIN_ONLY: Role[] = ["ADMIN"]
-export const COACH_OR_ADMIN: Role[] = ["COACH", "ADMIN"]
+import { canAny, type Permission } from "@/lib/permissions/catalog"
+import { resolvePermissions } from "@/lib/permissions/server"
 
 /** Stable machine-readable codes the client (`lib/api-fetch.ts`) keys off. */
 export type AuthErrorCode = "SESSION_EXPIRED" | "FORBIDDEN" | "AUTH_UNAVAILABLE"
 
-export type AuthOk = { ok: true; payload: TokenPayload; groups: string[]; username: string }
+export type AuthOk = {
+  ok: true
+  payload: TokenPayload
+  username: string
+  /** Cognito sub: the key for role assignments. */
+  sub: string
+  /** Effective permissions (union of the user's roles; everything for owners). */
+  permissions: Set<Permission>
+  isOwner: boolean
+  roleIds: string[]
+}
 export type AuthFail = { ok: false; response: NextResponse }
 
 export function authErrorResponse(code: AuthErrorCode): NextResponse {
@@ -31,16 +38,19 @@ export function authErrorResponse(code: AuthErrorCode): NextResponse {
 /**
  * Auth gate for route handlers. Call it first:
  *
- *   const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+ *   const auth = await requireUser(request, { permission: "events.manage" })
  *   if (!auth.ok) return auth.response
  *
+ * `permission` may be a list: the caller needs any one of them. Permissions live in
+ * lib/permissions/catalog.ts; for finer checks inside a handler use `can(auth.permissions, …)`.
+ *
  * 401 SESSION_EXPIRED: no/expired/invalid token (client refreshes and retries).
- * 403 FORBIDDEN: signed in, but not in any of `roles`.
- * 503 AUTH_UNAVAILABLE: couldn't verify (JWKS/Cognito unreachable) — not a sign-out.
+ * 403 FORBIDDEN: signed in, but missing the permission.
+ * 503 AUTH_UNAVAILABLE: couldn't verify the token or read permissions — never treated as allowed.
  */
 export async function requireUser(
   request: NextRequest,
-  opts: { roles?: readonly Role[] } = {}
+  opts: { permission?: Permission | readonly Permission[] } = {}
 ): Promise<AuthOk | AuthFail> {
   const token = request.cookies.get(ACCESS_COOKIE)?.value
   if (!token) return { ok: false, response: authErrorResponse("SESSION_EXPIRED") }
@@ -54,12 +64,26 @@ export async function requireUser(
     return { ok: false, response: authErrorResponse(unavailable ? "AUTH_UNAVAILABLE" : "SESSION_EXPIRED") }
   }
 
-  const groups = payload["cognito:groups"] ?? []
-  if (opts.roles && !opts.roles.some((r) => groups.includes(r))) {
-    return { ok: false, response: authErrorResponse("FORBIDDEN") }
+  let resolved: Awaited<ReturnType<typeof resolvePermissions>>
+  try {
+    resolved = await resolvePermissions(payload.sub, payload["cognito:groups"])
+  } catch (err) {
+    console.warn("[auth] permission lookup failed:", err instanceof Error ? err.name : "unknown")
+    return { ok: false, response: authErrorResponse("AUTH_UNAVAILABLE") }
   }
 
-  return { ok: true, payload, groups, username: payload["cognito:username"] ?? payload.sub ?? "" }
+  if (opts.permission) {
+    const needed = typeof opts.permission === "string" ? [opts.permission] : opts.permission
+    if (!canAny(resolved.permissions, needed)) return { ok: false, response: authErrorResponse("FORBIDDEN") }
+  }
+
+  return {
+    ok: true,
+    payload,
+    username: payload["cognito:username"] ?? payload.sub ?? "",
+    sub: payload.sub,
+    ...resolved,
+  }
 }
 
 // Cognito access tokens carry no `email` claim, so look it up (read-only AdminGetUser) and cache it
@@ -93,6 +117,29 @@ export async function getOptionalUser(request: NextRequest): Promise<TokenPayloa
   if (!token) return null
   try {
     return await verifyToken(token)
+  } catch {
+    return null
+  }
+}
+
+export type OptionalAuth = {
+  payload: TokenPayload
+  username: string
+  sub: string
+  permissions: Set<Permission>
+  isOwner: boolean
+}
+
+/**
+ * Like getOptionalUser, plus the caller's permissions. Null for anonymous callers and on any failure,
+ * including a failed permission lookup (fails closed: private data stays hidden).
+ */
+export async function getOptionalAuth(request: NextRequest): Promise<OptionalAuth | null> {
+  const payload = await getOptionalUser(request)
+  if (!payload) return null
+  try {
+    const { permissions, isOwner } = await resolvePermissions(payload.sub, payload["cognito:groups"])
+    return { payload, username: payload["cognito:username"] ?? payload.sub ?? "", sub: payload.sub, permissions, isOwner }
   } catch {
     return null
   }

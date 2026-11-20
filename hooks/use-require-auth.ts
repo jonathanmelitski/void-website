@@ -4,29 +4,29 @@ import { useEffect } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { useAuth } from "@/lib/use-auth"
 import type { AuthUser } from "@/lib/auth-context"
-
-type Role = "ADMIN" | "COACH" | "USER"
+import { canAny, type Permission } from "@/lib/permissions/catalog"
 
 /**
  * Page guard for signed-in pages.
  * - Redirects to /live/login?next=<this page> only when there is definitely no session.
  *   Never while offline or when the session ended mid-page (the in-place sign-in sheet handles that).
- * - With `roles`, a signed-in user outside those roles goes to `forbiddenHref`.
+ * - With `permission` (one or a list: any of them), a signed-in user without it goes to `forbiddenHref`.
  *
  * `ready` is true when `user` is present and allowed; render the page then, a loading state otherwise.
  */
-export function useRequireAuth(opts: { roles?: Role[]; forbiddenHref?: string } = {}): {
+export function useRequireAuth(opts: { permission?: Permission | Permission[]; forbiddenHref?: string } = {}): {
   user: AuthUser | null
   ready: boolean
   isLoading: boolean
 } {
-  const { roles, forbiddenHref = "/live" } = opts
+  const { permission, forbiddenHref = "/live" } = opts
   const { user, status, isLoading } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
-  const rolesKey = roles?.join(",") ?? ""
+  const needed = permission === undefined ? [] : typeof permission === "string" ? [permission] : permission
+  const neededKey = needed.join(",")
 
-  const allowed = !!user && (!roles || roles.some((r) => user.groups.includes(r)))
+  const allowed = !!user && (needed.length === 0 || canAny(user.permissions, needed))
 
   useEffect(() => {
     if (status === "anonymous") {
@@ -35,11 +35,11 @@ export function useRequireAuth(opts: { roles?: Role[]; forbiddenHref?: string } 
       router.replace(`/live/login?next=${encodeURIComponent(next)}`)
       return
     }
-    if (status === "authenticated" && user && rolesKey) {
-      const ok = rolesKey.split(",").some((r) => user.groups.includes(r))
+    if (status === "authenticated" && user && neededKey) {
+      const ok = canAny(user.permissions, neededKey.split(",") as Permission[])
       if (!ok) router.replace(forbiddenHref)
     }
-  }, [status, user, rolesKey, forbiddenHref, pathname, router])
+  }, [status, user, neededKey, forbiddenHref, pathname, router])
 
   return { user: allowed ? user : null, ready: allowed, isLoading }
 }

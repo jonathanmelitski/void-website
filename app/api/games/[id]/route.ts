@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getGame, updateGame, deleteGame } from "@/lib/aws/games"
 import { canViewGame, getCaller } from "@/lib/event-access"
 import { pushGameUpdate } from "@/lib/ws-push"
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest, { params }: Props) {
 }
 
 export async function PATCH(request: NextRequest, { params }: Props) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "games.score" })
   if (!auth.ok) return auth.response
 
   const { id } = await params
@@ -79,7 +79,7 @@ export async function PATCH(request: NextRequest, { params }: Props) {
 }
 
 export async function DELETE(request: NextRequest, { params }: Props) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "games.score" })
   if (!auth.ok) return auth.response
 
   const { id } = await params

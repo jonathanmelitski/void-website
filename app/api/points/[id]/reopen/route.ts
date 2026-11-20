@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getPoint, listPointsByGame, updatePoint } from "@/lib/aws/points"
 import { getGame, updateGame } from "@/lib/aws/games"
 import { listEventsByPoint, applyPointEventBatch } from "@/lib/aws/point-events"
@@ -18,7 +18,7 @@ const SCORING_EVENTS = new Set(["GOAL", "ASSIST", "HOCKEY_ASSIST"])
  * restores the game's score to what it was before the point (un-finalising a game that hit cap).
  */
 export async function POST(request: NextRequest, { params }: Props) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "games.score" })
   if (!auth.ok) return auth.response
 
   const { id } = await params

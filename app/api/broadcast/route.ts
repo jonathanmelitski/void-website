@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda"
 import { getChannelStatus } from "@/lib/aws/medialive"
 import {
@@ -71,7 +71,7 @@ function makeStream(fn: (send: (event: StreamEvent) => void) => Promise<void>): 
 // ---- GET /api/broadcast ----
 
 export async function GET(request: NextRequest) {
-  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  const auth = await requireUser(request, { permission: "broadcast.manage" })
   if (!auth.ok) return auth.response
 
   try {
@@ -104,7 +104,7 @@ export async function GET(request: NextRequest) {
 // ---- POST /api/broadcast ----
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  const auth = await requireUser(request, { permission: "broadcast.manage" })
   if (!auth.ok) return auth.response
 
   const body = await request.json()

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda"
 import {
   SSMClient,
@@ -93,7 +93,7 @@ export type LiveServerInfo = {
 // ---- GET /api/live-server ----
 
 export async function GET(request: NextRequest) {
-  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  const auth = await requireUser(request, { permission: "liveServer.manage" })
   if (!auth.ok) return auth.response
 
   try {
@@ -143,7 +143,7 @@ export async function GET(request: NextRequest) {
 // ---- POST /api/live-server ----
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  const auth = await requireUser(request, { permission: "liveServer.manage" })
   if (!auth.ok) return auth.response
 
   const { action } = await request.json()

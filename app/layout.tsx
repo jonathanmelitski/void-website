@@ -3,6 +3,7 @@ import "./globals.css"
 import { bebas } from "./fonts"
 import { AuthProvider } from "@/lib/auth-context"
 import { RootShell } from "@/components/root-shell"
+import { THEME_INIT_SCRIPT } from "@/lib/theme-script"
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://voidultimate.com"
 const DESCRIPTION = "The men's ultimate frisbee team at the University of Pennsylvania."
@@ -22,11 +23,8 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  colorScheme: "light dark",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fafafa" },
-    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
-  ],
+  // Dark by default; the footer toggle swaps the class and this colour (lib/theme.ts).
+  themeColor: "#0a0a0a",
 }
 
 export default function RootLayout({
@@ -35,7 +33,10 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={bebas.variable}>
+    <html lang="en" className={`dark ${bebas.variable}`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body>
         <AuthProvider>
           <RootShell>{children}</RootShell>

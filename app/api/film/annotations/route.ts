@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { randomUUID } from "crypto"
 import { AdminGetUserCommand } from "@aws-sdk/client-cognito-identity-provider"
 import { cognitoClient } from "@/lib/aws/cognito"
@@ -7,7 +7,6 @@ import { getPlayerLink } from "@/lib/aws/player-links"
 import { getPlayer } from "@/lib/aws/players"
 import { listAnnotationsByClip, createAnnotation } from "@/lib/aws/film-annotations"
 import { getClip } from "@/lib/aws/film-clips"
-import { pushFilmUpdate } from "@/lib/ws-push"
 import { denyIfGameHidden } from "@/lib/event-access"
 import { NO_STORE_HEADERS } from "@/lib/http-cache"
 
@@ -53,7 +52,7 @@ async function resolveAuthorName(sub: string, username: string): Promise<string>
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "film.manage" })
   if (!auth.ok) return auth.response
   const { payload } = auth
 
@@ -88,7 +87,6 @@ export async function POST(request: NextRequest) {
   try {
     await createAnnotation(annotation)
     // Fire-and-forget WS push for real-time collaboration
-    pushFilmUpdate(clipId, { type: "ANNOTATION_CREATED", annotation, ts: Date.now() })
     return NextResponse.json(annotation, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to create annotation"

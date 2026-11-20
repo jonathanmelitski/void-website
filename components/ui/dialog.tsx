@@ -34,9 +34,15 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
   )
 }
 
+/** True for interactions with a toast; those shouldn't dismiss an open dialog (e.g. tapping Undo). */
+export function isToastInteraction(e: Event) {
+  return e.target instanceof Element && !!e.target.closest("[data-sonner-toaster]")
+}
+
 function DialogContent({
   className,
   children,
+  onInteractOutside,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content>) {
   return (
@@ -48,6 +54,10 @@ function DialogContent({
           "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-xl border p-6 shadow-2xl shadow-black/40 duration-200 sm:max-w-lg",
           className
         )}
+        onInteractOutside={e => {
+          if (isToastInteraction(e)) e.preventDefault()
+          onInteractOutside?.(e)
+        }}
         {...props}
       >
         {children}

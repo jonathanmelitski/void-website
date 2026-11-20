@@ -25,6 +25,8 @@ export type PointItem = {
   opponentScoreBefore: number
   playerIds: string[]         // VOID player IDs on the line for this point
   status: PointStatus
+  /** Marked in the film viewer as not on the recording, so it stops showing as "to tag". */
+  notFilmed?: boolean
   createdAt: string
   updatedAt: string
 }

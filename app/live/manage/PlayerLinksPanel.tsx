@@ -12,10 +12,11 @@ import type { PlayerItem } from "@/lib/aws/players"
 import type { VoidPlayerLinkItem } from "@/lib/aws/player-links"
 import { CONNECTION_HINT, friendlyError } from "./api-helpers"
 import { useUserEmails } from "./use-user-emails"
+import { can } from "@/lib/permissions/catalog"
 
 export function PlayerLinksPanel() {
   const { user } = useAuth()
-  const isAdmin = user?.groups.includes("ADMIN") ?? false
+  const isAdmin = can(user?.permissions, "users.manage")
   const { emailFor } = useUserEmails(isAdmin)
   const [players, setPlayers] = useState<PlayerItem[]>([])
   const [links, setLinks] = useState<VoidPlayerLinkItem[]>([])

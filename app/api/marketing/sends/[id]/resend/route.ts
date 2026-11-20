@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto"
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { verifyTOTP } from "@/lib/totp"
 import { getSend, logSend } from "@/lib/aws/sends"
 import { getNewsletter } from "@/lib/aws/newsletters"
@@ -15,7 +15,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const caller = await requireUser(request, { roles: ADMIN_ONLY })
+  const caller = await requireUser(request, { permission: "marketing.send" })
   if (!caller.ok) return caller.response
 
   const body = await request.json().catch(() => ({}))

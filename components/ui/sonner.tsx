@@ -13,6 +13,8 @@ function Toaster(props: ToasterProps) {
       theme="system"
       position="bottom-center"
       closeButton
+      // Modal dialogs set pointer-events: none on <body>; keep toast buttons (Undo, close) tappable over them
+      style={{ pointerEvents: "auto", ...props.style }}
       toastOptions={{
         classNames: {
           toast: "!bg-card !text-card-foreground !border-border !rounded-xl !shadow-lg !font-sans",

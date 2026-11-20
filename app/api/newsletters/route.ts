@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import {
   listNewsletters,
   createNewsletter,
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   const all = searchParams.get("all") === "true"
 
   if (all) {
-    const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+    const auth = await requireUser(request, { permission: "newsletters.edit" })
     if (!auth.ok) return auth.response
     const newsletters = await listNewsletters()
     return NextResponse.json(newsletters, { headers: NO_STORE_HEADERS })
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "newsletters.edit" })
   if (!auth.ok) return auth.response
   const callerUsername = auth.username
 

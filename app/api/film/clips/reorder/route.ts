@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { updateClip } from "@/lib/aws/film-clips"
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "film.manage" })
   if (!auth.ok) return auth.response
 
   const body = await request.json()

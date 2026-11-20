@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getPoint } from "@/lib/aws/points"
 import {
   listEventsByPoint,
@@ -9,7 +9,10 @@ import {
   type PointEventType,
 } from "@/lib/aws/point-events"
 import { pushGameUpdate } from "@/lib/ws-push"
-import { eventNeedsPlayer } from "@/lib/point-event-meta"
+import {
+  eventNeedsPlayer, FIELD_ZONES, HUCKABLE_TYPES, OPP_TURNOVER_TYPES, TURNOVER_TYPES, ZONABLE_TYPES,
+  type FieldZone, type PullResult, type TurnoverType,
+} from "@/lib/point-event-meta"
 
 type UpsertInput = {
   id: string
@@ -19,13 +22,52 @@ type UpsertInput = {
   team?: "VOID" | "OPP"
   sortOrder: number
   filmOffsetMs?: number
+  // Details: omitted = keep what's stored (older clients); null/false = clear; a value = set
+  pullResult?: PullResult | null
+  turnoverType?: TurnoverType | null
+  huck?: boolean | null
+  zone?: FieldZone | null
+}
+
+/** Validation error for one upsert's details, or null. Mirrors PATCH /api/point-events/[id]. */
+function detailError(u: UpsertInput): string | null {
+  if (u.pullResult != null && (u.eventType !== "PULL" || (u.pullResult !== "IN" && u.pullResult !== "OUT"))) {
+    return "pullResult must be IN or OUT on a pull."
+  }
+  if (u.turnoverType != null) {
+    const allowed = u.eventType === "TURNOVER" ? TURNOVER_TYPES : u.eventType === "OPP_TURNOVER" ? OPP_TURNOVER_TYPES : []
+    if (!allowed.includes(u.turnoverType)) return "Not a valid turnover type for this event."
+  }
+  if (u.huck != null && (typeof u.huck !== "boolean" || (u.huck && !HUCKABLE_TYPES.includes(u.eventType)))) {
+    return "Only goals, assists and turnovers can be hucks."
+  }
+  if (u.zone != null && (!FIELD_ZONES.includes(u.zone) || !ZONABLE_TYPES.includes(u.eventType))) {
+    return "Not a valid field zone for this event."
+  }
+  return null
+}
+
+function detailFields(u: UpsertInput, prev: PointEventItem | undefined): Partial<PointEventItem> {
+  const sameType = prev?.eventType === u.eventType
+  const pick = <K extends "pullResult" | "turnoverType" | "zone">(key: K) =>
+    key in u ? u[key] ?? undefined : sameType ? prev?.[key] : undefined
+  const pullResult = pick("pullResult")
+  const turnoverType = pick("turnoverType")
+  const zone = pick("zone")
+  const huck = "huck" in u ? !!u.huck : sameType && !!prev?.huck
+  return {
+    ...(pullResult && u.eventType === "PULL" ? { pullResult } : {}),
+    ...(turnoverType && (u.eventType === "TURNOVER" || u.eventType === "OPP_TURNOVER") ? { turnoverType } : {}),
+    ...(huck && HUCKABLE_TYPES.includes(u.eventType) ? { huck: true } : {}),
+    ...(zone && ZONABLE_TYPES.includes(u.eventType) ? { zone } : {}),
+  }
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // Saves the film editor's changes to one point's events in a single transaction
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "games.score" })
   if (!auth.ok) return auth.response
 
   const { pointId, upserts = [], deletes = [] } = await request.json() as {
@@ -56,6 +98,8 @@ export async function POST(request: NextRequest) {
     if (u.filmOffsetMs !== undefined && (!Number.isFinite(u.filmOffsetMs) || u.filmOffsetMs < 0)) {
       return NextResponse.json({ error: "filmOffsetMs must be a non-negative number (events can't precede the point)" }, { status: 400 })
     }
+    const detail = detailError(u)
+    if (detail) return NextResponse.json({ error: detail }, { status: 400 })
   }
 
   const existing = new Map((await listEventsByPoint(pointId)).map(e => [e.id, e]))
@@ -73,13 +117,11 @@ export async function POST(request: NextRequest) {
       ...((u.eventType === "TIMEOUT" || u.eventType === "PULL") && u.team ? { team: u.team } : {}),
       sortOrder: u.sortOrder,
       ...(u.filmOffsetMs !== undefined ? { filmOffsetMs: Math.round(u.filmOffsetMs) } : {}),
-      // The film editor doesn't send live-scoring details; keep them while the event stays the same type.
+      // Live-only details are kept while the event stays the same type
       ...(prev?.occurredAt ? { occurredAt: prev.occurredAt } : {}),
-      ...(prev?.eventType === "PULL" && u.eventType === "PULL" && prev.pullResult ? { pullResult: prev.pullResult } : {}),
       ...(prev?.eventType === "PULL" && u.eventType === "PULL" && prev.hangTimeMs !== undefined ? { hangTimeMs: prev.hangTimeMs } : {}),
-      ...(prev?.huck && prev.eventType === u.eventType ? { huck: true } : {}),
-      ...(prev?.zone && prev.eventType === u.eventType ? { zone: prev.zone } : {}),
-      ...(prev?.turnoverType && prev.eventType === u.eventType && (u.eventType === "TURNOVER" || u.eventType === "OPP_TURNOVER") ? { turnoverType: prev.turnoverType } : {}),
+      // Editable details: sent = use it (null clears); not sent = keep the stored one if it still applies
+      ...detailFields(u, prev),
       createdAt: prev?.createdAt ?? now,
     }
     return { item, isNew: !prev }

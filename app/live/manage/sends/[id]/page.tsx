@@ -60,7 +60,7 @@ function BackLink() {
 
 export default function SendStatsPage() {
   const { id } = useParams<{ id: string }>()
-  const { isLoading: authLoading } = useRequireAuth({ roles: ["ADMIN"], forbiddenHref: "/live/manage" })
+  const { isLoading: authLoading } = useRequireAuth({ permission: "marketing.send", forbiddenHref: "/live/manage" })
   const userEmails = useUserEmails()
 
   const [send, setSend] = useState<SendRecord | null>(null)

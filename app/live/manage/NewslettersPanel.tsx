@@ -23,6 +23,7 @@ import { NEWSLETTER_TEMPLATE, parseNewsletterTemplate } from "@/lib/newsletter-t
 import { CONNECTION_HINT, deleteMany, friendlyError } from "./api-helpers"
 import { FormFooter } from "./form-footer"
 import { IMAGE_ACCEPT, ImagePrepError, prepareImageForUpload, putToPresignedUrl } from "@/lib/image-prep"
+import { can } from "@/lib/permissions/catalog"
 
 type NewsletterRow = {
   id: string
@@ -57,7 +58,7 @@ export function NewslettersPanel() {
   const [isImporting, setIsImporting] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
 
-  const isAdmin = user?.groups.includes("ADMIN") ?? false
+  const isAdmin = can(user?.permissions, "newsletters.delete")
 
   useEffect(() => {
     apiFetch("/api/newsletters?all=true")

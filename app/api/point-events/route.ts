@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { listEventsByPoint, listEventsByGame, createPointEvent, POINT_EVENT_TYPES } from "@/lib/aws/point-events"
 import { eventNeedsPlayer, FIELD_ZONES, HUCKABLE_TYPES, TURNOVER_TYPES, ZONABLE_TYPES } from "@/lib/point-event-meta"
 import { pushGameUpdate } from "@/lib/ws-push"
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "games.score" })
   if (!auth.ok) return auth.response
 
   const { pointId, gameId, eventType, playerId, playerInId, team, sortOrder, occurredAt, pullResult, hangTimeMs, turnoverType, huck, zone } = await request.json()

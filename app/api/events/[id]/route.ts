@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { revalidatePath } from "next/cache"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getEvent, deleteEvent, updateEvent } from "@/lib/aws/dynamo"
 import { logAudit } from "@/lib/aws/audit"
 import { canViewEvent, getCaller } from "@/lib/event-access"
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest, { params }: Props) {
 }
 
 export async function PATCH(request: NextRequest, { params }: Props) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "events.manage" })
   if (!auth.ok) return auth.response
   const { payload } = auth
 
@@ -61,7 +61,7 @@ export async function PATCH(request: NextRequest, { params }: Props) {
 }
 
 export async function DELETE(request: NextRequest, { params }: Props) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "events.manage" })
   if (!auth.ok) return auth.response
   const { payload } = auth
 

@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getPresignedUploadUrl } from "@/lib/aws/s3"
 import { randomUUID } from "crypto"
 
 const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp" }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "newsletters.edit" })
   if (!auth.ok) return auth.response
 
   const { contentType = "image/jpeg" } = await request.json()

@@ -21,6 +21,7 @@ import { PageContainer, PageHeader } from "@/components/ui/page"
 import { PrefetchLink } from "@/components/prefetch-link"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
+import { can } from "@/lib/permissions/catalog"
 
 const FilmViewer = dynamic(
   () => import("@/components/film/FilmViewer").then(m => m.FilmViewer),
@@ -329,7 +330,7 @@ export default function LiveEventPage() {
   const requestedRef = useRef<{ eventId: string; authed: boolean } | null>(null)
   const [games, setGames] = useState<GameItem[] | "error" | null>(null)
   const [filmViewer, setFilmViewer] = useState<{ clips: FilmClipItem[]; annotations: FilmAnnotationItem[] } | null>(null)
-  const isCoachOrAdmin = !!(user?.groups?.includes("COACH") || user?.groups?.includes("ADMIN"))
+  const isCoachOrAdmin = can(user?.permissions, "film.manage")
 
   // Event and games load alongside the auth check. The event API hides private events without a
   // session, so if the first try went out before sign-in was confirmed and failed, retry once after.

@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { createContacts } from "@/lib/aws/ses"
 
 type Params = { params: Promise<{ name: string }> }
 
 
 export async function POST(request: NextRequest, { params }: Params) {
-  const caller = await requireUser(request, { roles: ADMIN_ONLY })
+  const caller = await requireUser(request, { permission: "marketing.send" })
   if (!caller.ok) return caller.response
 
   const { name } = await params

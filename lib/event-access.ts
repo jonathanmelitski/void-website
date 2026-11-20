@@ -1,26 +1,26 @@
 // Server-side event visibility (CLAUDE.md: private events are filtered at the API layer).
-// Public events are visible to everyone; private ones to COACH/ADMIN and to emails in allowedUsers.
+// Public events are visible to everyone; private ones to holders of events.viewPrivate and to emails in allowedUsers.
 // Games, points and point events inherit their event's visibility.
 import { NextResponse, type NextRequest } from "next/server"
-import { getCallerEmail, getOptionalUser } from "@/lib/auth/server"
+import { getCallerEmail, getOptionalAuth } from "@/lib/auth/server"
+import { can, type Permission } from "@/lib/permissions/catalog"
 import { getEvent, type EventItem } from "@/lib/aws/dynamo"
 import { getGame, type GameItem } from "@/lib/aws/games"
 import { getBroadcastState } from "@/lib/aws/broadcast-jobs"
 import { isTestGame } from "@/lib/test-games"
 
-export type Caller = { groups: string[]; email?: string } | null
+export type Caller = { permissions: ReadonlySet<Permission>; email?: string } | null
 
 export async function getCaller(request: NextRequest): Promise<Caller> {
-  const payload = await getOptionalUser(request)
-  if (!payload) return null
-  const groups = payload["cognito:groups"] ?? []
-  // Coaches see everything; only look the email up when it can matter.
-  if (groups.includes("COACH") || groups.includes("ADMIN")) return { groups }
-  return { groups, email: await getCallerEmail(payload) }
+  const auth = await getOptionalAuth(request)
+  if (!auth) return null
+  // Staff see everything; only look the email up when it can matter.
+  if (can(auth.permissions, "events.viewPrivate")) return { permissions: auth.permissions }
+  return { permissions: auth.permissions, email: await getCallerEmail(auth.payload) }
 }
 
-export const isCoach = (caller: Caller) =>
-  !!caller && (caller.groups.includes("COACH") || caller.groups.includes("ADMIN"))
+/** Sees every private event, test game and stats warning (events.viewPrivate). */
+export const isCoach = (caller: Caller) => !!caller && can(caller.permissions, "events.viewPrivate")
 
 export function canViewEvent(event: Pick<EventItem, "isPrivate" | "allowedUsers">, caller: Caller): boolean {
   if (!event.isPrivate) return true
@@ -44,7 +44,7 @@ async function broadcastGameId(): Promise<string | null> {
 }
 
 /**
- * True if the caller may see this game's data. Test games: coaches/admins only. A game whose event no
+ * True if the caller may see this game's data. Test games: events.viewPrivate only. A game whose event no
  * longer exists has no privacy flag.
  */
 export async function canViewGame(game: Pick<GameItem, "id" | "eventId"> & Partial<Pick<GameItem, "isTest">>, caller: Caller): Promise<boolean> {

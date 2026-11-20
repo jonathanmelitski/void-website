@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getNewsletter } from "@/lib/aws/newsletters"
 import { buildNewsletterHtml } from "@/lib/newsletter-html"
 
@@ -8,7 +8,7 @@ type Params = { params: Promise<{ id: string }> }
 export async function GET(request: NextRequest, { params }: Params) {
   const { id } = await params
 
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "newsletters.edit" })
   if (!auth.ok) return auth.response
 
   const newsletter = await getNewsletter(id)

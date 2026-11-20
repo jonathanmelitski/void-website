@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto"
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 
 export const maxDuration = 300
 import { verifyTOTP } from "@/lib/totp"
@@ -213,7 +213,7 @@ async function startWorkerRun(args: {
 
 export async function POST(request: NextRequest) {
   const startedAt = Date.now()
-  const caller = await requireUser(request, { roles: ADMIN_ONLY })
+  const caller = await requireUser(request, { permission: "marketing.send" })
   if (!caller.ok) return caller.response
 
   const body = await request.json()

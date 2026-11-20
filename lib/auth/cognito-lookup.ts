@@ -8,7 +8,7 @@ function quote(v: string) {
   return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 }
 
-async function findUser(attr: "email" | "sub", value: string) {
+async function findUser(attr: "email" | "sub" | "username", value: string) {
   const res = await cognitoClient.send(
     new ListUsersCommand({
       UserPoolId: process.env.COGNITO_USER_POOL_ID!,
@@ -32,4 +32,10 @@ export async function lookupCognitoUsername(email: string): Promise<string | nul
 export async function lookupEmailBySub(sub: string): Promise<string | null> {
   const users = await findUser("sub", sub)
   return users[0]?.Attributes?.find((a) => a.Name === "email")?.Value ?? null
+}
+
+/** The user with this exact Cognito username, or null. Throws on network/service errors. */
+export async function lookupUserByUsername(username: string) {
+  const users = await findUser("username", username)
+  return users.find((u) => u.Username === username) ?? null
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { appendNewsletterEntry, updateNewsletterEntries, getNewsletter } from "@/lib/aws/newsletters"
 import { logAudit } from "@/lib/aws/audit"
 import { randomUUID } from "crypto"
@@ -8,7 +8,7 @@ type Params = { params: Promise<{ id: string }> }
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { id } = await params
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "newsletters.edit" })
   if (!auth.ok) return auth.response
   const { username } = auth
 
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
 export async function PUT(request: NextRequest, { params }: Params) {
   const { id } = await params
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "newsletters.edit" })
   if (!auth.ok) return auth.response
 
   const { entries } = await request.json()

@@ -32,8 +32,8 @@ export function DataTable<T>({
 }: DataTableProps<T>) {
   const [selected, setSelected] = React.useState<Set<string>>(new Set())
 
-  // Clear selection when data changes
-  React.useEffect(() => { setSelected(new Set()) }, [data])
+  // Selection survives data changes (bulk edits keep the same rows selected); rows that disappear
+  // simply drop out, since selectedRows is derived from the current data below.
 
   const selectable = !!getRowKey
   const allKeys = selectable ? data.map(getRowKey!) : []

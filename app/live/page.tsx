@@ -6,27 +6,14 @@ import Link from "next/link"
 import { CalendarDays } from "lucide-react"
 import { useAuth } from "@/lib/use-auth"
 import { useRequireAuth } from "@/hooks/use-require-auth"
-import { Badge } from "@/components/ui/badge"
+import { RoleBadges } from "@/components/role-badges"
+import { visibleManageTabs } from "@/app/live/manage/tabs"
 import { Button } from "@/components/ui/button"
 import { EventCard } from "@/components/gallery/EventCard"
 import type { GalleryEvent } from "@/models/GalleryModels"
 import { Skeleton, SkeletonCard } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/ui/empty-state"
 import { PageContainer, PageHeader } from "@/components/ui/page"
-
-function getHighestRole(groups: string[]) {
-  if (groups.includes("ADMIN")) return "ADMIN"
-  if (groups.includes("COACH")) return "COACH"
-  return "USER"
-}
-
-const ROLE_LABEL: Record<string, string> = { ADMIN: "Admin", COACH: "Coach", USER: "Player" }
-
-const ROLE_VARIANT: Record<string, "brand" | "secondary" | "outline"> = {
-  ADMIN: "brand",
-  COACH: "secondary",
-  USER: "outline",
-}
 
 interface EventItem {
   id: string
@@ -76,8 +63,10 @@ export default function LivePage() {
 
   if (isLoading || !user) return <LiveHomeSkeleton />
 
-  const role = getHighestRole(user.groups)
-  const canManage = role === "ADMIN" || role === "COACH"
+  // Photos alone (every member) doesn't earn the Manage shortcut, as before roles existed.
+  const manageTabs = visibleManageTabs(user.permissions)
+  const canManage = manageTabs.some(t => t.id !== "photos")
+  const canCreateEvents = manageTabs.some(t => t.id === "events")
 
   async function handleSignOut() {
     setSigningOut(true)
@@ -96,7 +85,7 @@ export default function LivePage() {
         description={
           <span className="flex flex-wrap items-center gap-2">
             {user.email && <span className="min-w-0 break-all">{user.email}</span>}
-            <Badge variant={ROLE_VARIANT[role] ?? "outline"}>{ROLE_LABEL[role] ?? role}</Badge>
+            <RoleBadges roles={user.roles} isOwner={user.isOwner} empty="Player" />
           </span>
         }
         actions={
@@ -128,7 +117,7 @@ export default function LivePage() {
           <EmptyState
             icon={<CalendarDays />}
             title="No events yet"
-            description={canManage ? "Create an event in Manage to start scoring games." : "Events will show up here once a coach adds them."}
+            description={canCreateEvents ? "Create an event in Manage to start scoring games." : "Events will show up here once a coach adds them."}
           />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

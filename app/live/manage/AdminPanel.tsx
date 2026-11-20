@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Field } from "@/components/ui/field"
-import { NativeSelect } from "@/components/ui/native-select"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -20,6 +19,7 @@ import { apiFetch } from "@/lib/api-fetch"
 import { useAuth } from "@/lib/use-auth"
 import { toast } from "@/components/ui/sonner"
 import { CONNECTION_HINT, deleteMany, friendlyError } from "./api-helpers"
+import { RoleMenuButton, RolePicker, useRoles, type RoleRow } from "./roles-shared"
 
 // Tiptap is heavy; only load it when the invite-email dialog opens.
 const SimpleEditor = dynamic(
@@ -27,11 +27,7 @@ const SimpleEditor = dynamic(
   { ssr: false, loading: () => <Skeleton className="h-64 w-full rounded-none" /> },
 )
 
-type UserRow = { username: string; email: string; enabled: boolean; status: string; role: string }
-
-const ROLES = ["USER", "COACH", "ADMIN"] as const
-const ROLE_LABEL: Record<string, string> = { USER: "User", COACH: "Coach", ADMIN: "Admin" }
-const ROLE_RANK: Record<string, number> = { USER: 0, COACH: 1, ADMIN: 2 }
+type UserRow = { username: string; sub: string; email: string; enabled: boolean; status: string; roleIds: string[]; isOwner: boolean }
 
 const STATUS_LABEL: Record<string, string> = {
   CONFIRMED: "Active",
@@ -40,21 +36,22 @@ const STATUS_LABEL: Record<string, string> = {
   UNCONFIRMED: "Unconfirmed",
 }
 
-function RoleOptions() {
-  return ROLES.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)
+/** New invites start as Member when that role exists. */
+function defaultInviteRoles(roles: RoleRow[] | null): string[] {
+  const member = roles?.find(r => r.name.toLowerCase() === "member")
+  return member ? [member.id] : []
 }
-
-type PendingRole = { user: UserRow; role: string; isSelf: boolean }
 
 export function AdminPanel() {
   const { user: me } = useAuth()
+  const { roles } = useRoles()
   const [users, setUsers] = useState<UserRow[]>([])
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(true)
 
   // Role change state
-  const [pendingRole, setPendingRole] = useState<PendingRole | null>(null)
   const [savingRoleFor, setSavingRoleFor] = useState<string | null>(null)
+  const [bulkSaving, setBulkSaving] = useState(false)
 
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<UserRow[] | null>(null)
@@ -63,14 +60,14 @@ export function AdminPanel() {
 
   // Single invite state
   const [inviteEmail, setInviteEmail] = useState("")
-  const [inviteRole, setInviteRole] = useState("USER")
+  const [inviteRoles, setInviteRoles] = useState<string[] | null>(null)
   const [isInviting, setIsInviting] = useState(false)
   const [inviteError, setInviteError] = useState("")
 
   // Bulk invite state
   const [bulkOpen, setBulkOpen] = useState(false)
   const [bulkText, setBulkText] = useState("")
-  const [bulkRole, setBulkRole] = useState("USER")
+  const [bulkRoles, setBulkRoles] = useState<string[] | null>(null)
   const [isBulkInviting, setIsBulkInviting] = useState(false)
   const [bulkSummary, setBulkSummary] = useState<{ succeeded: string[]; failed: Array<{ email: string; error: string }> } | null>(null)
 
@@ -102,41 +99,106 @@ export function AdminPanel() {
     return u.username === me.username || (!!u.email && u.email.toLowerCase() === me.email?.toLowerCase())
   }
 
-  function requestRoleChange(u: UserRow, role: string) {
-    if (role === u.role) return
-    const self = isSelf(u)
-    const demoting = (ROLE_RANK[role] ?? 0) < (ROLE_RANK[u.role] ?? 0)
-    if (self || demoting) {
-      setPendingRole({ user: u, role, isSelf: self })
-      return
-    }
-    void applyRoleChange(u, role)
-  }
+  // Only owners may edit their own roles (the API enforces this too).
+  const canEditRolesOf = (u: UserRow) => !isSelf(u) || !!me?.isOwner
 
-  async function applyRoleChange(u: UserRow, role: string) {
-    const previous = u.role
+  // Ticking a box is the decision: apply right away, with Undo in the toast for slips.
+  async function applyRoleChange(u: UserRow, roleIds: string[], { isUndo = false } = {}) {
+    const previous = u.roleIds
     setSavingRoleFor(u.username)
-    setUsers(prev => prev.map(x => x.username === u.username ? { ...x, role } : x))
+    setUsers(prev => prev.map(x => x.username === u.username ? { ...x, roleIds } : x))
     try {
-      const res = await apiFetch("/api/admin/assign-role", {
-        method: "POST",
+      const res = await apiFetch(`/api/admin/users/${encodeURIComponent(u.username)}/roles`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: u.username, role }),
+        body: JSON.stringify({ roleIds }),
         waitForSession: true,
       })
       if (!res.ok) {
-        setUsers(prev => prev.map(x => x.username === u.username ? { ...x, role: previous } : x))
-        toast.error(await friendlyError(res, `Couldn't change ${u.email || "the user"}'s role. Try again.`))
+        setUsers(prev => prev.map(x => x.username === u.username ? { ...x, roleIds: previous } : x))
+        toast.error(await friendlyError(res, `Couldn't change ${u.email || "the user"}'s roles. Try again.`))
         return
       }
-      toast.success(`${u.email || "User"} is now ${ROLE_LABEL[role] ?? role}`)
+      const saved: { roleIds: string[] } = await res.json()
+      setUsers(prev => prev.map(x => x.username === u.username ? { ...x, roleIds: saved.roleIds } : x))
+      if (isUndo) toast.success(`Restored roles for ${u.email || "the user"}`)
+      else toast.success(`Updated roles for ${u.email || "the user"}`, {
+        action: { label: "Undo", onClick: () => void applyRoleChange({ ...u, roleIds: saved.roleIds }, previous, { isUndo: true }) },
+      })
     } catch {
-      setUsers(prev => prev.map(x => x.username === u.username ? { ...x, role: previous } : x))
-      toast.error(`Couldn't change the role. ${CONNECTION_HINT}`)
+      setUsers(prev => prev.map(x => x.username === u.username ? { ...x, roleIds: previous } : x))
+      toast.error(`Couldn't change the roles. ${CONNECTION_HINT}`)
     } finally {
       setSavingRoleFor(null)
-      setPendingRole(null)
     }
+  }
+
+  /** Put each user's roles to the given list. Returns the users whose save succeeded (with saved roles). */
+  async function putRoles(changes: { user: UserRow; roleIds: string[] }[]) {
+    const results = await Promise.all(changes.map(async ({ user, roleIds }) => {
+      try {
+        const res = await apiFetch(`/api/admin/users/${encodeURIComponent(user.username)}/roles`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roleIds }),
+          waitForSession: true,
+        })
+        if (!res.ok) return { user, ok: false as const, error: await friendlyError(res, "Couldn't save") }
+        const saved: { roleIds: string[] } = await res.json()
+        return { user, ok: true as const, roleIds: saved.roleIds }
+      } catch {
+        return { user, ok: false as const, error: CONNECTION_HINT }
+      }
+    }))
+    const ok = results.filter(r => r.ok)
+    const savedBy = new Map(ok.map(r => [r.user.username, r.roleIds!]))
+    if (savedBy.size) setUsers(prev => prev.map(x => (savedBy.has(x.username) ? { ...x, roleIds: savedBy.get(x.username)! } : x)))
+    return { ok, failed: results.filter(r => !r.ok) }
+  }
+
+  /** Add or remove one role across the selected users. Undo puts everyone back. */
+  async function bulkRole(targets: UserRow[], role: RoleRow, mode: "add" | "remove") {
+    const skippedSelf = targets.filter(u => !canEditRolesOf(u))
+    const changes = targets
+      .filter(u => canEditRolesOf(u))
+      .map(u => ({
+        user: u,
+        roleIds: mode === "add"
+          ? (u.roleIds.includes(role.id) ? u.roleIds : [...u.roleIds, role.id])
+          : u.roleIds.filter(id => id !== role.id),
+      }))
+      .filter(c => c.roleIds.length !== c.user.roleIds.length)
+    if (changes.length === 0) {
+      toast(mode === "add"
+        ? `Everyone selected already has ${role.name}`
+        : `Nobody selected has ${role.name}`)
+      return
+    }
+    setBulkSaving(true)
+    const { ok, failed } = await putRoles(changes)
+    setBulkSaving(false)
+
+    const n = ok.length
+    const people = `${n} ${n === 1 ? "user" : "users"}`
+    if (n > 0) {
+      const before = ok.map(r => ({ user: { ...r.user, roleIds: r.roleIds! }, roleIds: r.user.roleIds }))
+      toast.success(mode === "add" ? `Added ${role.name} to ${people}` : `Removed ${role.name} from ${people}`, {
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            const undo = await putRoles(before)
+            if (undo.failed.length) toast.error(`Couldn't undo for ${undo.failed.length} ${undo.failed.length === 1 ? "user" : "users"}. Check their roles.`)
+            else toast.success("Undone")
+          },
+        },
+      })
+    }
+    if (failed.length) {
+      toast.error(`Couldn't update ${failed.length} ${failed.length === 1 ? "user" : "users"}`, {
+        description: failed.map(f => `${f.user.email || f.user.username}: ${f.error}`).join("\n"),
+      })
+    }
+    if (skippedSelf.length) toast("Skipped you: only an owner can change their own roles.")
   }
 
   async function handleDelete(targets: UserRow[]) {
@@ -166,17 +228,19 @@ export function AdminPanel() {
       const res = await apiFetch("/api/admin/invite-user", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+        body: JSON.stringify({ email: inviteEmail.trim(), roleIds: inviteRoles ?? defaultInviteRoles(roles) }),
         waitForSession: true,
       })
       if (!res.ok) { setInviteError(await friendlyError(res, "Couldn't send the invite. Check the address and try again.")); return }
       const data = await res.json()
       const newUser: UserRow = {
         username: data.username,
+        sub: "",
         email: data.email,
         enabled: true,
         status: data.status,
-        role: data.role,
+        roleIds: data.roleIds ?? [],
+        isOwner: false,
       }
       setUsers(prev => [newUser, ...prev])
       setInviteEmail("")
@@ -197,7 +261,7 @@ export function AdminPanel() {
       const res = await apiFetch("/api/admin/invite-bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emails: bulkText, role: bulkRole }),
+        body: JSON.stringify({ emails: bulkText, roleIds: bulkRoles ?? defaultInviteRoles(roles) }),
         waitForSession: true,
       })
       if (!res.ok) {
@@ -215,7 +279,7 @@ export function AdminPanel() {
   function handleBulkDismiss() {
     setBulkOpen(false)
     setBulkText("")
-    setBulkRole("USER")
+    setBulkRoles(null)
     if (bulkSummary) loadUsers()
     setBulkSummary(null)
   }
@@ -264,16 +328,17 @@ export function AdminPanel() {
   }
 
   function roleSelect(u: UserRow, className?: string) {
+    if (!roles) return <Skeleton className="h-8 w-28" />
     return (
-      <NativeSelect
-        aria-label={`Role for ${u.email || u.username}`}
-        value={u.role}
-        disabled={savingRoleFor === u.username}
-        onChange={e => requestRoleChange(u, e.target.value)}
-        className={className ?? "w-28"}
-      >
-        <RoleOptions />
-      </NativeSelect>
+      <RolePicker
+        roles={roles}
+        value={u.roleIds}
+        isOwner={u.isOwner}
+        label={`Roles for ${u.email || u.username}`}
+        disabled={savingRoleFor === u.username || !canEditRolesOf(u)}
+        onChange={ids => void applyRoleChange(u, ids)}
+        triggerClassName={className}
+      />
     )
   }
 
@@ -296,12 +361,11 @@ export function AdminPanel() {
       ),
     },
     { header: "Status", cell: u => statusBadge(u) },
-    { header: "Role", cell: u => roleSelect(u) },
+    { header: "Roles", cell: u => roleSelect(u) },
   ]
 
   if (error) return <p className="text-sm text-destructive">{error}</p>
 
-  const pendingDemotesSelfAdmin = pendingRole?.isSelf && pendingRole.user.role === "ADMIN"
 
   return (
     <div className="flex flex-col gap-4 text-left">
@@ -317,14 +381,15 @@ export function AdminPanel() {
               className="h-10 sm:h-9"
             />
           </Field>
-          <NativeSelect
-            aria-label="Role for the invite"
-            value={inviteRole}
-            onChange={e => setInviteRole(e.target.value)}
-            className="w-28 [&>select]:h-10 sm:[&>select]:h-9"
-          >
-            <RoleOptions />
-          </NativeSelect>
+          {roles && (
+            <RolePicker
+              roles={roles}
+              value={inviteRoles ?? defaultInviteRoles(roles)}
+              onChange={setInviteRoles}
+              label="Roles for the invite"
+              triggerClassName="h-10 justify-between gap-2 sm:h-9"
+            />
+          )}
           <Button type="submit" className="h-10 sm:h-9" loading={isInviting}>
             Send invite
           </Button>
@@ -354,41 +419,27 @@ export function AdminPanel() {
               </p>
               {statusBadge(u)}
             </div>
-            {roleSelect(u, "w-full [&>select]:h-10")}
+            {roleSelect(u, "h-auto min-h-10 w-full justify-between gap-2 py-1.5")}
           </div>
         )}
         toolbar={(selectedRows, clearSelection) => {
           clearFnRef.current = clearSelection
           if (selectedRows.length === 0) return null
           return (
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <span className="text-sm text-fg-muted">{selectedRows.length} selected</span>
-              <Button size="sm" variant="destructive" onClick={() => setDeleteTarget(selectedRows)}>
+              {roles && (
+                <>
+                  <RoleMenuButton roles={roles} label="Add role" disabled={bulkSaving} onPick={r => void bulkRole(selectedRows, r, "add")} />
+                  <RoleMenuButton roles={roles} label="Remove role" disabled={bulkSaving} onPick={r => void bulkRole(selectedRows, r, "remove")} />
+                </>
+              )}
+              <Button size="sm" variant="destructive" className="h-10 sm:h-8" onClick={() => setDeleteTarget(selectedRows)}>
                 Delete
               </Button>
             </div>
           )
         }}
-      />
-
-      <ConfirmDialog
-        open={pendingRole !== null}
-        onOpenChange={open => { if (!open && !savingRoleFor) setPendingRole(null) }}
-        title={pendingRole?.isSelf ? "Change your own role?" : `Make ${pendingRole?.user.email || "this user"} ${ROLE_LABEL[pendingRole?.role ?? ""] ?? ""}?`}
-        description={
-          pendingRole?.isSelf
-            ? pendingDemotesSelfAdmin
-              ? "You'll lose admin access right away, including Users, Audit, Marketing and Live Server. Another admin will have to restore it."
-              : `Your role changes to ${ROLE_LABEL[pendingRole.role] ?? pendingRole.role}.`
-            : <>
-                <span className="font-medium text-foreground">{pendingRole?.user.email || pendingRole?.user.username}</span>{" "}
-                goes from {ROLE_LABEL[pendingRole?.user.role ?? ""]} to {ROLE_LABEL[pendingRole?.role ?? ""]} and loses access that comes with their current role.
-              </>
-        }
-        confirmLabel={pendingRole?.isSelf ? "Change my role" : `Make ${ROLE_LABEL[pendingRole?.role ?? ""] ?? ""}`}
-        destructive
-        isLoading={savingRoleFor !== null}
-        onConfirm={() => pendingRole && applyRoleChange(pendingRole.user, pendingRole.role)}
       />
 
       <ConfirmDialog
@@ -441,11 +492,18 @@ export function AdminPanel() {
                   onChange={e => setBulkText(e.target.value)}
                 />
               </Field>
-              <Field label="Role" className="w-40">
-                <NativeSelect value={bulkRole} onChange={e => setBulkRole(e.target.value)}>
-                  <RoleOptions />
-                </NativeSelect>
-              </Field>
+              {roles && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium text-fg-secondary">Roles</span>
+                  <RolePicker
+                    roles={roles}
+                    value={bulkRoles ?? defaultInviteRoles(roles)}
+                    onChange={setBulkRoles}
+                    label="Roles for these invites"
+                    triggerClassName="h-auto min-h-9 w-fit justify-between gap-2 py-1"
+                  />
+                </div>
+              )}
               <DialogFooter className="pt-2">
                 <Button type="button" variant="ghost" onClick={handleBulkDismiss} disabled={isBulkInviting}>Cancel</Button>
                 <Button type="submit" loading={isBulkInviting} disabled={!bulkText.trim()}>

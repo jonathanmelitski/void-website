@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { listPlayerLinks, createPlayerLink } from "@/lib/aws/player-links"
 
 export async function GET(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "playerLinks.manage" })
   if (!auth.ok) return auth.response
 
   try {
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "playerLinks.manage" })
   if (!auth.ok) return auth.response
   const { payload } = auth
 

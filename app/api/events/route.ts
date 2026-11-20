@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { revalidatePath } from "next/cache"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { listEvents, createEvent } from "@/lib/aws/dynamo"
 import { logAudit } from "@/lib/aws/audit"
 import { canViewEvent, getCaller } from "@/lib/event-access"
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "events.manage" })
   if (!auth.ok) return auth.response
   const { payload } = auth
 

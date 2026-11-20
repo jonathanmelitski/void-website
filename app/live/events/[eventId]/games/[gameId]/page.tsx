@@ -17,6 +17,7 @@ import type { PointItem } from "@/lib/aws/points"
 import type { PointEventItem, PointEventType } from "@/lib/aws/point-events"
 import { deriveGameStats, type DerivedPoint } from "@/lib/stats/derive"
 import { PlayerStatsTable, toPlayerRows } from "@/components/stats/player-stats-table"
+import { can } from "@/lib/permissions/catalog"
 
 const RESULT_BADGE: Record<GameResult, { label: string; variant: "success" | "destructive" | "warning" }> = {
   WIN: { label: "Win", variant: "success" },
@@ -134,7 +135,8 @@ export default function GameDetailPage() {
   const { holds, breaks } = stats.team.us
   const { oEfficiency, dConversion } = stats
   const result = stats.result
-  const isCoachOrAdmin = !!(user.groups?.includes("COACH") || user.groups?.includes("ADMIN"))
+  // Same permission the stats API uses to include warnings
+  const isCoachOrAdmin = can(user.permissions, "events.viewPrivate")
   const isLive = game.status === "IN_PROGRESS"
   // Stored status can stay SCHEDULED for games scored only in film; the points are the truth then.
   const notStarted = game.status === "SCHEDULED" && stats.points.length === 0

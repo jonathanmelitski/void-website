@@ -3,7 +3,9 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Logo } from "@/components/navbar-01"
+import { Moon, Sun } from "lucide-react"
 import { useAuth } from "@/lib/use-auth"
+import { setTheme, useTheme } from "@/lib/theme"
 
 const CONTACT_EMAIL = "void.ultimate@gmail.com"
 const NEWSLETTER_HREF = "/subscribe/void-public"
@@ -12,6 +14,22 @@ const linkClass =
   "inline-flex min-h-10 items-center rounded-md text-fg-secondary transition-colors hover:text-foreground sm:min-h-0 sm:py-1"
 
 /** Site-wide footer for public pages. Hidden inside Void Live, where screens are full-height tools. */
+function ThemeToggle() {
+  const theme = useTheme()
+  const next = theme === "dark" ? "light" : "dark"
+  const Icon = theme === "dark" ? Sun : Moon
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(next)}
+      className="inline-flex min-h-10 items-center gap-1.5 rounded-md text-xs text-fg-muted transition-colors hover:text-foreground sm:min-h-0 sm:py-1"
+    >
+      <Icon className="size-3.5" aria-hidden />
+      {next === "light" ? "Light mode" : "Dark mode"}
+    </button>
+  )
+}
+
 export function SiteFooter() {
   const pathname = usePathname() ?? "/"
   const { user } = useAuth()
@@ -56,6 +74,9 @@ export function SiteFooter() {
             <Link href="/live/login" className={linkClass}>Sign in</Link>
           )}
         </div>
+      </div>
+      <div className="mx-auto flex w-full max-w-6xl justify-end px-4 pb-4 sm:px-6 lg:px-8">
+        <ThemeToggle />
       </div>
     </footer>
   )

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { revalidatePath } from "next/cache"
-import { getOptionalUser, requireUser, ADMIN_ONLY, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { getOptionalAuth, requireUser } from "@/lib/auth/server"
+import { can } from "@/lib/permissions/catalog"
 import {
   getNewsletter,
   getNewsletterBySlug,
@@ -14,18 +15,6 @@ import { logAudit } from "@/lib/aws/audit"
 
 type Params = { params: Promise<{ id: string }> }
 
-async function getCallerInfo(request: NextRequest) {
-  const payload = await getOptionalUser(request)
-  if (!payload) return null
-  return {
-    groups: (payload["cognito:groups"] ?? []) as string[],
-    username: (payload["cognito:username"] ?? payload.sub ?? "") as string,
-  }
-}
-
-function isCoachOrAdmin(groups: string[]) {
-  return groups.includes("COACH") || groups.includes("ADMIN")
-}
 
 export async function GET(request: NextRequest, { params }: Params) {
   const { id } = await params
@@ -34,15 +23,15 @@ export async function GET(request: NextRequest, { params }: Params) {
 
   if (newsletter.published) return NextResponse.json(newsletter)
 
-  const caller = await getCallerInfo(request)
-  if (caller && isCoachOrAdmin(caller.groups)) return NextResponse.json(newsletter)
+  const caller = await getOptionalAuth(request)
+  if (caller && can(caller.permissions, "newsletters.edit")) return NextResponse.json(newsletter)
 
   return NextResponse.json({ error: "Not found" }, { status: 404 })
 }
 
 export async function PATCH(request: NextRequest, { params }: Params) {
   const { id } = await params
-  const caller = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const caller = await requireUser(request, { permission: "newsletters.edit" })
   if (!caller.ok) return caller.response
 
   const newsletter = await getNewsletter(id)
@@ -65,7 +54,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
 export async function PUT(request: NextRequest, { params }: Params) {
   const { id } = await params
-  const caller = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const caller = await requireUser(request, { permission: "newsletters.edit" })
   if (!caller.ok) return caller.response
 
   const newsletter = await getNewsletter(id)
@@ -112,7 +101,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
 export async function DELETE(request: NextRequest, { params }: Params) {
   const { id } = await params
-  const caller = await requireUser(request, { roles: ADMIN_ONLY })
+  const caller = await requireUser(request, { permission: "newsletters.delete" })
   if (!caller.ok) return caller.response
 
   const newsletter = await getNewsletter(id)

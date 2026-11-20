@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth/server"
 import { getPresignedUploadUrl } from "@/lib/aws/s3"
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request)
+  const auth = await requireUser(request, { permission: "photos.upload" })
   if (!auth.ok) return auth.response
 
   const { eventId, filename, contentType } = await request.json()

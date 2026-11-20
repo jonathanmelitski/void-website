@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { deletePointEvent, getPointEvent, updatePointEventWho } from "@/lib/aws/point-events"
 import { eventNeedsPlayer, FIELD_ZONES, HUCKABLE_TYPES, TURNOVER_TYPES, ZONABLE_TYPES, type FieldZone, type TurnoverType } from "@/lib/point-event-meta"
 import { pushGameUpdate } from "@/lib/ws-push"
@@ -13,7 +13,7 @@ interface Props {
  * its time, order or type, so film sync stays exact.
  */
 export async function PATCH(request: NextRequest, { params }: Props) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "games.score" })
   if (!auth.ok) return auth.response
 
   const { id } = await params
@@ -72,7 +72,7 @@ export async function PATCH(request: NextRequest, { params }: Props) {
 }
 
 export async function DELETE(request: NextRequest, { params }: Props) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "games.score" })
   if (!auth.ok) return auth.response
 
   const { id } = await params

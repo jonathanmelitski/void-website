@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { deletePlayerLink } from "@/lib/aws/player-links"
 
 export async function DELETE(
@@ -8,7 +8,7 @@ export async function DELETE(
 ) {
   const { cognitoSub } = await params
 
-  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  const auth = await requireUser(request, { permission: "playerLinks.manage" })
   if (!auth.ok) return auth.response
 
   try {

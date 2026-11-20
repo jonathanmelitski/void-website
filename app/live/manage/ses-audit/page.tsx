@@ -50,7 +50,7 @@ function ReasonBadge({ reason }: { reason: SuppressedEmail["reason"] }) {
 }
 
 export default function SesAuditPage() {
-  const { isLoading: authLoading } = useRequireAuth({ roles: ["ADMIN"], forbiddenHref: "/live/manage" })
+  const { isLoading: authLoading } = useRequireAuth({ permission: "marketing.send", forbiddenHref: "/live/manage" })
   const [data, setData] = useState<AuditData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")

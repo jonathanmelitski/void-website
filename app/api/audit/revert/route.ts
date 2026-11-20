@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getAuditLog, checkRevertConflicts, revertAuditLog } from "@/lib/aws/audit"
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  const auth = await requireUser(request, { permission: "audit.revert" })
   if (!auth.ok) return auth.response
   const { payload } = auth
 

@@ -6,11 +6,11 @@ Penn Ultimate frisbee team web app. Two audiences:
 - **Public** — roster, news, gallery
 - **Authenticated** (Void Live) — coaches score games live, review film, manage broadcasts; players view their footage
 
-Stack: Next.js 16 App Router, React 19, TypeScript strict, Tailwind v4, shadcn/ui (new-york, neutral; light + dark via OS), sonner, AWS (Cognito auth, DynamoDB, S3, SES, MediaLive, EC2 WS server, Lambda, SSM).
+Stack: Next.js 16 App Router, React 19, TypeScript strict, Tailwind v4, shadcn/ui (new-york, neutral; dark default, light via footer toggle), sonner, AWS (Cognito auth, DynamoDB, S3, SES, MediaLive, EC2 WS server, Lambda, SSM).
 
-## Theme & Color (OKLCH, light + dark follow the OS)
+## Theme & Color (OKLCH, dark by default)
 
-Tokens live in `app/globals.css`: light values on `:root`, dark under `@media (prefers-color-scheme: dark)`. No toggle, no `.dark` class; the `dark:` variant follows the media query. `html { color-scheme: light dark }`. Use semantic utilities only:
+Tokens live in `app/globals.css`: light values on `:root`, dark under `:root.dark`. `<html class="dark">` is server-rendered; a small toggle in `SiteFooter` switches to light, persisted in `localStorage.theme` and applied before paint by `THEME_INIT_SCRIPT` (`lib/theme-script.ts`; `lib/theme.ts` exports `useTheme`/`setTheme`). The `dark:` variant follows the `.dark` class, not the OS. Use semantic utilities only:
 
 | Role | Utility |
 |---|---|
@@ -76,12 +76,17 @@ Event/news cards with a cover photo: `bg-white/10 backdrop-blur-sm rounded-xl ov
 /live/me                   (player portal)
 ```
 
-## Auth Pattern (every mutating API route)
+## Auth & Permissions (every mutating API route)
 
-1. Extract `access_token` cookie
-2. `verifyToken(token)` from `lib/aws/cognito.ts`
-3. Check `payload["cognito:groups"]` — `ADMIN`, `COACH`, or `USER`
-4. Return 401/403 before any business logic or DynamoDB call
+Discord-style roles: a **role** is a named set of permissions; a user holds any number of roles; their permissions are the **union**.
+
+- **Catalog:** every permission is declared once in `lib/permissions/catalog.ts` (`PERMISSIONS`, `can()`, `canAny()`). `administrator` implies all. New feature = add one entry; the Roles editor renders from it.
+- **Server:** the first line of a handler is `const auth = await requireUser(request, { permission: "events.manage" })` then `if (!auth.ok) return auth.response`. 401 = no session, 403 = missing permission, 503 = couldn't verify or read permissions (never treated as allowed). Finer checks inside a handler: `can(auth.permissions, "…")`. Public routes that show more to staff: `getOptionalAuth(request)`.
+- **Client:** `useCan("x")` (`hooks/use-can.ts`), `useRequireAuth({ permission })`, `user.permissions` / `user.roles` / `user.isOwner`. UI checks are convenience only.
+- **Never read `cognito:groups`** outside `lib/auth/` and `lib/permissions/` (`npx tsx scripts/permissions.check.ts` enforces this and that every mutating route calls `requireUser`).
+- **Owner** = Cognito group `OWNER`: always every permission, and changed only in AWS (the app never writes Cognito groups). The old `ADMIN`/`COACH`/`USER` groups are unused.
+- **Storage:** `lib/aws/roles.ts` (`DYNAMO_ROLES_TABLE`) and `lib/aws/user-roles.ts` (`DYNAMO_USER_ROLES_TABLE`, keyed by Cognito `sub`). Permissions resolve per request with a 30s per-instance cache (`lib/permissions/server.ts`).
+- **Anti-escalation** (`lib/permissions/guard.ts`, unit-checked in `scripts/permissions.unit.check.ts`): you can only grant permissions you hold, only owners grant `administrator`, and only owners edit their own roles. Role and assignment changes are audited (`ROLE`, `USER_ROLES`).
 
 ## DynamoDB Lib Pattern
 
@@ -96,16 +101,15 @@ One file per entity in `lib/aws/`. Each exports: typed `Item` type, `list*`, `ge
 
 ## Security Philosophy
 
-- Auth check is always the first line of any mutating route handler
+- Auth check (`requireUser` with a permission) is always the first line of any mutating route handler
 - WS internal push endpoint requires `Authorization: Bearer WS_INTERNAL_SECRET`
 - Never log JWT tokens or AWS credentials
 - Private events are filtered at the API layer, not client
 
 ## WebSocket Architecture
 
-Standalone Node.js WS server (`ws/server.ts`) on EC2.
+Standalone Node.js WS server (`ws/server.ts`) on EC2, for public live game spectating (watch page and broadcast overlay). No auth by design.
 - Game state: `ws://host/ws/game/:gameId` | push: `POST /internal/push/:gameId`
-- Film annotations: `ws://host/ws/film/:clipId` | push: `POST /internal/push/film/:clipId`
 - Push utility `lib/ws-push.ts` is always fire-and-forget (silent fail)
 
 ## Lambda Worker Pattern

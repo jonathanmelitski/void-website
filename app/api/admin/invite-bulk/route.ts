@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: ADMIN_ONLY })
+  const auth = await requireUser(request, { permission: "users.manage" })
   if (!auth.ok) return auth.response
 
-  const { emails: rawEmails, role = "USER" } = await request.json()
+  const { emails: rawEmails, roleIds = [] } = await request.json()
   if (!rawEmails) return NextResponse.json({ error: "emails is required" }, { status: 400 })
 
   // Accept array or newline/comma-separated string
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
           "Content-Type": "application/json",
           cookie: request.headers.get("cookie") ?? "",
         },
-        body: JSON.stringify({ email, role }),
+        body: JSON.stringify({ email, roleIds }),
       }).then(async res => {
         if (!res.ok) {
           const data = await res.json()

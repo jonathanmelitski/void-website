@@ -14,6 +14,7 @@ import { PROSE_CSS } from "@/lib/newsletter-prose-css"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/sonner"
 import { IMAGE_ACCEPT, ImagePrepError, prepareImageForUpload, putToPresignedUrl } from "@/lib/image-prep"
+import { can } from "@/lib/permissions/catalog"
 
 function NewsletterPreview({ newsletter }: { newsletter: NewsletterItem }) {
   const dateLabel = new Date(newsletter.date).toLocaleDateString("en-US", {
@@ -66,7 +67,7 @@ function NewsletterPreview({ newsletter }: { newsletter: NewsletterItem }) {
 export default function ManageNewsletterPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
-  const { user, isLoading: authLoading } = useRequireAuth({ roles: ["COACH", "ADMIN"], forbiddenHref: "/live/manage" })
+  const { user, isLoading: authLoading } = useRequireAuth({ permission: "newsletters.edit", forbiddenHref: "/live/manage" })
 
   const [newsletter, setNewsletter] = useState<NewsletterItem | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -102,7 +103,7 @@ export default function ManageNewsletterPage() {
   const entryFieldPendingValues = useRef<Record<string, string>>({})
   const inFlightSaves = useRef<Set<Promise<void>>>(new Set())
 
-  const isAdmin = user?.groups.includes("ADMIN") ?? false
+  const isAdmin = can(user?.permissions, "newsletters.delete")
 
   async function loadNewsletter() {
     try {

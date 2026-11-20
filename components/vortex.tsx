@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { createNoise3D } from "simplex-noise"
 import { cn } from "@/lib/utils"
+import { useTheme } from "@/lib/theme"
 
 type VortexProps = {
   className?: string
@@ -55,7 +56,7 @@ export function Vortex({
   rangeRadius = 2,
 }: VortexProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const isDark = useMedia("(prefers-color-scheme: dark)")
+  const isDark = useTheme() === "dark"
   const reducedMotion = useMedia("(prefers-reduced-motion: reduce)")
 
   useEffect(() => {

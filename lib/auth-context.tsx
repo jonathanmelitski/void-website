@@ -3,11 +3,16 @@
 import React, { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { authEvents, NetworkError, refreshSessionOnce } from "@/lib/api-fetch"
 import { SessionStatusUI } from "@/components/session-expired-sheet"
+import type { Permission, RoleSummary } from "@/lib/permissions/catalog"
 
 export type AuthUser = {
   username: string
   email: string
-  groups: string[]
+  /** Effective permissions, expanded (administrator → every key). Check with `useCan` / `can()`. */
+  permissions: Permission[]
+  /** Cognito ADMIN group: every permission, managed in AWS only. */
+  isOwner: boolean
+  roles: RoleSummary[]
   /** ms epoch when the current access token expires (for proactive refresh). */
   expiresAt?: number
 }
@@ -115,8 +120,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       !!prev && !!u &&
       prev.username === u.username &&
       prev.email === u.email &&
-      prev.groups.join(",") === u.groups.join(",")
-    const next = same ? prev : u ? { username: u.username, email: u.email, groups: u.groups } : null
+      prev.isOwner === u.isOwner &&
+      (prev.permissions ?? []).join(",") === (u.permissions ?? []).join(",") &&
+      (prev.roles ?? []).map((r) => `${r.id}:${r.name}:${r.color ?? ""}`).join(",") ===
+        (u.roles ?? []).map((r) => `${r.id}:${r.name}:${r.color ?? ""}`).join(",")
+    // Older cached profiles (pre-roles) lack these fields: default to no permissions.
+    const next = same
+      ? prev
+      : u
+        ? { username: u.username, email: u.email, permissions: u.permissions ?? [], isOwner: !!u.isOwner, roles: u.roles ?? [] }
+        : null
     statusRef.current = s
     userRef.current = next
     setStatus(s)

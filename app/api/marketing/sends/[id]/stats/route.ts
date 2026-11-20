@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getSend } from "@/lib/aws/sends"
 import { getEventsForSend } from "@/lib/aws/tracking"
 
@@ -8,7 +8,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const admin = await requireUser(request, { roles: ADMIN_ONLY })
+  const admin = await requireUser(request, { permission: "marketing.send" })
   if (!admin.ok) return admin.response
 
   const { id } = await params

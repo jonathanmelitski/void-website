@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, COACH_OR_ADMIN } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { createPlayer } from "@/lib/aws/players"
 import type { PlayerItem } from "@/lib/aws/players"
 import { randomUUID } from "crypto"
 
 export async function POST(request: NextRequest) {
-  const auth = await requireUser(request, { roles: COACH_OR_ADMIN })
+  const auth = await requireUser(request, { permission: "players.manage" })
   if (!auth.ok) return auth.response
 
   const { players } = await request.json()

@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireUser } from "@/lib/auth/server"
+import { can } from "@/lib/permissions/catalog"
 import { getNewsletter, removeNewsletterEntry } from "@/lib/aws/newsletters"
 
 type Params = { params: Promise<{ id: string; entryId: string }> }
 
 export async function DELETE(request: NextRequest, { params }: Params) {
   const { id, entryId } = await params
-  // Any signed-in user; ownership (author or ADMIN) is checked below.
+  // Any signed-in user; ownership (author, or newsletters.delete) is checked below.
   const auth = await requireUser(request)
   if (!auth.ok) return auth.response
-  const { username, groups } = auth
+  const { username, permissions } = auth
 
   const newsletter = await getNewsletter(id)
   if (!newsletter) return NextResponse.json({ error: "Not found" }, { status: 404 })
@@ -17,7 +18,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   const entry = newsletter.entries?.find(e => e.id === entryId)
   if (!entry) return NextResponse.json({ error: "Entry not found" }, { status: 404 })
 
-  const isAdmin = groups.includes("ADMIN")
+  const isAdmin = can(permissions, "newsletters.delete")
   const isAuthor = entry.authorUsername === username
 
   if (!isAdmin && !isAuthor) {

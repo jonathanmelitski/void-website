@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireUser, ADMIN_ONLY } from "@/lib/auth/server"
+import { requireUser } from "@/lib/auth/server"
 import { getSend, requestCancel } from "@/lib/aws/sends"
 import { logAudit } from "@/lib/aws/audit"
 import { sendState } from "@/lib/bulk-send"
@@ -9,7 +9,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const caller = await requireUser(request, { roles: ADMIN_ONLY })
+  const caller = await requireUser(request, { permission: "marketing.send" })
   if (!caller.ok) return caller.response
 
   const { id } = await params
